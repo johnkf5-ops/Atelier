@@ -1,5 +1,6 @@
 import { hasAnthropicKey } from '@/lib/auth/api-key';
 import HealthPanel from './health-panel';
+import ResetDbPanel from './reset-db-panel';
 
 export const dynamic = 'force-dynamic';
 
@@ -34,6 +35,8 @@ export default function SettingsPage() {
       </section>
 
       <HealthPanel />
+
+      {process.env.ATELIER_IS_RESETTABLE_DB === 'true' && <ResetDbPanel />}
     </div>
   );
 }
