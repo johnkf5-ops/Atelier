@@ -144,3 +144,18 @@ Live-verified: `pnpm tsx scripts/reset-db.ts --yes-reset-everything` dropped 16 
 
 **Loop-friendly walk-through:** John should now be able to click the Reset button on `/settings`, run the full onboarding → dossier path, click Reset again, repeat, with zero terminal involvement and zero missing-table errors ever.
 
+### Post-gate regression (part 4): portfolio tile render failures
+
+**Commit:** `c695a60`.
+
+John's walk-through surfaced 2-of-22 tiles rendering as black squares with the filename visible (`illumination.jpg`, `IMG_3236.jpg`, etc), making it look like the uploads had failed. Root-caused server-side with full certainty: every blob URL HEAD'd `200 image/jpeg`, every JPEG had valid bytes (I fetched thumb-3.jpg and it rendered as a proper Antelope Canyon sunbeam photo). The failure was 100% browser-side — 22 `<img>` tags racing for the 6-connections-per-origin HTTP/1.1 limit against `*.public.blob.vercel-storage.com`, with the slowest-responding ones timing out.
+
+Fix in `upload-client.tsx`'s `Tile` component:
+
+- `loading="lazy"` + `decoding="async"` — browser spreads loads based on viewport proximity instead of blasting every tile at once
+- `onError` handler retries once with `?r=1` cache-buster so the retry lands on a fresh connection
+- `alt=""` (was `alt={filename}`) so failed tiles never leak the filename as visible fallback text
+- On second failure, a small "failed to load" pill renders in the black tile instead of the default alt-text fallback
+
+The per-tile delete button already prunes `reviewIds`/`keepIds` (Commit `1fc703e`), so deleting a tile that genuinely failed to load still decrements the Confirm counter honestly.
+
