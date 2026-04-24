@@ -224,7 +224,9 @@ export async function parseDiscovery(
     model: MODEL_OPUS,
     max_tokens: 4000,
     system:
-      'Parse the input text into the DiscoveryResult schema. Preserve every URL, page_type, confidence, title, and rationale exactly. Dedupe URLs (if the same URL appears twice, keep the higher-confidence entry). Set queries_executed from the provided list. If the input contains "DISAMBIGUATION_NOTES:", populate disambiguation_notes; otherwise set to null.',
+      `Parse the input text into the DiscoveryResult schema. Preserve every URL, page_type, confidence, title, and rationale exactly. Dedupe URLs (if the same URL appears twice, keep the higher-confidence entry). Set queries_executed from the provided list. If the input contains "DISAMBIGUATION_NOTES:", populate disambiguation_notes; otherwise set to null.
+
+For each URL field, output ONLY the clean URL string. If the source text contains the URL adjacent to other JSON-like content, extract the URL boundary precisely. URLs end at the first whitespace, quote, comma, brace, or bracket.`,
     output_config: {
       format: {
         type: 'json_schema',
@@ -243,5 +245,29 @@ export async function parseDiscovery(
   const text =
     r.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text ?? '';
   const parsed = JSON.parse(text);
+  // Defense in depth: the parser LLM sometimes concatenates adjacent JSON field
+  // keys into URL strings (e.g. "https://x.com/page/','page_type':'press_feature").
+  // The system-prompt URL-boundary rule helps but isn't 100% reliable. Strip
+  // trailing junk after the URL's valid character set.
+  if (parsed && Array.isArray(parsed.discovered)) {
+    for (const entry of parsed.discovered) {
+      if (typeof entry?.url === 'string') {
+        entry.url = sanitizeUrl(entry.url);
+      }
+    }
+  }
   return DiscoveryResult.parse(parsed);
+}
+
+function sanitizeUrl(u: string): string {
+  // Valid URL chars per RFC 3986: [A-Za-z0-9] and - . _ ~ : / ? # [ ] @ ! $ & ' ( ) * + , ; = %
+  // But in practice, the concat artifacts introduce single-quote, comma, curly braces.
+  // Cut at the first character that's clearly a JSON separator smuggled into the URL.
+  const m = u.match(/^([^\s'"{}\[\]\\]+)/);
+  if (!m) return u;
+  let out = m[1];
+  // Trim trailing punctuation often left by the artifact (e.g. `/`, `,`, `.`)
+  // but preserve trailing slashes if they're part of the path.
+  while (out.length > 0 && /[,;]$/.test(out)) out = out.slice(0, -1);
+  return out;
 }
