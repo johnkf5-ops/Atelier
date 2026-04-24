@@ -139,7 +139,7 @@ export async function persistOpportunityFromAgent(runId: number, rawInput: unkno
                 ELSE excluded.portfolio_urls
               END,
               fetched_at = unixepoch()`,
-      args: [opportunityId, rec.year, rec.recipient_name, JSON.stringify(rec.image_urls)],
+      args: [opportunityId, rec.year ?? null, rec.recipient_name, JSON.stringify(rec.image_urls)],
     });
   }
 

@@ -138,18 +138,32 @@ export async function pollRun(
     sess.status === 'terminated' ||
     (sess.status === 'idle' && lastIdleStopReason !== null && lastIdleStopReason !== 'requires_action');
 
+  // Compare-and-swap: advance status + fire the next phase ONLY if we're
+  // the poll observing the just-terminal transition. Without this, every
+  // subsequent poll re-fires finalize-scout (the idle Scout session stays
+  // idle forever, sessionTerminal stays true) which walks status back.
   let phaseDone = false;
   if (sessionTerminal) {
     if (phase === 'scout') {
-      await db.execute({ sql: `UPDATE runs SET status = 'scout_complete' WHERE id = ?`, args: [runId] });
-      const { waitUntil } = await import('@vercel/functions');
-      waitUntil(fetch(new URL(`/api/runs/${runId}/finalize-scout`, req.url), { method: 'POST' }).catch(() => {}));
-      phaseDone = true;
+      const cas = await db.execute({
+        sql: `UPDATE runs SET status = 'scout_complete' WHERE id = ? AND status = 'scout_running'`,
+        args: [runId],
+      });
+      if (cas.rowsAffected > 0) {
+        const { waitUntil } = await import('@vercel/functions');
+        waitUntil(fetch(new URL(`/api/runs/${runId}/finalize-scout`, req.url), { method: 'POST' }).catch(() => {}));
+        phaseDone = true;
+      }
     } else if (phase === 'rubric') {
-      await db.execute({ sql: `UPDATE runs SET status = 'rubric_complete' WHERE id = ?`, args: [runId] });
-      const { waitUntil } = await import('@vercel/functions');
-      waitUntil(fetch(new URL(`/api/runs/${runId}/finalize`, req.url), { method: 'POST' }).catch(() => {}));
-      phaseDone = true;
+      const cas = await db.execute({
+        sql: `UPDATE runs SET status = 'rubric_complete' WHERE id = ? AND status = 'rubric_running'`,
+        args: [runId],
+      });
+      if (cas.rowsAffected > 0) {
+        const { waitUntil } = await import('@vercel/functions');
+        waitUntil(fetch(new URL(`/api/runs/${runId}/finalize`, req.url), { method: 'POST' }).catch(() => {}));
+        phaseDone = true;
+      }
     }
   }
 
