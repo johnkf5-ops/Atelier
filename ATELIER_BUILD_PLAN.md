@@ -1114,3 +1114,37 @@ Pull from spec §Risk register, with explicit decision points:
 1. **Rubric Matcher quality dry-run** — end of Phase 3.6. If reasoning is thin, halt and iterate `juror-reading.md` + system prompt before continuing to Phase 4.
 2. **Managed Agents port** — if Opportunity Scout works as Managed but Rubric Matcher hits friction, ship Scout as Managed and leave Matcher on direct SDK calls. One Managed Agent unlocks the side-prize narrative; two is optimal but not required.
 3. **Demo dry-run** — full unedited 30-min run end-to-end before recording. If any step needs babysitting, fix before recording, not in post.
+
+---
+
+## Amendments
+
+Additive features added after the original plan was written. These are appended (not edited inline) so the original phase numbering stays stable for in-flight coder sessions.
+
+### Phase 2.10 — Portfolio URL ingestion (added 2026-04-23, mid-Phase-2)
+
+Auto-scrape portfolio images from a list of URLs as an alternative to drag-drop. Pulls forward spec §38 ("Optional: URL to existing portfolio site for auto-ingest in v1.1") into v1.0 because (a) it removes a manual step from the demo and (b) the builder's site (Squarespace) makes the implementation trivial.
+
+**Scope:**
+- UI: above the existing dropzone on `/upload`, add a textarea labeled "Or paste portfolio URLs (one per line)" with a "Scrape" button
+- New route: `app/api/portfolio/scrape/route.ts` (POST, body: `{urls: string[]}`)
+  - For each URL: `fetch` HTML, parse with `cheerio`
+  - Extract image URLs from `<img src>`, `<img data-src>`, `<img srcset>` (largest variant), `<picture><source srcset>`, `<a href>` ending in `.jpg/.jpeg/.png/.webp`
+  - Filter: minimum 500px on either dimension (skip if dimensions known via `width`/`height` attrs; otherwise download + verify with `sharp`)
+  - Dedupe across all URLs and against existing `portfolio_images.blob_pathname` (SHA-256 of original bytes is the key)
+  - For each surviving image: pipe through the SAME upload pipeline as the dropzone. Refactor the per-image steps from `app/api/portfolio/upload/route.ts` into a shared helper (`lib/portfolio/ingest.ts`) so both routes use one code path
+  - Stream progress to UI via SSE or chunked response so user sees images appearing as scraped
+- **Squarespace optimization:** if a URL host is `images.squarespace-cdn.com/content/v1/`, append `?format=2500w` to request full-res. Handles the builder's site (jknopf.com) and any other Squarespace artist site cleanly
+- UX after scrape: scraped images appear in the same grid as drag-drop uploads, with a "review" state (checkbox per image) so user can deselect false positives before commit. Default = all selected
+
+**Test URLs (builder's site):**
+- https://www.jknopf.com/art
+- https://www.jknopf.com/the-art
+- https://www.jknopf.com/panoart
+- https://www.jknopf.com/square-45
+- https://www.jknopf.com/sunrisesymphonynew
+- https://www.jknopf.com/vertical-2
+
+**Acceptance:** pasting all six URLs returns 30+ unique images (deduped across pages) in the grid, ready for Style Analyst.
+
+**Sequencing:** build AFTER current Phase 2 work (2.5 Knowledge Extractor, 2.6 gap detection, 2.7 interview UI, 2.8 `/review` page, 2.9 Builder runs his own AKB) but BEFORE the Phase 2 acceptance gate. The gate's image-upload check can use the URL scraper in place of manual drag-drop.
