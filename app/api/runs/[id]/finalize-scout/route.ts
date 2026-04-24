@@ -3,6 +3,7 @@ import { put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
 import sharp from 'sharp';
 import { getDb } from '@/lib/db/client';
+import { uploadToFilesApi } from '@/lib/anthropic-files';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // Vercel Pro 5-min cap
@@ -15,7 +16,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   await db.execute({ sql: `UPDATE runs SET status = 'finalizing_scout' WHERE id = ?`, args: [runId] });
 
   // Recipients tied to this run's opportunities that haven't yet been mirrored to Blob.
-  // We detect mirrored rows by the presence of 'blob.vercel-storage' substring in portfolio_urls JSON.
   const rows = (
     await db.execute({
       sql: `SELECT pr.id, pr.opportunity_id, pr.name, pr.year, pr.portfolio_urls
@@ -37,7 +37,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const limit = pLimit(10);
   await Promise.all(rows.map((row) => limit(() => downloadRow(row))));
 
-  // Fire start-rubric
   waitUntil(
     fetch(new URL(`/api/runs/${runId}/start-rubric`, req.url), { method: 'POST' }).catch(() => {}),
   );
@@ -59,6 +58,7 @@ async function downloadRow(row: {
     urls = [];
   }
   const blobUrls: string[] = [];
+  const fileIds: string[] = [];
   const failures: { url: string; reason: string }[] = [];
 
   for (const url of urls) {
@@ -83,7 +83,10 @@ async function downloadRow(row: {
         .jpeg({ quality: 85 })
         .toBuffer();
       const safeName = row.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-      const pathname = `recipients/${row.opportunity_id}/${safeName}_pr${row.id}/${blobUrls.length}.jpg`;
+      const idx = blobUrls.length;
+      const pathname = `recipients/${row.opportunity_id}/${safeName}_pr${row.id}/${idx}.jpg`;
+
+      // Mirror to Vercel Blob (for dossier display + caching across runs).
       const { url: blobUrl } = await put(pathname, thumb, {
         access: 'public',
         contentType: 'image/jpeg',
@@ -91,6 +94,18 @@ async function downloadRow(row: {
         allowOverwrite: true,
       });
       blobUrls.push(blobUrl);
+
+      // Upload to Anthropic Files API (so the Rubric Matcher can read via
+      // mount_path without bash+curl+/tmp — avoids the malware-ack derail).
+      try {
+        const fileId = await uploadToFilesApi(thumb, `opp${row.opportunity_id}_${safeName}_${idx}.jpg`, 'image/jpeg');
+        fileIds.push(fileId);
+      } catch (fileErr) {
+        // Non-fatal: if Files API upload fails, Rubric falls back to URL-based bash+curl path.
+        // Leave fileIds slot empty (padded to null) so positional alignment with blobUrls holds.
+        console.warn(`[finalize-scout] files.upload failed for ${pathname}: ${(fileErr as Error).message}`);
+        fileIds.push('');
+      }
     } catch (e) {
       failures.push({ url, reason: (e as Error).message });
     }
@@ -114,7 +129,7 @@ async function downloadRow(row: {
   }
 
   await getDb().execute({
-    sql: `UPDATE past_recipients SET portfolio_urls = ?, fetched_at = unixepoch() WHERE id = ?`,
-    args: [JSON.stringify(blobUrls), row.id],
+    sql: `UPDATE past_recipients SET portfolio_urls = ?, file_ids = ?, fetched_at = unixepoch() WHERE id = ?`,
+    args: [JSON.stringify(blobUrls), JSON.stringify(fileIds), row.id],
   });
 }

@@ -4,7 +4,9 @@ import {
   startRubricSession,
   selectTopPortfolioImages,
   type OpportunityForRubric,
+  type PortfolioRef,
 } from '@/lib/agents/rubric-matcher';
+import { uploadToFilesApi } from '@/lib/anthropic-files';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 
@@ -43,7 +45,31 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   ).rows[0] as unknown as { json: string };
   const fingerprint = JSON.parse(fpRow.json) as StyleFingerprint;
 
-  const top12 = await selectTopPortfolioImages(runRow.user_id);
+  const top12Raw = await selectTopPortfolioImages(runRow.user_id);
+
+  // Upload each portfolio thumb to Anthropic Files API so the Rubric session
+  // can mount them at /workspace/portfolio/<id>.jpg and `read` directly.
+  const top12: PortfolioRef[] = await Promise.all(
+    top12Raw.map(async (p) => {
+      try {
+        const res = await fetch(p.thumb_url);
+        if (!res.ok) {
+          console.warn(`[start-rubric] portfolio thumb fetch failed ${p.id} → ${res.status}`);
+          return p;
+        }
+        const buf = Buffer.from(await res.arrayBuffer());
+        const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+        const fileId = await uploadToFilesApi(buf, `portfolio_${p.id}.jpg`, contentType);
+        return { ...p, file_id: fileId };
+      } catch (err) {
+        console.warn(`[start-rubric] portfolio Files API upload failed ${p.id}: ${(err as Error).message}`);
+        return p;
+      }
+    }),
+  );
+  console.log(
+    `[start-rubric] portfolio uploaded ${top12.filter((p) => p.file_id).length}/${top12.length} to Files API`,
+  );
 
   const oppRows = (
     await db.execute({
@@ -58,13 +84,26 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const opportunities: OpportunityForRubric[] = await Promise.all(
     oppRows.map(async (r) => {
       const raw = JSON.parse(r.raw_json) as { award?: { prestige_tier?: string } };
+      // One row per (opportunity_id, name) — duplicates arise when Scout
+      // has run more than once on the same opp. Keep the most recent (MAX id).
       const recRows = (
         await db.execute({
-          sql: `SELECT name, year, portfolio_urls FROM past_recipients
-                WHERE opportunity_id = ? AND portfolio_urls LIKE '%blob.vercel-storage%'`,
-          args: [r.id],
+          sql: `SELECT name, year, portfolio_urls, file_ids FROM past_recipients
+                WHERE opportunity_id = ? AND portfolio_urls LIKE '%blob.vercel-storage%'
+                  AND id IN (
+                    SELECT MAX(id) FROM past_recipients p2
+                    WHERE p2.opportunity_id = ?
+                      AND p2.portfolio_urls LIKE '%blob.vercel-storage%'
+                    GROUP BY p2.name
+                  )`,
+          args: [r.id, r.id],
         })
-      ).rows as unknown as Array<{ name: string; year: number | null; portfolio_urls: string }>;
+      ).rows as unknown as Array<{
+        name: string;
+        year: number | null;
+        portfolio_urls: string;
+        file_ids: string | null;
+      }>;
       return {
         id: r.id,
         name: r.name,
@@ -74,6 +113,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
           name: rr.name,
           year: rr.year,
           image_urls: JSON.parse(rr.portfolio_urls) as string[],
+          file_ids: rr.file_ids ? (JSON.parse(rr.file_ids) as string[]) : [],
         })),
       };
     }),
