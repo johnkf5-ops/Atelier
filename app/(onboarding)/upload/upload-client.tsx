@@ -31,6 +31,8 @@ export default function UploadClient() {
   const [images, setImages] = useState<Image[]>([]);
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analystResult, setAnalystResult] = useState<unknown>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch('/api/portfolio/upload', { cache: 'no-store' });
@@ -92,6 +94,20 @@ export default function UploadClient() {
 
   const ready = images.length >= MIN_IMAGES;
 
+  async function runAnalyst() {
+    setAnalyzing(true);
+    setAnalystResult(null);
+    try {
+      const res = await fetch('/api/style-analyst/run', { method: 'POST' });
+      const j = await res.json();
+      setAnalystResult(j);
+    } catch (err) {
+      setAnalystResult({ error: (err as Error).message });
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div
@@ -122,13 +138,20 @@ export default function UploadClient() {
           Portfolio ({images.length})
         </h2>
         <button
-          disabled={!ready}
+          onClick={runAnalyst}
+          disabled={!ready || analyzing}
           className="rounded border border-neutral-700 px-4 py-2 text-sm disabled:opacity-40 hover:bg-neutral-800"
           title={ready ? 'Run Style Analyst' : `Need ${MIN_IMAGES - images.length} more image(s)`}
         >
-          Run Style Analyst →
+          {analyzing ? 'Analyzing…' : 'Run Style Analyst →'}
         </button>
       </div>
+
+      {analystResult != null && (
+        <pre className="text-xs bg-neutral-950 border border-neutral-800 rounded p-3 overflow-auto max-h-96">
+{JSON.stringify(analystResult, null, 2)}
+        </pre>
+      )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={images.map((i) => i.id)} strategy={rectSortingStrategy}>
