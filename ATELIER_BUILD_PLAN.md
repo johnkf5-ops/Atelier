@@ -2438,6 +2438,17 @@ const client = new Anthropic({ apiKey: getAnthropicKey() });
 export async function draftPackages(runId: number, akb: ArtistKnowledgeBase, userId: number): Promise<void> {
   const db = getDb();
 
+  // Load the StyleFingerprint pinned to this run — drafted materials MUST describe the work
+  // as the visual read actually is, not as the AKB's narrative suggests. Without this the Drafter
+  // invents institutional-register framings (cool-tonal / Sugimoto-lineage / durational-conceptual)
+  // that don't match the actual portfolio, which panels see through when work samples are attached.
+  const runRow = (await db.execute({
+    sql: `SELECT style_fingerprint_id FROM runs WHERE id = ?`, args: [runId]
+  })).rows[0] as any;
+  const fingerprint: StyleFingerprint = JSON.parse(((await db.execute({
+    sql: `SELECT json FROM style_fingerprints WHERE id = ?`, args: [runRow.style_fingerprint_id]
+  })).rows[0] as any).json);
+
   // Load top-N included matches (composite_score DESC, cap 15, min 3 if available)
   const matchRows = (await db.execute({
     sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.composite_score, rm.reasoning, rm.supporting_image_ids, o.raw_json
@@ -2466,7 +2477,7 @@ export async function draftPackages(runId: number, akb: ArtistKnowledgeBase, use
   // Use allSettled so one match's failure doesn't abort the other 14 (the dossier still ships).
   const limit = pLimit(5);
   const settled = await Promise.allSettled(
-    matchRows.map((row: any) => limit(() => draftPackageForMatch(row, akb, portfolio)))
+    matchRows.map((row: any) => limit(() => draftPackageForMatch(row, akb, portfolio, fingerprint)))
   );
 
   // Log per-match failures to run_events for post-mortem visibility
@@ -2539,7 +2550,8 @@ type MatchRow = {
 async function draftPackageForMatch(
   row: MatchRow,
   akb: ArtistKnowledgeBase,
-  portfolio: Array<{ id: number; thumb_url: string; filename: string; exif_json: string | null }>
+  portfolio: Array<{ id: number; thumb_url: string; filename: string; exif_json: string | null }>,
+  fingerprint: StyleFingerprint
 ): Promise<void> {
   const db = getDb();
   const opp: Opportunity = JSON.parse(row.raw_json);
@@ -2570,10 +2582,10 @@ async function draftPackageForMatch(
   const proposalSkill = await fs.readFile('skills/project-proposal-structure.md', 'utf-8').catch(() => DEFAULT_PROPOSAL_SKILL);
   const cvSkill = await fs.readFile('skills/cv-format-by-institution.md', 'utf-8').catch(() => DEFAULT_CV_SKILL);
 
-  const artist_statement = await draftMaterial('artist_statement', { akb, opp, voiceSkill });
-  const project_proposal = await draftMaterial('project_proposal', { akb, opp, proposalSkill, oppRequirementsText });
-  const cv_formatted = await draftMaterial('cv', { akb, opp, cvSkill });
-  const cover_letter = await draftMaterial('cover_letter', { akb, opp, voiceSkill });
+  const artist_statement = await draftMaterial('artist_statement', { akb, opp, voiceSkill, fingerprint });
+  const project_proposal = await draftMaterial('project_proposal', { akb, opp, proposalSkill, oppRequirementsText, fingerprint });
+  const cv_formatted = await draftMaterial('cv', { akb, opp, cvSkill, fingerprint });
+  const cover_letter = await draftMaterial('cover_letter', { akb, opp, voiceSkill, fingerprint });
   const work_sample_selection = workSamples;  // already an array; no LLM call — rationale attached inline
 
   await db.execute({
@@ -2591,28 +2603,43 @@ type MaterialType = 'artist_statement' | 'project_proposal' | 'cv' | 'cover_lett
 type DraftCtx = {
   akb: ArtistKnowledgeBase;
   opp: Opportunity;
+  fingerprint: StyleFingerprint;    // required — constrains all visual claims
   voiceSkill?: string;
   proposalSkill?: string;
   cvSkill?: string;
   oppRequirementsText?: string;
 };
 
+// Hard constraint applied to every per-material prompt. Prevents the Drafter from inventing
+// an institutional-register framing (cool-tonal palette, Sugimoto-lineage, durational-conceptual)
+// that doesn't match the actual visual work. The fingerprint is ground truth for visual claims.
+const FINGERPRINT_CONSTRAINT = `HARD CONSTRAINT — VISUAL CLAIMS MUST MATCH THE STYLE FINGERPRINT:
+Every descriptive claim you make about the artist's visual work (palette, lineage, composition, subject register, process) must be supported by the StyleFingerprint below. Do NOT write an aspirational framing that contradicts the fingerprint.
+
+- If the fingerprint says "saturated" palette, do NOT claim "cool-tonal" or "muted."
+- If the fingerprint's formal_lineage names commercial precedents (Peter Lik, Trey Ratcliff, Galen Rowell), do NOT pitch the work as "Sugimoto-lineage" or "New Topographics" or any institutional-register lineage the fingerprint does not name.
+- If the fingerprint's career_positioning_read names a commercial / destination-gallery register, WRITE FROM THAT register — own it honestly. Panels read the work samples alongside the statement; a statement whose visual claims contradict the attached images reads as overreach and disqualifies.
+- You MAY describe aspirations in intent.aspirations terms ("intent to deepen the regional practice") but do NOT describe the CURRENT work as having qualities it does not have.
+- Use vocabulary from the fingerprint's own fields when possible.
+
+Read the fingerprint carefully. Write about the work as it actually is. Commercial-register honesty beats institutional-register pretense every time.`;
+
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
-    system: ctx.voiceSkill + '\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. 300-500 words. No preamble, no markdown. Return plain text only.',
-    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the artist statement now.`
+    system: (ctx.voiceSkill ?? DEFAULT_VOICE_SKILL) + '\n\n---\n\n' + FINGERPRINT_CONSTRAINT + '\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. 300-500 words. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}\n\nSTYLE_FINGERPRINT (ground truth for visual claims):\n${JSON.stringify(ctx.fingerprint, null, 2)}\n\nARTIST_AKB (ground truth for biographical + career claims):\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the artist statement now. Describe the work as the fingerprint says it IS.`
   }),
   project_proposal: (ctx) => ({
-    system: ctx.proposalSkill + '\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. If the opportunity\'s stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.',
-    user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}\n\nOPPORTUNITY_REQUIREMENTS (from their page, may be partial):\n${ctx.oppRequirementsText || '(not available — use generic structure)'}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the project proposal now.`
+    system: (ctx.proposalSkill ?? DEFAULT_PROPOSAL_SKILL) + '\n\n---\n\n' + FINGERPRINT_CONSTRAINT + '\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity\'s stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}\n\nOPPORTUNITY_REQUIREMENTS (from their page, may be partial):\n${ctx.oppRequirementsText || '(not available — use generic structure)'}\n\nSTYLE_FINGERPRINT:\n${JSON.stringify(ctx.fingerprint, null, 2)}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the project proposal now.`
   }),
   cv: (ctx) => ({
-    system: ctx.cvSkill + '\n\n---\n\nYou are formatting a CV for a specific institution\'s application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble.',
+    system: (ctx.cvSkill ?? DEFAULT_CV_SKILL) + '\n\n---\n\nYou are formatting a CV for a specific institution\'s application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble. (StyleFingerprint not needed here — CV is factual.)',
     user: `OPPORTUNITY: ${ctx.opp.name} — submission format requirements per your skill file.\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nFormat the CV now.`
   }),
   cover_letter: (ctx) => ({
-    system: ctx.voiceSkill + '\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity\'s selectors. 200-300 words. Named addressee if the opportunity has a known director; else "Selection Committee". Pull facts ONLY from the provided AKB. No preamble, no markdown. Return plain text only.',
-    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the cover letter now.`
+    system: (ctx.voiceSkill ?? DEFAULT_VOICE_SKILL) + '\n\n---\n\n' + FINGERPRINT_CONSTRAINT + '\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity\'s selectors. 200-300 words. Named addressee if the opportunity has a known director; else "Selection Committee". Pull facts ONLY from the AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}\n\nSTYLE_FINGERPRINT:\n${JSON.stringify(ctx.fingerprint, null, 2)}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the cover letter now.`
   })
 };
 
