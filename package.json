@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "setup:agents": "tsx scripts/setup-managed-agents.ts",
+    "db:reset": "tsx scripts/reset-db.ts --yes-reset-everything",
     "test": "vitest run tests/smoke"
   },
   "dependencies": {
