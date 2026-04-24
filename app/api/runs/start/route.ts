@@ -4,6 +4,7 @@ import { getCurrentUserId } from '@/lib/auth/user';
 import { RunConfig, defaultWindow } from '@/lib/schemas/run';
 import { startScoutSession } from '@/lib/agents/opportunity-scout';
 import { loadLatestAkb } from '@/lib/akb/persistence';
+import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -28,13 +29,15 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'no AKB yet — complete onboarding first' }, { status: 400 });
   }
   const fpRow = await db.execute({
-    sql: `SELECT id FROM style_fingerprints WHERE user_id = ? ORDER BY version DESC LIMIT 1`,
+    sql: `SELECT id, json FROM style_fingerprints WHERE user_id = ? ORDER BY version DESC LIMIT 1`,
     args: [userId],
   });
   if (fpRow.rows.length === 0) {
     return Response.json({ error: 'no style fingerprint yet — run Style Analyst first' }, { status: 400 });
   }
-  const styleFpId = Number((fpRow.rows[0] as unknown as { id: number }).id);
+  const styleFpRow = fpRow.rows[0] as unknown as { id: number; json: string };
+  const styleFpId = Number(styleFpRow.id);
+  const fingerprint = JSON.parse(styleFpRow.json) as StyleFingerprint;
 
   const runInsert = await db.execute({
     sql: `INSERT INTO runs (user_id, akb_version_id, style_fingerprint_id, status, config_json)
@@ -45,6 +48,6 @@ export async function POST(req: NextRequest) {
 
   const { akb } = await loadLatestAkb(userId);
 
-  const sessionId = await startScoutSession(runId, akb, config);
+  const sessionId = await startScoutSession(runId, akb, fingerprint, config);
   return Response.json({ run_id: runId, session_id: sessionId, phase: 'scout' });
 }
