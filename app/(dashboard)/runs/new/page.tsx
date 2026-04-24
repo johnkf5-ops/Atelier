@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
+import { getPortfolioCount } from '@/lib/db/queries/portfolio';
 import NewRunClient from './new-run-client';
 
 export const runtime = 'nodejs';
@@ -27,14 +28,7 @@ export default async function NewRunPage() {
     })
   ).rows[0] as unknown as { version: number; created_at: number } | undefined;
 
-  const portfolioCount = Number(
-    (
-      await db.execute({
-        sql: `SELECT COUNT(*) as n FROM portfolio_images WHERE user_id = ?`,
-        args: [userId],
-      })
-    ).rows[0] as unknown as { n: number },
-  ) || 0;
+  const portfolioCount = await getPortfolioCount(userId);
 
   const ready = Boolean(fpRow) && Boolean(akbRow) && portfolioCount > 0;
 

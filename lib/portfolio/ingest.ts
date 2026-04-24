@@ -1,6 +1,11 @@
 import { getDb } from '@/lib/db/client';
 import { putBlob } from '@/lib/storage/blobs';
 import { preprocessImage } from '@/lib/images/preprocess';
+import {
+  getPortfolioCount as canonicalGetPortfolioCount,
+  getNextPortfolioOrdinal as canonicalGetNextOrdinal,
+  existingPortfolioHashes as canonicalExistingHashes,
+} from '@/lib/db/queries/portfolio';
 
 export type IngestedImage = {
   id: number;
@@ -20,38 +25,10 @@ export type IngestSource = {
 
 export const PORTFOLIO_CAP = 100;
 
-export async function getPortfolioCount(userId: number): Promise<number> {
-  const db = getDb();
-  const r = await db.execute({
-    sql: 'SELECT COUNT(*) as n FROM portfolio_images WHERE user_id = ?',
-    args: [userId],
-  });
-  return Number(r.rows[0]?.n ?? 0);
-}
-
-export async function getNextOrdinal(userId: number): Promise<number> {
-  const db = getDb();
-  const r = await db.execute({
-    sql: 'SELECT COALESCE(MAX(ordinal), -1) as max_ord FROM portfolio_images WHERE user_id = ?',
-    args: [userId],
-  });
-  return Number(r.rows[0]?.max_ord ?? -1) + 1;
-}
-
-export async function existingHashes(userId: number): Promise<Set<string>> {
-  const db = getDb();
-  const r = await db.execute({
-    sql: `SELECT blob_pathname FROM portfolio_images WHERE user_id = ?`,
-    args: [userId],
-  });
-  // blob_pathname is "originals/<hash>.jpg" — extract the hash
-  const out = new Set<string>();
-  for (const row of r.rows) {
-    const m = String(row.blob_pathname).match(/originals\/([0-9a-f]{64})\.jpg/);
-    if (m) out.add(m[1]);
-  }
-  return out;
-}
+// Re-exports for back-compat. Canonical impls live in lib/db/queries/portfolio.ts.
+export const getPortfolioCount = canonicalGetPortfolioCount;
+export const getNextOrdinal = canonicalGetNextOrdinal;
+export const existingHashes = canonicalExistingHashes;
 
 /**
  * Idempotent per-image ingest: preprocesses → uploads both blob variants →
