@@ -82,3 +82,19 @@ Manual items still pending (user-owned, not code):
 - §5.1 #2 — Deployment Protection OFF (Vercel dashboard)
 - §5.1 #4 — Fresh incognito prod walk-through after DP toggle
 
+### Post-gate regression: empty-500 after db:reset
+
+**Commit:** `8083ff2`.
+
+John's incognito walk-through after DP-off surfaced a real bug: `pnpm db:reset` drops every table, and the **next** server boot 500'd with an empty body on `POST /api/portfolio/upload`. Frontend crashed parsing the empty response: *"SyntaxError: Failed to execute 'json' on 'Response': Unexpected end of JSON input"*.
+
+Two root causes, both fixed without bandaids.
+
+**Root cause 1 — `runMigrations()` was defined in `lib/db/migrations.ts` but NEVER called anywhere.** After a reset, the next request hit an empty DB and threw "no such table: portfolio_images". Fix: new `ensureDbReady()` in `lib/db/client.ts` — memoized via a `_bootstrapPromise` so concurrent requests share one run; first call inside `ensureDbReady()` runs all migrations + seeds `users(id=1, name='Default User')` via `INSERT OR IGNORE`. Resets to `null` on failure so later requests can retry. Every non-SSE API route (18 files, converted mechanically via subagent) now awaits `ensureDbReady()` as its first line. Server Components that hit the DB directly (`/runs`, `/runs/new`, `/dossier/[runId]`) also await it.
+
+**Root cause 2 — App Router 500s have empty bodies, frontend parsers crash.** Even with the migration fix, ANY future uncaught throw in a route handler produces an empty-body 500 that takes the UI down. Fix: `lib/api/response.ts` `withApiErrorHandling()` wraps every handler so any thrown error becomes `Response.json({error: err.message}, {status: 500})`. Every non-SSE route converted. Defensive frontend parser `lib/api/fetch-client.ts` `fetchJson()` reads response as text first, surfaces empty/non-JSON/network-error cases as a `SafeResult<T>` discriminated union — `upload-client.tsx`'s four fetch calls now use it and show "Upload failed: ..." in the errors banner instead of crashing. Remaining client files still use raw `res.json()` but the backend guarantee makes it safe for now; they can migrate to `fetchJson` incrementally.
+
+**Regression test** — `tests/smoke/db-bootstrap.test.ts` boots a fresh `file://` Turso DB, calls `ensureDbReady()`, asserts `portfolio_images` table exists, `users(id=1)` seeded, `getPortfolioCount(1)` returns 0 without throwing. Second test proves idempotency. This regression cannot re-ship without the suite flagging it.
+
+**Verification:** 16/16 smoke tests pass. `pnpm build` clean. Full dev-server route sweep (`/`, `/upload`, `/interview`, `/review`, `/runs`, `/runs/new`, `/runs/5`, `/dossier/5`) all 200 or expected 307-redirect post-reset.
+
