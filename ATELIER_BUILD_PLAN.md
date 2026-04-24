@@ -3322,14 +3322,17 @@ For the demo recording (per spec §Demo strategy, "First Style Analyst pass = li
 - [ ] **Record setup:** ScreenFlow (macOS, paid but best for post-production) OR QuickTime (free, simpler) OR OBS Studio (free, more flexible). Recommend ScreenFlow if available — the 10x playback compression is critical and ScreenFlow's clip-speed controls are cleanest. Retina display at native resolution; browser window at 1440×900 for a clean 1080p crop.
 - [ ] **Voiceover:** record SEPARATE from screen capture. Do a first pass of the screen activity, then record voice against playback in editing. This lets you retake voice without rerecording the demo.
 - [ ] **Pre-run the full pipeline morning of recording.** Use John's real data. Save the `run_id`.
-- [ ] **Record per spec §Demo strategy shot-list** (3 min total):
-  - 0:00–0:15 cold open (black screen quote, cut to John in gallery)
+- [ ] **Record per shot-list (3 min total; UPDATED post-§3.6 with actual run data — spec's original Magnum/Critical-Mass pivot is superseded by the stronger Guggenheim-rejection + Nevada-acceptance bookends):**
+  - 0:00–0:15 cold open (black screen quote from spec, cut to John in gallery)
   - 0:15–0:45 identity + stakes (builder on camera, cut to laptop)
-  - 0:45–1:15 Style Analyst fires — LIVE recording of first Style Analyst pass (real, no playback)
-  - 1:15–1:45 Knowledge Extractor — builder on camera + interview questions
-  - 1:45–2:15 Opportunity Scout + Rubric Matcher — **10x playback via `/runs/[id]?playback=<run_id>&speed=10`**
-  - 2:15–2:45 Package Drafter — builder reads artist statement on camera
-  - 2:45–3:00 kicker line + end card with GitHub link
+  - 0:45–1:15 Style Analyst fires — LIVE recording of first Style Analyst pass (real, no playback). Voiceover reads Claude's actual output naming Peter Lik / Trey Ratcliff lineage
+  - 1:15–1:45 Knowledge Extractor — builder on camera + auto-discover mode (§2.12) discovering his 17 URLs from name + affiliations
+  - 1:45–2:15 **Opportunity Scout + Rubric Matcher** — 10x playback via `/runs/[id]?playback=<run_id>&speed=10`. **The demo-spine moment: builder asks "why shouldn't I apply to Guggenheim Photography?" Rubric responds with 0.04 fit, citing Tarrah Krajnak + Matthew Brandt + Dylan Hausthor (actual 2024 Fellows verified on gf.org) as the cohort register, naming Knopf's portfolio as the precise Section-1 anti-reference.** Hold a beat on that reasoning text.
+  - 2:15–2:30 **The right-room flip.** Cut to the same run's top included match — Nevada Arts Council Artist Fellowship 0.58. Voiceover reads that reasoning: "Knopf's Las Vegas residency, two-gallery representation, NatGeo/TIME publication record are precisely the career-stage markers NAC panels reward." Pause on the score.
+  - 2:30–2:50 Package Drafter — builder reads the drafted artist statement for Nevada Arts Council on camera, visible reaction
+  - 2:50–3:00 kicker line + end card with GitHub link
+
+  **The narrative shift from spec:** the system does not flatter. It named the builder's work as Peter-Lik-register and refused Guggenheim/MacDowell/Critical Mass. THEN it surfaced the right fit — the regional state fellowship nobody predicted. That's a harder, more honest product claim than the spec's original "just redirect to a better-fit photography prize." The Rubric Matcher's value is telling you truth your own aspirations are obscuring.
 - [ ] **Single take of kicker line.** Emotional honesty over polish per the spec.
 - [ ] Export at 1080p H.264 MP4, max file size per submission platform requirements.
 
