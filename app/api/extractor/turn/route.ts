@@ -52,6 +52,21 @@ export async function POST(req: NextRequest) {
   // Apply patch + save AKB if anything changed
   let saved: { id: number; version: number } | null = null;
   if (turn.akb_patch && Object.keys(turn.akb_patch).length > 0) {
+    // Defensive check (§2.7): model is instructed to send ONLY new array entries,
+    // not the full array. If we see an array SHORTER than what's already in AKB,
+    // the model regressed — log a warning. mergeAkb's append+dedupe still handles
+    // it correctly (treats the "shortened" array as a few entries to add), but
+    // surfacing the regression lets us catch prompt drift in the demo.
+    for (const [k, v] of Object.entries(turn.akb_patch)) {
+      if (Array.isArray(v)) {
+        const existingArr = (akb as unknown as Record<string, unknown>)[k];
+        if (Array.isArray(existingArr) && v.length < existingArr.length) {
+          console.warn(
+            `[interview] akb_patch.${k} has ${v.length} items but existing has ${existingArr.length} — model may be re-emitting full array instead of deltas`,
+          );
+        }
+      }
+    }
     const { merged, changedFields } = mergeAkb(akb, turn.akb_patch, 'interview');
     if (changedFields.length > 0) {
       saved = await saveAkb(userId, merged, 'interview');

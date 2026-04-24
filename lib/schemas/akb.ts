@@ -8,7 +8,7 @@ export const ArtistKnowledgeBase = z.object({
     citizenship: z.array(z.string()),
     home_base: z.object({
       city: z.string(),
-      state: z.string(),
+      state: z.string().optional(), // international artists may not have a US-style state
       country: z.string(),
     }),
     year_of_birth: z.number().optional(),
@@ -84,15 +84,28 @@ export const ArtistKnowledgeBase = z.object({
 
 export type ArtistKnowledgeBase = z.infer<typeof ArtistKnowledgeBase>;
 
-export const PartialArtistKnowledgeBase = ArtistKnowledgeBase.deepPartial();
-export type PartialArtistKnowledgeBase = z.infer<typeof PartialArtistKnowledgeBase>;
+// PartialAKB — used for ingestion output and interview akb_patch.
+// .deepPartial() recurses — every field at every depth is optional.
+// Requires zod@^3 (v4 removed .deepPartial).
+export const PartialAKB = ArtistKnowledgeBase.deepPartial();
+export type PartialAKB = z.infer<typeof PartialAKB>;
 
+// Back-compat alias for call sites still using the longer name.
+export const PartialArtistKnowledgeBase = PartialAKB;
+export type PartialArtistKnowledgeBase = PartialAKB;
+
+/**
+ * Minimum-viable AKB shape — starting point for ingestion (which builds
+ * up from partials and may not yet produce a schema-valid result).
+ * The strict ArtistKnowledgeBase-valid row is only required at /finalize
+ * and the /review "Continue to dossier" gate.
+ */
 export function emptyAkb(legalName = ''): ArtistKnowledgeBase {
   return {
     identity: {
       legal_name: legalName,
       citizenship: [],
-      home_base: { city: '', state: '', country: '' },
+      home_base: { city: '', country: '' },
     },
     practice: {
       primary_medium: '',

@@ -129,6 +129,6 @@ function buildMessages(
 function formatGapsForPrompt(gaps: Gap[]): string {
   if (gaps.length === 0) return '(no gaps remaining — wrap up the interview gracefully)';
   return gaps
-    .map((g, i) => `${i + 1}. ${g.field} — ${g.question_seed}`)
+    .map((g, i) => `${i + 1}. ${g.path} (priority ${g.priority})`)
     .join('\n');
 }

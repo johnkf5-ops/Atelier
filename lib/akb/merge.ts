@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import {
   ArtistKnowledgeBase,
+  PartialAKB,
   type ArtistKnowledgeBase as TAkb,
-  type PartialArtistKnowledgeBase,
+  type PartialAKB as TPartialAkb,
 } from '@/lib/schemas/akb';
 
 // Per-array-item validators (derived from the ArtistKnowledgeBase shape).
@@ -31,143 +32,168 @@ function provenanceKind(p: Provenance | string | undefined): string {
   return p.startsWith('ingested:') ? 'ingested' : p;
 }
 
-export function canOverwrite(
-  fieldKey: string,
-  existing: TAkb,
+function canOverwrite(
+  leafPath: string,
+  provenanceMap: Record<string, string>,
   incomingProvenance: Provenance,
 ): boolean {
-  const existingProv = existing.source_provenance[fieldKey];
+  const existingProv = provenanceMap[leafPath];
   if (!existingProv) return true;
+  if (existingProv === incomingProvenance) return true; // same-source update
   const incomingRank = PROVENANCE_RANK[provenanceKind(incomingProvenance)] ?? 0;
   const existingRank = PROVENANCE_RANK[provenanceKind(existingProv)] ?? 0;
-  // Same-source updates (e.g., re-ingest of same URL): allow.
-  if (existingProv === incomingProvenance) return true;
   return incomingRank >= existingRank;
 }
 
 const ARRAY_DEDUPE_KEYS: Record<string, (item: Record<string, unknown>) => string> = {
-  education: (e) =>
-    `${norm(e.institution)}|${norm(e.degree)}|${e.year ?? ''}`,
-  bodies_of_work: (b) => `${norm(b.title)}|${norm(b.years)}`,
-  exhibitions: (x) =>
-    `${norm(x.venue)}|${x.year ?? ''}|${norm(x.title)}`,
-  publications: (p) =>
-    `${norm(p.publisher)}|${p.year ?? ''}|${norm(p.title)}`,
+  education: (e) => `${norm(e.institution)}|${e.year ?? ''}`,
+  bodies_of_work: (b) => `${norm(b.title)}`,
+  exhibitions: (x) => `${norm(x.venue)}|${x.year ?? ''}|${norm(x.title)}`,
+  publications: (p) => `${norm(p.publisher)}|${p.year ?? ''}|${norm(p.title)}`,
   awards_and_honors: (a) => `${norm(a.name)}|${a.year ?? ''}`,
-  collections: (c) => `${norm(c.name)}|${norm(c.type)}`,
-  representation: (r) => `${norm(r.gallery)}|${norm(r.location)}`,
+  collections: (c) => `${norm(c.name)}`,
+  representation: (r) => `${norm(r.gallery)}`,
 };
 
 function norm(v: unknown): string {
-  return typeof v === 'string' ? v.trim().toLowerCase() : '';
+  // Plan's normalize: lowercase + strip non-alphanum + collapse whitespace
+  return typeof v === 'string'
+    ? v.toLowerCase().replace(/[^a-z0-9]+/g, '').trim()
+    : '';
 }
 
-export type MergeResult = { merged: TAkb; changedFields: string[] };
+export type MergeResult = { merged: TAkb | TPartialAkb; changedFields: string[] };
 
 /**
- * Merge a partial AKB into an existing AKB with provenance enforcement.
- * Scalars: last-write-wins subject to canOverwrite().
- * Arrays: concat + dedupe by ARRAY_DEDUPE_KEYS, preserving existing entries.
- * Nested objects (identity, practice, intent, palette etc.): per-leaf merge.
+ * Merge a partial AKB into an existing AKB with leaf-path provenance enforcement.
+ *
+ * Provenance rules:
+ * - Scalars get leaf-path keys (`identity.legal_name`, `identity.home_base.city`, etc.)
+ * - Arrays get array-path keys (`exhibitions`, `bodies_of_work` — no per-item provenance in v1)
+ * - Nested objects recurse with growing dot-path; NEVER stamped at the parent
+ *
+ * Array merge: concat + dedupe by ARRAY_DEDUPE_KEYS. Drop items that don't
+ * individually validate against the strict AKB item schema (LLMs often emit
+ * partial entries missing year/venue/etc. that would break re-validation).
+ *
+ * The result is PartialAKB-shaped during ingestion/interview (may still have
+ * empty required scalars); /finalize does the strict ArtistKnowledgeBase.parse.
+ */
+export function mergeAkbPartial(
+  existing: TAkb | TPartialAkb,
+  incoming: TPartialAkb,
+  provenance: Provenance,
+): MergeResult {
+  const out = structuredClone(existing) as Record<string, unknown>;
+  const provMap: Record<string, string> = {
+    ...((existing as { source_provenance?: Record<string, string> }).source_provenance ?? {}),
+  };
+  const changed: string[] = [];
+
+  mergeInto(out, incoming as Record<string, unknown>, '', provMap, provenance, changed);
+
+  out.source_provenance = provMap;
+
+  // Loose re-validation: PartialAKB allows incomplete fields. The strict
+  // ArtistKnowledgeBase.parse happens at /api/akb/finalize, not here.
+  const v = PartialAKB.safeParse(out);
+  if (!v.success) {
+    throw new Error(`mergeAkbPartial produced invalid PartialAKB: ${v.error.message}`);
+  }
+  return { merged: v.data as TAkb | TPartialAkb, changedFields: changed };
+}
+
+/**
+ * Back-compat wrapper for earlier call sites. Forwards to mergeAkbPartial.
+ * New code should use mergeAkbPartial directly.
  */
 export function mergeAkb(
   existing: TAkb,
-  incoming: PartialArtistKnowledgeBase,
+  incoming: TPartialAkb,
   provenance: Provenance,
-): MergeResult {
-  const out: TAkb = structuredClone(existing);
-  const changed: string[] = [];
+): { merged: TAkb; changedFields: string[] } {
+  const r = mergeAkbPartial(existing, incoming, provenance);
+  return { merged: r.merged as TAkb, changedFields: r.changedFields };
+}
 
+function mergeInto(
+  target: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+  parentPath: string,
+  provMap: Record<string, string>,
+  provenance: Provenance,
+  changed: string[],
+): void {
   for (const [key, value] of Object.entries(incoming)) {
     if (value === undefined || value === null) continue;
     if (key === 'source_provenance') continue;
 
+    const path = parentPath ? `${parentPath}.${key}` : key;
+
     if (Array.isArray(value)) {
-      const dedupeKey = ARRAY_DEDUPE_KEYS[key];
-      if (!dedupeKey) {
-        // citizenship, aspirations, etc. — flat string arrays
-        const existingArr = (existing[key as keyof TAkb] as unknown as string[] | undefined) ?? [];
-        const merged = dedupeStrings([...existingArr, ...(value as string[])]);
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (out as any)[key] = merged;
-        out.source_provenance[key] = provenance;
-        changed.push(key);
-        continue;
-      }
-      const seen = new Map<string, Record<string, unknown>>();
-      for (const item of existing[key as keyof TAkb] as Array<Record<string, unknown>>) {
-        seen.set(dedupeKey(item), item);
-      }
-      const itemSchema = ARRAY_ITEM_SCHEMAS[key];
-      let added = 0;
-      for (const item of value as Array<Record<string, unknown>>) {
-        // Drop items that don't fully validate — LLMs often produce partial
-        // entries (missing year, venue, etc.) which would break final AKB validation.
-        if (itemSchema && !itemSchema.safeParse(item).success) continue;
-        const k = dedupeKey(item);
-        if (!seen.has(k)) {
-          seen.set(k, item);
-          added++;
-        }
-      }
-      if (added > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (out as any)[key] = Array.from(seen.values());
-        out.source_provenance[key] = provenance;
-        changed.push(key);
-      }
+      mergeArrayField(target, key, path, value, provMap, provenance, changed);
       continue;
     }
 
     if (typeof value === 'object') {
-      // Nested object — merge field-by-field with provenance per leaf.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const existingObj: Record<string, unknown> = (out as any)[key] ?? {};
-      for (const [innerKey, innerValue] of Object.entries(value)) {
-        if (innerValue === undefined || innerValue === null) continue;
-        const fieldKey = `${key}.${innerKey}`;
-        if (Array.isArray(innerValue)) {
-          const merged = dedupeStrings([
-            ...((existingObj[innerKey] as string[]) ?? []),
-            ...(innerValue as string[]),
-          ]);
-          existingObj[innerKey] = merged;
-          out.source_provenance[fieldKey] = provenance;
-          changed.push(fieldKey);
-        } else if (typeof innerValue === 'object') {
-          // home_base etc.
-          const cur = (existingObj[innerKey] as Record<string, unknown>) ?? {};
-          existingObj[innerKey] = { ...cur, ...innerValue };
-          out.source_provenance[fieldKey] = provenance;
-          changed.push(fieldKey);
-        } else {
-          if (canOverwrite(fieldKey, out, provenance)) {
-            existingObj[innerKey] = innerValue;
-            out.source_provenance[fieldKey] = provenance;
-            changed.push(fieldKey);
-          }
-        }
-      }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (out as any)[key] = existingObj;
+      // Recurse — build dot-path as we descend; never stamp at this level.
+      const nextTarget = (target[key] as Record<string, unknown> | undefined) ?? {};
+      mergeInto(nextTarget, value as Record<string, unknown>, path, provMap, provenance, changed);
+      target[key] = nextTarget;
       continue;
     }
 
-    // Scalar at top level (career_stage)
-    if (canOverwrite(key, out, provenance)) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (out as any)[key] = value;
-      out.source_provenance[key] = provenance;
-      changed.push(key);
+    // Scalar at leaf — stamp provenance at full dot-path if allowed.
+    if (canOverwrite(path, provMap, provenance)) {
+      target[key] = value;
+      provMap[path] = provenance;
+      changed.push(path);
     }
   }
+}
 
-  // Re-validate. Re-throw on failure — merge must produce a schema-valid AKB.
-  const v = ArtistKnowledgeBase.safeParse(out);
-  if (!v.success) {
-    throw new Error(`mergeAkb produced invalid AKB: ${v.error.message}`);
+function mergeArrayField(
+  target: Record<string, unknown>,
+  key: string,
+  path: string,
+  incoming: unknown[],
+  provMap: Record<string, string>,
+  provenance: Provenance,
+  changed: string[],
+): void {
+  const dedupeKey = ARRAY_DEDUPE_KEYS[key];
+  if (!dedupeKey) {
+    // Flat string arrays (citizenship, secondary_media, influences, aspirations, etc.)
+    const existingArr = (target[key] as string[] | undefined) ?? [];
+    const merged = dedupeStrings([...existingArr, ...(incoming as string[])]);
+    if (merged.length !== existingArr.length) {
+      target[key] = merged;
+      provMap[path] = provenance;
+      changed.push(path);
+    }
+    return;
   }
-  return { merged: v.data, changedFields: changed };
+
+  const itemSchema = ARRAY_ITEM_SCHEMAS[key];
+  const existingArr = (target[key] as Array<Record<string, unknown>>) ?? [];
+  const seen = new Map<string, Record<string, unknown>>();
+  for (const item of existingArr) seen.set(dedupeKey(item), item);
+
+  let added = 0;
+  for (const item of incoming as Array<Record<string, unknown>>) {
+    // Drop items that don't fully validate — LLMs often emit partial entries.
+    if (itemSchema && !itemSchema.safeParse(item).success) continue;
+    const k = dedupeKey(item);
+    if (!seen.has(k)) {
+      seen.set(k, item);
+      added++;
+    }
+  }
+  if (added > 0) {
+    target[key] = Array.from(seen.values());
+    provMap[path] = provenance;
+    changed.push(path);
+  }
 }
 
 function dedupeStrings(xs: string[]): string[] {

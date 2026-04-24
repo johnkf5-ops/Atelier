@@ -42,9 +42,21 @@ export async function ingestUrls(
   const allChanged = new Set<string>();
   let ingestedCount = 0;
 
-  for (const url of urls) {
-    opts.onProgress?.({ type: 'fetching', url });
-    const r = await ingestUrl(url);
+  // Emit fetching events in order, then kick off all fetches in parallel.
+  // Plan §2.5: `Promise.allSettled` so one bad URL doesn't break the batch.
+  for (const url of urls) opts.onProgress?.({ type: 'fetching', url });
+  const settled = await Promise.allSettled(urls.map((u) => ingestUrl(u)));
+
+  for (let i = 0; i < settled.length; i++) {
+    const url = urls[i];
+    const s = settled[i];
+    if (s.status === 'rejected') {
+      const reason = String(s.reason);
+      failed.push({ url, reason });
+      opts.onProgress?.({ type: 'failed', url, reason });
+      continue;
+    }
+    const r = s.value;
     if (!r.ok || !r.partial) {
       failed.push({ url, reason: r.error ?? 'unknown' });
       opts.onProgress?.({ type: 'failed', url, reason: r.error ?? 'unknown' });

@@ -1,85 +1,76 @@
-import type { ArtistKnowledgeBase as TAkb } from '@/lib/schemas/akb';
+import type { ArtistKnowledgeBase, PartialAKB } from '@/lib/schemas/akb';
 
 export type Gap = {
-  field: string;
-  importance: number; // higher = ask sooner
-  question_seed: string; // raw fallback prompt for the interviewer
+  path: string;
+  priority: number;
+  why: string;
 };
 
-// Importance bands, per build plan §2.6:
-// identity > practice > intent > exhibitions > rest
-const IMPORTANCE = {
-  identity: 100,
-  practice: 90,
-  intent: 80,
+// Back-compat alias for earlier call sites.
+export type GapTarget = Gap;
+
+/**
+ * Priority tiers per §2.6 — higher number = asked first. Each key is a dot-path
+ * into the AKB structure; detectGaps walks the path and records a gap if the
+ * leaf is empty (undefined, null, "", or empty array).
+ */
+const TIERS: Record<string, number> = {
+  'identity.legal_name': 100,
+  'identity.citizenship': 100,
+  'identity.home_base': 95,
+  'practice.primary_medium': 90,
+  'practice.process_description': 85,
+  'intent.statement': 80,
+  career_stage: 75,
+  bodies_of_work: 70,
   exhibitions: 60,
-  bodies_of_work: 55,
-  representation: 50,
-  publications: 45,
-  awards_and_honors: 40,
-  collections: 35,
-  education: 30,
+  publications: 55,
+  awards_and_honors: 50,
+  education: 45,
+  collections: 40,
+  representation: 35,
+  'intent.influences': 30,
+  'intent.aspirations': 30,
+  'practice.secondary_media': 20,
+  'practice.materials_and_methods': 20,
+  'identity.year_of_birth': 15,
 };
 
-function isEmptyScalar(v: unknown): boolean {
+function isEmpty(v: unknown): boolean {
   if (v === undefined || v === null) return true;
   if (typeof v === 'string') return v.trim().length === 0;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') {
+    // Treat "home_base"-style objects as empty when every leaf is empty
+    const obj = v as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return true;
+    return keys.every((k) => isEmpty(obj[k]));
+  }
   return false;
 }
 
-export function detectGaps(akb: TAkb): Gap[] {
-  const gaps: Gap[] = [];
-
-  // identity
-  if (isEmptyScalar(akb.identity.legal_name)) {
-    gaps.push({ field: 'identity.legal_name', importance: IMPORTANCE.identity + 5, question_seed: "What's your legal name (the one you'd put on a federal grant form)?" });
+function walk(obj: unknown, parts: string[]): unknown {
+  let cur: unknown = obj;
+  for (const p of parts) {
+    if (cur == null || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[p];
   }
-  if (akb.identity.citizenship.length === 0) {
-    gaps.push({ field: 'identity.citizenship', importance: IMPORTANCE.identity + 4, question_seed: 'What citizenship(s) do you hold? This determines NEA + Guggenheim eligibility.' });
-  }
-  if (isEmptyScalar(akb.identity.home_base.city) || isEmptyScalar(akb.identity.home_base.state)) {
-    gaps.push({ field: 'identity.home_base', importance: IMPORTANCE.identity + 3, question_seed: 'Where are you based — city, state, country? Some state arts councils require 12 months of prior residency.' });
-  }
-  if (akb.identity.year_of_birth === undefined) {
-    gaps.push({ field: 'identity.year_of_birth', importance: IMPORTANCE.identity, question_seed: "Year of birth? Some programs (e.g. Anonymous Was A Woman) gate on age." });
-  }
-
-  // practice
-  if (isEmptyScalar(akb.practice.primary_medium)) {
-    gaps.push({ field: 'practice.primary_medium', importance: IMPORTANCE.practice + 5, question_seed: 'How would you describe your primary medium in three to six words?' });
-  }
-  if (isEmptyScalar(akb.practice.process_description)) {
-    gaps.push({ field: 'practice.process_description', importance: IMPORTANCE.practice + 4, question_seed: 'Describe your process — how a piece comes into being, in 2-4 sentences.' });
-  }
-  if (akb.practice.materials_and_methods.length === 0) {
-    gaps.push({ field: 'practice.materials_and_methods', importance: IMPORTANCE.practice + 2, question_seed: 'What materials and methods do you work with? List as many as feel central.' });
-  }
-
-  // intent
-  if (isEmptyScalar(akb.intent.statement)) {
-    gaps.push({ field: 'intent.statement', importance: IMPORTANCE.intent + 5, question_seed: 'What is your work about? You can answer plainly — I will sharpen the language.' });
-  }
-  if (akb.intent.influences.length === 0) {
-    gaps.push({ field: 'intent.influences', importance: IMPORTANCE.intent + 2, question_seed: 'Which artists, writers, or ideas do you consider direct influences? Three to five names is fine.' });
-  }
-  if (akb.intent.aspirations.length === 0) {
-    gaps.push({ field: 'intent.aspirations', importance: IMPORTANCE.intent + 1, question_seed: 'What would success in the next two years look like — institutional placement, residency, museum acquisition?' });
-  }
-
-  // exhibitions / bodies of work
-  if (akb.exhibitions.length === 0) {
-    gaps.push({ field: 'exhibitions', importance: IMPORTANCE.exhibitions, question_seed: 'List any solo or group exhibitions in the last few years — venue, year, type.' });
-  }
-  if (akb.bodies_of_work.length === 0) {
-    gaps.push({ field: 'bodies_of_work', importance: IMPORTANCE.bodies_of_work, question_seed: 'Name the distinct bodies of work in your portfolio. Title + roughly which years.' });
-  }
-
-  // career stage is enum and always defaulted; no gap unless explicitly empty
-
-  return gaps.sort((a, b) => b.importance - a.importance);
+  return cur;
 }
 
-export function topGapField(akb: TAkb): string | null {
+export function detectGaps(akb: PartialAKB | ArtistKnowledgeBase): Gap[] {
+  const gaps: Gap[] = [];
+  for (const [path, priority] of Object.entries(TIERS)) {
+    const value = walk(akb, path.split('.'));
+    if (isEmpty(value)) {
+      gaps.push({ path, priority, why: `${path} is not yet populated` });
+    }
+  }
+  return gaps.sort((a, b) => b.priority - a.priority);
+}
+
+export function topGapField(akb: PartialAKB | ArtistKnowledgeBase): string | null {
   const gaps = detectGaps(akb);
-  return gaps.length > 0 ? gaps[0].field : null;
+  return gaps.length > 0 ? gaps[0].path : null;
 }

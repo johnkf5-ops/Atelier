@@ -32,16 +32,23 @@ export default function ReviewClient() {
   const [draft, setDraft] = useState<Akb | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [validation, setValidation] = useState<{ valid: boolean; issues: { path: string; message: string }[] } | null>(null);
+
+  const refreshValidation = async () => {
+    const v = await fetch('/api/akb/validate', { cache: 'no-store' }).then((r) => r.json());
+    setValidation({ valid: !!v.valid, issues: v.issues ?? [] });
+  };
 
   useEffect(() => {
     (async () => {
       const [a, f] = await Promise.all([
-        fetch('/api/akb').then((r) => r.json()),
+        fetch('/api/akb/current').then((r) => r.json()),
         fetch('/api/style-analyst/run').then((r) => r.json()),
       ]);
       setAkb(a.akb);
       setDraft(a.akb);
       setFp(f.fingerprint ?? null);
+      refreshValidation();
     })();
   }, []);
 
@@ -69,6 +76,7 @@ export default function ReviewClient() {
         setAkb(j.akb);
         setDraft(j.akb);
         setStatus(`saved · changed: ${j.changed?.join(', ') || 'nothing'}`);
+        refreshValidation();
       }
     } finally {
       setSaving(false);
@@ -77,10 +85,11 @@ export default function ReviewClient() {
 
   if (!draft) return <div className="text-neutral-500">loading…</div>;
 
-  const ready =
-    draft.identity.legal_name.trim() !== '' &&
-    draft.practice.primary_medium.trim() !== '' &&
-    draft.intent.statement.trim() !== '';
+  const ready = validation?.valid === true;
+  const issuesByPath = new Map<string, string>();
+  (validation?.issues ?? []).forEach((i) => {
+    if (!issuesByPath.has(i.path)) issuesByPath.set(i.path, i.message);
+  });
 
   return (
     <div className="space-y-6">
@@ -98,12 +107,27 @@ export default function ReviewClient() {
           className={`rounded border border-neutral-700 px-4 py-2 text-sm ${
             ready ? 'hover:bg-neutral-800' : 'opacity-40 pointer-events-none'
           }`}
-          title={ready ? 'Continue to dossier' : 'Need legal name, primary medium, and intent statement first'}
+          title={ready ? 'Continue to dossier' : `${validation?.issues.length ?? 0} field(s) still missing`}
         >
           Continue to dossier →
         </Link>
         {status && <span className="text-xs text-neutral-400">{status}</span>}
       </div>
+
+      {validation && !validation.valid && validation.issues.length > 0 && (
+        <div className="rounded border border-amber-800 bg-amber-950/30 p-3 text-sm space-y-1">
+          <div className="text-amber-300 font-medium">
+            AKB is incomplete — {validation.issues.length} field(s) missing or invalid:
+          </div>
+          <ul className="text-xs text-amber-200/80 font-mono space-y-0.5 max-h-40 overflow-auto">
+            {validation.issues.map((i, idx) => (
+              <li key={idx}>
+                {i.path || '(root)'}: {i.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Section title="Identity" provenancePrefix="identity" akb={draft}>

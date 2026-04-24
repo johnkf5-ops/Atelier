@@ -144,17 +144,84 @@ Path A ships with Turso + Vercel Blob from day one. Single-user mode (hardcoded 
   ```
   All queries are async (`await db.execute(...)`, `await db.batch([...])`). **No app code imports `@libsql/client` directly — always go through `getDb()`.**
 - [ ] `lib/db/schema.sql` — full DDL (see schema below). Written in standard SQLite dialect — Turso accepts as-is
-- [ ] `lib/db/migrations.ts` — idempotent runner. Two-step:
-  1. **Base schema:** read `lib/db/schema.sql`, split on `;`, execute each statement (all use `CREATE TABLE IF NOT EXISTS` so re-runs are no-ops)
-  2. **Migrations:** scan `lib/db/migrations/*.sql` alphabetically. For each filename not in the `_migrations` table:
-     - Split on `;`, execute each statement
-     - **Wrap each statement in try/catch and swallow these specific SQLite error codes** (since `ALTER TABLE ADD COLUMN` and `CREATE INDEX` aren't `IF NOT EXISTS`-safe and may collide with the base schema on a fresh install):
-       - `SQLITE_ERROR` with message containing `duplicate column name`
-       - `SQLITE_ERROR` with message containing `table ... already exists` (covers re-runs on partial installs)
-       - `SQLITE_ERROR` with message containing `index ... already exists`
-       Any OTHER error rethrows and aborts the migration
-     - On success, `INSERT INTO _migrations(name)` so future boots skip this file
-  Use this for non-idempotent ops like `ALTER TABLE ADD COLUMN`. Example file: `lib/db/migrations/001_phase3_additions.sql`. Called once on boot from a top-level `instrumentation.ts`.
+- [ ] `lib/db/migrations.ts` — idempotent runner. Concrete implementation:
+
+  ```ts
+  import { promises as fs } from 'fs';
+  import { join, resolve } from 'path';
+  import { getDb } from './client';
+
+  const SWALLOWED_ERROR_FRAGMENTS = [
+    'duplicate column name',
+    'already exists'  // catches both "table X already exists" and "index X already exists"
+  ];
+
+  function shouldSwallow(err: unknown): boolean {
+    const msg = String((err as any)?.message ?? err).toLowerCase();
+    return SWALLOWED_ERROR_FRAGMENTS.some(f => msg.includes(f));
+  }
+
+  function splitStatements(sql: string): string[] {
+    // Naive split on `;` — works for our schema (no string literals contain `;`).
+    // If we ever add seeded data with `;` in strings, swap to a real SQL tokenizer.
+    return sql.split(';').map(s => s.trim()).filter(s => s.length > 0);
+  }
+
+  let _migrationsApplied = false;
+
+  export async function runMigrations(): Promise<void> {
+    if (_migrationsApplied) return;
+    const db = getDb();
+
+    // Step 1 — base schema (always idempotent: all CREATE TABLE IF NOT EXISTS / CREATE INDEX IF NOT EXISTS)
+    const schemaPath = resolve(process.cwd(), 'lib/db/schema.sql');
+    const schemaSql = await fs.readFile(schemaPath, 'utf-8');
+    for (const stmt of splitStatements(schemaSql)) {
+      await db.execute(stmt);
+    }
+
+    // Step 2 — migrations (numbered files in lib/db/migrations/)
+    const migrationsDir = resolve(process.cwd(), 'lib/db/migrations');
+    let files: string[] = [];
+    try {
+      files = (await fs.readdir(migrationsDir)).filter(f => f.endsWith('.sql')).sort();
+    } catch (e: any) {
+      if (e?.code === 'ENOENT') return;  // no migrations yet — fine
+      throw e;
+    }
+
+    const applied = new Set<string>(
+      (await db.execute(`SELECT name FROM _migrations`)).rows.map((r: any) => r.name)
+    );
+
+    for (const name of files) {
+      if (applied.has(name)) continue;
+      const sql = await fs.readFile(join(migrationsDir, name), 'utf-8');
+      for (const stmt of splitStatements(sql)) {
+        try {
+          await db.execute(stmt);
+        } catch (e) {
+          if (shouldSwallow(e)) continue;
+          throw new Error(`Migration ${name} failed on statement:\n${stmt}\n\n${(e as any)?.message ?? e}`);
+        }
+      }
+      await db.execute({ sql: `INSERT INTO _migrations (name) VALUES (?)`, args: [name] });
+    }
+
+    _migrationsApplied = true;
+  }
+  ```
+
+- [ ] `instrumentation.ts` at repo root (Next.js auto-loads this once per server boot):
+  ```ts
+  export async function register() {
+    if (process.env.NEXT_RUNTIME === 'nodejs') {
+      const { runMigrations } = await import('./lib/db/migrations');
+      await runMigrations();
+    }
+  }
+  ```
+  Note: Next.js calls `register()` at runtime startup. Migration errors propagate and crash the server (visible in Vercel logs) rather than running with a stale schema.
 - [ ] `lib/storage/blobs.ts` — exports `getBlobs()` returning Vercel Blob helpers:
   ```ts
   import { put, head, del } from '@vercel/blob';
@@ -260,8 +327,7 @@ CREATE TABLE IF NOT EXISTS past_recipients (
   opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
   year INTEGER,
   name TEXT NOT NULL,
-  bio_url TEXT,
-  portfolio_urls TEXT,                -- JSON array
+  portfolio_urls TEXT,                -- JSON array (raw URLs initially; rewritten to Vercel Blob URLs by finalize-scout)
   notes TEXT,
   fetched_at INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE(opportunity_id, year, name)
@@ -305,16 +371,25 @@ CREATE TABLE IF NOT EXISTS run_matches (
   supporting_image_ids TEXT,          -- JSON array of portfolio_images.id
   hurting_image_ids TEXT,
   included INTEGER NOT NULL,          -- 0 = filtered out (kept with reasoning), 1 = included
+  composite_score REAL,               -- set by Orchestrator in Phase 4 (fit × prestige × urgency × affordability); NULL until finalize
+  filtered_out_blurb TEXT,            -- one-sentence "why not" copy for the dossier; NULL for included matches
   created_at INTEGER NOT NULL DEFAULT (unixepoch()),
   UNIQUE(run_id, opportunity_id)
+);
+
+-- Cached per-opportunity logo URLs (scraped from opportunity.url once; reused across runs).
+CREATE TABLE IF NOT EXISTS opportunity_logos (
+  opportunity_id INTEGER PRIMARY KEY REFERENCES opportunities(id),
+  logo_url TEXT,                       -- null if scrape found nothing; UI renders placeholder
+  fetched_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
 -- Per-run cursor for Anthropic event polling (one row per run; phase changes when Scout finishes and Rubric kicks off)
 CREATE TABLE IF NOT EXISTS run_event_cursors (
   run_id INTEGER PRIMARY KEY REFERENCES runs(id),
-  managed_session_id TEXT NOT NULL,   -- the Anthropic sesn_... ID for the CURRENT phase's session
-  phase TEXT NOT NULL,                -- 'scout' | 'rubric' — tells the polling handler which terminal-idle hook to fire
-  last_event_id TEXT,                 -- latest sevt_... we've ingested; NULL on first poll
+  managed_session_id TEXT NOT NULL,         -- the Anthropic sesn_... ID for the CURRENT phase's session
+  phase TEXT NOT NULL DEFAULT 'scout',      -- 'scout' | 'rubric' — tells the polling handler which terminal-idle hook to fire
+  last_event_id TEXT,                       -- latest sevt_... we've ingested; NULL on first poll
   updated_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
@@ -500,6 +575,8 @@ return Response.json({ run_id: runId, session_id: session.id });
 
 **Pagination pattern (verified against Anthropic docs 2026-04-23):** `events.list()` does NOT take an `after` cursor. The documented pattern is iterate-all-events + dedupe by `event.id`. We use a UNIQUE constraint on `run_events.event_id` + `INSERT OR IGNORE` to prevent concurrent-poll dupes.
 
+**Streaming event-shape note (discovered during Phase 2.12 ship):** for `web_search` server tool, the `query` field arrives FULLY-FORMED in the `content_block_start` event's `content_block.input`, NOT via `input_json_delta` deltas. If you're streaming agent activity to a UI and want to display "Searching: <query>" the moment a search starts, prefer reading from `event.content_block.input.query` first; fall back to accumulating `input_json_delta` chunks across `content_block_delta` events for tools that DO stream input (custom tools and other server tools may differ). Both paths should be present.
+
 **Concurrency note:** browser polls every ~3s; if a poll takes >3s, two can overlap. Without `INSERT OR IGNORE` against a UNIQUE event_id, both polls would write the same event. The schema's UNIQUE on `run_events.event_id` + IGNORE handles this cleanly at the DB layer.
 
 **Phase routing:** `run_event_cursors.phase` distinguishes Scout vs Rubric so the terminal-idle hook fires the right downstream route.
@@ -575,22 +652,39 @@ const sessionTerminal = sess.status === 'terminated' ||
 // Phase-aware dispatch: when this phase's session terminates, fire the next phase's kickoff.
 // Use waitUntil for true fire-and-forget (Vercel kills naked unawaited fetches).
 let phaseDone = false;
-let runDone = false;
 if (sessionTerminal) {
   if (phase === 'scout') {
     await db.execute({ sql: `UPDATE runs SET status = 'scout_complete' WHERE id = ?`, args: [runId] });
     waitUntil(fetch(new URL(`/api/runs/${runId}/finalize-scout`, req.url), { method: 'POST' }));
     phaseDone = true;
-    // run NOT done — Rubric still has to run
   } else if (phase === 'rubric') {
     await db.execute({ sql: `UPDATE runs SET status = 'rubric_complete' WHERE id = ?`, args: [runId] });
     waitUntil(fetch(new URL(`/api/runs/${runId}/finalize`, req.url), { method: 'POST' }));
     phaseDone = true;
-    runDone = true;  // browser stops polling and navigates to dossier
   }
 }
 
-return Response.json({ events: newEvents, phase, phaseDone, done: runDone });
+// CRITICAL: `done: true` ONLY when the full run is complete (i.e., finalize has written
+// the dossier). Between rubric_complete and complete, we're still drafting packages +
+// synthesizing the dossier. If we return done:true early, the browser redirects to
+// /dossier/[runId] which has no data yet.
+// Read runs.status fresh (it's the source of truth for finalize completion).
+const statusRow = await db.execute({
+  sql: `SELECT status FROM runs WHERE id = ?`,
+  args: [runId]
+});
+const runStatus: string = (statusRow.rows[0] as any)?.status ?? 'error';
+const runDone = runStatus === 'complete';
+const runErrored = runStatus === 'error';
+
+return Response.json({
+  events: newEvents,
+  phase,
+  phaseDone,           // informational — browser UI can show "Scout done, running Rubric..." etc.
+  runStatus,           // full status string for UI messaging
+  done: runDone,       // browser redirects to dossier only when true
+  errored: runErrored
+});
 ```
 
 ### Custom tool result round-trip (verified against Anthropic docs 2026-04-23)
@@ -657,6 +751,42 @@ The poll handler calls `await handleRequiresAction(runId, managed_session_id, ne
 - Stream endpoint URL is `/v1/sessions/{id}/stream` (NOT `/events/stream`). The SDK exposes it as `client.beta.sessions.events.stream(session.id)`.
 - `events.send` shape: `client.beta.sessions.events.send(sessionId, { events: [...] })` — the events array allows multiple events in one call (e.g. `user.interrupt` followed by `user.message`).
 - `user.message` content blocks documented as TEXT only. For vision input, do NOT try to embed image content blocks in `user.message` — instead pass image URLs in the text and have the agent download via `bash` (`curl -o /tmp/img.jpg <url>`) then `read /tmp/img.jpg`. The `read` tool returns multimodal content blocks Claude can vision over.
+- **JSON Schema sanitization for `output_config.format.schema` and custom tool `input_schema` (discovered in Phase 2.12; extended after Phase 3 audit):** Anthropic's schema validator rejects several standard JSON Schema constraints. When passing zod-derived JSON Schemas via `zodToJsonSchema(...)`, run a stripper that recursively removes ALL of these keywords wherever they appear:
+
+  | Keyword | Source zod method | Why we strip it |
+  |---|---|---|
+  | `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf` | `.min()`, `.max()`, `.gt()`, `.lt()`, etc. on numbers | Rejected on number types |
+  | `minLength`, `maxLength` | `.min()`, `.max()` on strings | Rejected on strings |
+  | **`minItems`, `maxItems`** | `.min(N)`, `.max(N)` on arrays | Rejected on arrays. Used by `RubricMatchResult.cited_recipients.min(1)`, `OpportunityWithRecipientUrls.past_recipient_image_urls.max(3)`, `RecipientWithUrls.image_urls.max(5)` |
+  | **`format`** | `.url()`, `.email()`, `.datetime()`, `.uuid()`, etc. | Rejected (including `"uri"`). Used by every URL field in our schemas |
+  | `pattern` | `.regex()` | Unverified behavior; strip to be safe |
+
+  Zod still validates the parsed response post-hoc — correctness is preserved for all constraints at the app layer. Without sanitization, `messages.create()` returns 400 with a confusing schema-validation error.
+
+  **Reference implementation:**
+  ```ts
+  const STRIP_KEYS = new Set([
+    'minimum', 'maximum', 'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf',
+    'minLength', 'maxLength',
+    'minItems', 'maxItems',
+    'format',
+    'pattern'
+  ]);
+
+  export function sanitizeJsonSchema(schema: any): any {
+    if (Array.isArray(schema)) return schema.map(sanitizeJsonSchema);
+    if (schema && typeof schema === 'object') {
+      const out: any = {};
+      for (const [k, v] of Object.entries(schema)) {
+        if (STRIP_KEYS.has(k)) continue;
+        out[k] = sanitizeJsonSchema(v);
+      }
+      return out;
+    }
+    return schema;
+  }
+  ```
+  Apply via `sanitizeJsonSchema(zodToJsonSchema(MySchema, { target: 'openApi3' }))`. Used in `setup-managed-agents.ts` (for every `input_schema` passed to `agents.create`) and in any `output_config.format.schema` call site.
 
 ---
 
@@ -699,8 +829,21 @@ The agent loop runs at Anthropic, so Vercel's 60s function timeout doesn't const
   - `sharp(buffer).rotate().withMetadata({}).jpeg({ quality: 92 }).toBuffer()` for the original (rotates, strips all metadata)
   - Compute SHA-256 of original bytes → `pathname = <hash>.jpg` (idempotent — re-uploading same file overwrites cleanly)
   - `await putBlob('originals/' + pathname, original, 'image/jpeg')` and `await putBlob('thumbs/' + pathname, thumb, 'image/jpeg')`
-  - Insert `portfolio_images` row with both pathnames + URLs + width/height/exif_json
-  - Return `{ inserted: N, total: M }`
+  - Insert `portfolio_images` row. **`ordinal` is NOT NULL with no DB default — compute inline:**
+    ```ts
+    const nextOrdinal = ((await db.execute({
+      sql: `SELECT COALESCE(MAX(ordinal), -1) + 1 AS o FROM portfolio_images WHERE user_id = ?`,
+      args: [userId]
+    })).rows[0] as any).o;
+    await db.execute({
+      sql: `INSERT OR IGNORE INTO portfolio_images
+            (user_id, filename, blob_pathname, thumb_pathname, blob_url, thumb_url, width, height, exif_json, ordinal)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [userId, filename, pathname, pathname, blobUrl, thumbUrl, width, height, exifJson, nextOrdinal]
+    });
+    ```
+    `INSERT OR IGNORE` cooperates with the UNIQUE index on `(user_id, blob_pathname)` so re-uploads of identical bytes are silent no-ops. For batch uploads (multiple files in one request), compute `nextOrdinal` once and increment in the loop.
+  - Return `{ inserted: N, skipped: K, total: M }` where K is duplicate-skips
 - [ ] **Server-side cap enforcement:** before insert, query existing count for user. Reject with 400 if `existing + new > 100`. Browser also previews count but server is source of truth
 - [ ] **Server-side dedupe enforcement:** `portfolio_images` should have `UNIQUE(user_id, blob_pathname)` (since pathname is the SHA-256 hash, this dedupes re-uploads). Use `INSERT OR IGNORE` and report skipped count to client. Add to schema:
   ```sql
@@ -1255,10 +1398,11 @@ Output JSON strictly as: { "agent_message": "...", "next_field_target": "...", "
 
 ### 2.8 `/review` page (`app/(onboarding)/review/page.tsx`)
 - [ ] Renders the current AKB as an editable form (sectioned: identity, practice, education, bodies_of_work, exhibitions, publications, awards, collections, representation, intent)
-- [ ] Each field shows its provenance ("from ingestion: example.com" / "from interview" / "manual")
-- [ ] User can edit any field; on save, POST `/api/akb/manual-edit` with the diff, sets that field's provenance to `"manual"`, increments `akb_versions` version
+- [ ] Each field shows its provenance ("from ingestion: example.com" / "from interview" / "manual"). Provenance lookup uses the resolution rule from §2.5 (most-specific dot-path wins, walk up parents on miss)
+- [ ] User can edit any field; on save, POST `/api/akb/manual-edit` with the diff, sets that field's provenance to `"manual"` at the leaf path, increments `akb_versions` version
 - [ ] Also shows the StyleFingerprint (read-only — generated, not editable)
-- [ ] "Continue to dossier" button → enabled when AKB has minimum required fields filled (identity + practice + at least one body_of_work + intent.statement)
+- [ ] **"Continue to dossier" button gating** — HARD gate that mirrors `/api/akb/finalize`'s strict check. Button enabled iff `ArtistKnowledgeBase.safeParse(currentAkb).success === true`. If parse fails, button stays disabled and the form shows inline error per missing field (zod issues map to field paths). This prevents the "click Continue → 400 from finalize" footgun.
+  - Implementation: add `app/api/akb/validate/route.ts` (GET) that returns `{ valid: boolean, issues: ZodIssue[] }` for the current AKB. /review polls or calls on each edit to update gate state.
 
 ### 2.9 Builder runs his own AKB
 - [ ] John uploads his real portfolio (≥40 images recommended)
@@ -1266,11 +1410,29 @@ Output JSON strictly as: { "agent_message": "...", "next_field_target": "...", "
 - [ ] Completes the interview
 - [ ] Reviews + edits the AKB freely on `/review`
 
+### 2.13 Skill content authoring (BLOCKS Phase 3) — research-mode-agent + builder audit
+
+The Rubric Matcher (§3.4) loads `juror-reading.md` + `aesthetic-vocabulary.md` into its system prompt at agent-create time. Both files are currently stubs (created in §1.5 with one-line WHEN-TO-USE only). Empty content = thin Rubric reasoning = §3 acceptance gate #2 fails ("citing specific recipient aesthetic territory").
+
+Per the §1.5 provenance note: skill files are produced by a research-mode agent + audited by John. Both authoring + audit happen here.
+
+- [ ] Spawn a research-mode session (separate from the build coder — could be a Claude Agent SDK harness or a focused Claude Code session) tasked with:
+  - Read 5-10 published guides on jury reading / portfolio review for grants and residencies (NEA, Guggenheim, MacDowell, Creative Capital published criteria; juror interviews; "behind the panel" essays)
+  - Read 10-20 representative artist statements and curator notes from the past-recipient pages of the spec's flagship sources
+  - Synthesize `juror-reading.md` (~600-1200 words): heuristics for inferring aesthetic preferences from past-selection sets, common juror tells, anti-patterns
+  - Synthesize `aesthetic-vocabulary.md` (~800-1500 words): composition grammar, light types, palette terms, formal lineage references, weak-signal markers — vocabulary the Style Analyst + Rubric Matcher should standardize on
+- [ ] **John audits both files against reality.** Audit checks: (a) are the heuristics actually how panels work, (b) does the vocabulary match how he hears curators talk, (c) any obvious omissions or hallucinations
+- [ ] Commit both files. From this point forward, any change to either file requires re-running `scripts/setup-managed-agents.ts` (per §3.2) so the Rubric Matcher agent picks up the new content
+- [ ] Quality gate: at least 600 words per file; at least 5 named-precedent references in `aesthetic-vocabulary.md` (Adams, Sugimoto, Eggleston, etc.); at least 3 concrete heuristics with examples in `juror-reading.md`
+
+This is sequenced AFTER the rest of Phase 2 (you don't need rich skill files until Phase 3 starts) but BEFORE §3.0. Add to the coder's todo at the same time as kicking off the research agent so they happen in parallel.
+
 ### Acceptance gate — Phase 2
 1. Upload of 40+ images works end-to-end, thumbs render in grid
 2. Style Analyst produces a `StyleFingerprint` that John reads and confirms is accurate
 3. Knowledge Extractor ingests his website, asks gap-targeted questions, produces a complete AKB
 4. AKB persisted, versioned, editable
+5. `juror-reading.md` and `aesthetic-vocabulary.md` are populated per §2.13 quality gate (research-agent draft + builder audit committed)
 
 ---
 
@@ -1301,6 +1463,15 @@ The plan's §1.3 schema was extended after Phase 1.3 was originally built. The l
   -- Phase 2 addition: extractor_turns.akb_patch_json column
   ALTER TABLE extractor_turns ADD COLUMN akb_patch_json TEXT;
   CREATE INDEX IF NOT EXISTS idx_extractor_turns_user ON extractor_turns(user_id, turn_index);
+  -- Phase 4 addition: run_matches composite_score + filtered_out_blurb columns
+  ALTER TABLE run_matches ADD COLUMN composite_score REAL;
+  ALTER TABLE run_matches ADD COLUMN filtered_out_blurb TEXT;
+  -- Phase 4 addition: opportunity_logos cache table (base schema also defines it for fresh installs)
+  CREATE TABLE IF NOT EXISTS opportunity_logos (
+    opportunity_id INTEGER PRIMARY KEY REFERENCES opportunities(id),
+    logo_url TEXT,
+    fetched_at INTEGER NOT NULL DEFAULT (unixepoch())
+  );
   ```
 - [ ] Add `app/api/health/schema/route.ts` if it doesn't exist:
   ```ts
@@ -1314,6 +1485,52 @@ The plan's §1.3 schema was extended after Phase 1.3 was originally built. The l
   }
   ```
 - [ ] Run the migration runner (boots automatically via `instrumentation.ts`); verify by hitting `/api/health/schema` and confirming `tables` includes `run_opportunities` + `_migrations`, `indexes` includes `idx_past_recipients_dedup` + `idx_run_matches_dedup` + `idx_run_events_event_id_unique`, `migrations` includes `001_phase3_additions.sql`
+
+#### 3.0.b.0 — Probe: does agent_toolset_20260401 work on this org?
+
+**Discovered during Phase 2.12 ship:** `web_search_20260209`'s "dynamic filtering" requires `code_execution_20260120`, which is NOT provisioned on this org (returns `error_code: "unavailable"`). Phase 2.12 fell back to `web_search_20250305`. The Scout + Rubric agents in §3.2/§3.4 use `{type: 'agent_toolset_20260401'}` which bundles `web_search` AND `web_fetch` internally — both bundled versions may be `_20260209` and hit the same wall.
+
+Before §3.0.b, run this probe (2-3 min):
+
+**Step 1 — toolset bundle test:**
+- [ ] Create a temp agent with `tools: [{type: 'agent_toolset_20260401'}]`
+- [ ] System prompt: `"You are a tool capability checker. When the user asks, perform the requested operation. After each: report ONE-LINE 'OK: <evidence>' or 'FAIL: <error>'."`
+- [ ] Start session, send `user.message`: `"1) web_search for 'anthropic claude' and return one URL. 2) web_fetch https://example.com and return the page title. 3) bash curl -fsSL -o /tmp/probe.jpg https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/120px-PNG_transparency_demonstration_1.png && read /tmp/probe.jpg and tell me what you see."`
+- [ ] Wait for terminal idle. Inspect responses
+- [ ] **All three OK** → toolset is fully functional; proceed to §3.0.b with `tools: [{type: 'agent_toolset_20260401'}]` for both Scout and Rubric agents
+- [ ] **Step 1 (web_search) FAIL with code_execution unavailable** → see Step 2 fallback
+- [ ] **Step 2 (web_fetch) FAIL with code_execution unavailable** → see Step 2 fallback
+- [ ] **Step 3 (read) FAIL** → see Step 3 vision fallback
+
+**Step 2 — Individual-tool fallback (if toolset fails):**
+
+Switch §3.2 + §3.4 to declare tools individually instead of using the bundle:
+```ts
+tools: [
+  { type: 'bash_20250124', name: 'bash' },
+  { type: 'text_editor_20250728', name: 'str_replace_based_edit_tool' },
+  { type: 'web_search_20250305', name: 'web_search', max_uses: 30 },
+  // For web_fetch — use the older tool version IF it exists; otherwise drop and have agent
+  // do bash curl for HTML fetching (slower but works without server-side dependency)
+  { type: 'web_fetch_20250910', name: 'web_fetch' },  // probe this version too; if also unavailable, omit and rely on bash curl
+  { type: 'custom', name: 'persist_opportunity', input_schema: ... }
+]
+```
+
+**Step 3 — Vision fallback (REQUIRED if Step 1.3 above fails OR if individual tools dropped `read`):**
+
+The Rubric Matcher MUST be able to vision over downloaded images, otherwise the novel primitive breaks. The plan COMMITS to `text_editor_20250728`'s `view` command as the vision fallback (per Anthropic docs, text_editor is multimodal-aware for images, PDFs, notebooks). Run this required smoke before proceeding:
+
+- [ ] Create a temp agent with the Step-2 fallback tool list (NO toolset bundle)
+- [ ] System: `"When asked, view the file at the given path and describe what you see in one sentence. If you cannot view it, report 'CANNOT VIEW: <reason>'."`
+- [ ] Start session. Send: `"bash curl -fsSL -o /tmp/v.jpg https://upload.wikimedia.org/wikipedia/commons/thumb/4/47/PNG_transparency_demonstration_1.png/240px-PNG_transparency_demonstration_1.png && view /tmp/v.jpg"`
+- [ ] Wait for terminal idle
+- [ ] **PASS:** agent's response describes the actual image content (transparency demo, dice, colored squares, etc.) — vision works via text_editor view. §3.4 Rubric Matcher prompt is updated to use `view` instead of `read` in the fallback path
+- [ ] **FAIL:** agent reports CANNOT VIEW or hallucinates without describing the image — STOP. Report to John. The Rubric Matcher cannot do vision through the fallback. Options at that point: (a) fix the org's code_execution provisioning so the toolset bundle works, (b) downgrade the Rubric Matcher to text-only metadata-based matching (significantly weaker — the demo spine breaks), (c) re-architect to upload images to Files API and mount as session resources at create-time
+
+- [ ] Cleanup: archive both temp agents, delete both sessions
+
+**Acceptance:** at least one of the two paths (toolset bundle OR fallback with vision smoke green) MUST be green before §3.0.b runs. The vision smoke is non-optional in the fallback branch — do not enter §3.1 with unverified vision.
 
 #### 3.0.b — Day-1 event-shape smoke test (BLOCKS the rest of Phase 3)
 
@@ -1394,6 +1611,7 @@ import { promises as fs } from 'fs';
 import { OpportunityWithRecipientUrls } from '@/lib/schemas/opportunity';
 import { RubricMatchResult } from '@/lib/schemas/match';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { sanitizeJsonSchema } from '@/lib/schemas/sanitize';  // see Reference §"Tool name reference" for impl
 
 const client = new Anthropic();
 const ENV_NAME = 'atelier-default';
@@ -1454,7 +1672,7 @@ async function main() {
         type: 'custom',
         name: 'persist_opportunity',
         description: 'Persist a discovered Opportunity to the orchestrator database. Pass the full structured opportunity JSON including past_recipient_image_urls.',
-        input_schema: zodToJsonSchema(OpportunityWithRecipientUrls, { target: 'openApi3' })
+        input_schema: sanitizeJsonSchema(zodToJsonSchema(OpportunityWithRecipientUrls, { target: 'openApi3' }))
       }
     ]
   });
@@ -1475,7 +1693,7 @@ async function main() {
         type: 'custom',
         name: 'persist_match',
         description: 'Persist a fit-score result for a single opportunity. Pass full RubricMatchResult JSON.',
-        input_schema: zodToJsonSchema(RubricMatchResult, { target: 'openApi3' })
+        input_schema: sanitizeJsonSchema(zodToJsonSchema(RubricMatchResult, { target: 'openApi3' }))
       }
     ]
   });
@@ -1616,10 +1834,16 @@ export async function persistOpportunityFromAgent(
   });
 
   // Stage past_recipient_image_urls for download by finalize-scout (next phase).
+  // **Filter LLM-incomplete entries (lesson from Phase 2.12 ship):** Scout occasionally
+  // emits recipient entries missing required fields (no name, empty image_urls, etc.).
+  // Keep only entries that pass the full RecipientWithUrls schema strictly.
+  const validRecipients = data.past_recipient_image_urls.filter(rec => {
+    return rec.recipient_name?.length > 0 && rec.image_urls?.length > 0;
+  });
   // ON CONFLICT: if Scout rediscovers a recipient (cross-run cache hit), only update
   // portfolio_urls if the existing row hasn't already been mirrored to Blob (we don't
   // want to overwrite Blob URLs with raw URLs from a fresher Scout pass).
-  for (const rec of data.past_recipient_image_urls) {
+  for (const rec of validRecipients) {
     await db.execute({
       sql: `INSERT INTO past_recipients (opportunity_id, year, name, portfolio_urls)
             VALUES (?, ?, ?, ?)
@@ -2183,27 +2407,227 @@ Automated tests so John doesn't have to manually verify every component, AND so 
 
 ### 4.1 Package Drafter (`lib/agents/package-drafter.ts`)
 
-**Not a Managed Agent** — direct `client.messages.create()` calls. One call per match, one call per material type per match (so for 10 matches × 5 materials = 50 calls). All cheap (text-only, ~2-4K output tokens each).
+**Not a Managed Agent** — direct `client.messages.create()` calls. One call per material type per match. For 12 top matches × 5 materials = 60 calls. Text-only, ~2-4K output tokens each.
 
-- [ ] For each top match (top 10-15 by composite ranking):
-  - Artist statement (300-500 words, institutional voice per `artist-statement-voice.md`)
-  - Project proposal (per opportunity's stated requirements parsed from the opportunity URL; fall back to generic structure from `project-proposal-structure.md`)
-  - CV formatted per institution (`cv-format-by-institution.md` — match if pattern exists, fall back to standard)
-  - Cover letter (200-300 words)
-  - Work-sample selection: 10-20 images from portfolio with per-image rationale
-- [ ] Pull facts from AKB; never invent
-- [ ] Persist to `drafted_packages`
+#### Entry point
 
-**Concurrency strategy:**
-- Package Drafter runs as a single Vercel function invocation triggered by `/api/runs/[id]/finalize`
-- For 50 calls at ~15s each, sequential = ~12.5min — exceeds Vercel Pro 5min limit even with `maxDuration: 300`
-- Solution: parallelize with `p-limit` at concurrency 5 (avoids rate-limit hits, ~50/5 × 15s = ~150s, fits in Pro 5min)
-- Hobby tier (60s function limit): split into 5 batches of 10 calls each; trigger sequential batches via fire-and-forget `fetch` to `/api/runs/[id]/finalize?batch=N`
-- **Pro tier recommended for the demo** — set `export const maxDuration = 300` on `app/api/runs/[id]/finalize/route.ts`
+```ts
+import Anthropic from '@anthropic-ai/sdk';
+import pLimit from 'p-limit';
+import { promises as fs } from 'fs';
+import { getAnthropicKey } from '@/lib/auth/api-key';
+import { getDb } from '@/lib/db/client';
+import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
+import type { Opportunity } from '@/lib/schemas/opportunity';
 
-**Rate-limit guards:**
-- Wrap every `messages.create` call in a try/catch; on `Anthropic.RateLimitError`, sleep `Number(error.headers['retry-after']) * 1000` ms and retry once
-- The SDK does this automatically via `max_retries: 2` default — don't double-implement; just rely on it
+const client = new Anthropic({ apiKey: getAnthropicKey() });
+
+export async function draftPackages(runId: number, akb: ArtistKnowledgeBase, userId: number): Promise<void> {
+  const db = getDb();
+
+  // Load top-N included matches (composite_score DESC, cap 15, min 3 if available)
+  const matchRows = (await db.execute({
+    sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.composite_score, rm.reasoning, rm.supporting_image_ids, o.raw_json
+          FROM run_matches rm
+          JOIN opportunities o ON o.id = rm.opportunity_id
+          WHERE rm.run_id = ? AND rm.included = 1
+          ORDER BY rm.composite_score DESC NULLS LAST
+          LIMIT 15`,
+    args: [runId]
+  })).rows;
+
+  if (matchRows.length === 0) {
+    // No included matches — write placeholder drafted_packages (so dossier still renders)
+    await db.execute({ sql: `UPDATE runs SET status = 'complete', finished_at = unixepoch() WHERE id = ?`, args: [runId] });
+    return;
+  }
+
+  // Load portfolio images for work-sample selection
+  const portfolio = (await db.execute({
+    sql: `SELECT id, thumb_url, filename, exif_json FROM portfolio_images WHERE user_id = ? ORDER BY ordinal ASC`,
+    args: [userId]
+  })).rows as Array<{ id: number; thumb_url: string; filename: string; exif_json: string | null }>;
+
+  // Concurrency: 5 matches in parallel, each drafting its 5 materials sequentially.
+  // Net: 5 concurrent messages.create calls at any moment, ~150s for 60 calls.
+  const limit = pLimit(5);
+  await Promise.all(matchRows.map((row: any) => limit(() => draftPackageForMatch(row, akb, portfolio))));
+
+  await db.execute({ sql: `UPDATE runs SET status = 'complete', finished_at = unixepoch() WHERE id = ?`, args: [runId] });
+}
+```
+
+#### Per-match drafter
+
+```ts
+type MatchRow = {
+  id: number;
+  opportunity_id: number;
+  fit_score: number;
+  composite_score: number | null;
+  reasoning: string;
+  supporting_image_ids: string | null;  // JSON array
+  raw_json: string;                      // Opportunity JSON
+};
+
+async function draftPackageForMatch(
+  row: MatchRow,
+  akb: ArtistKnowledgeBase,
+  portfolio: Array<{ id: number; thumb_url: string; filename: string; exif_json: string | null }>
+): Promise<void> {
+  const db = getDb();
+  const opp: Opportunity = JSON.parse(row.raw_json);
+  const supportingIds: number[] = row.supporting_image_ids ? JSON.parse(row.supporting_image_ids) : [];
+
+  // Fetch opportunity requirements page (fire-and-forget timeout; fall back to generic template on failure)
+  let oppRequirementsText = '';
+  try {
+    const res = await fetch(opp.url, { signal: AbortSignal.timeout(10_000), headers: { 'User-Agent': 'Mozilla/5.0 Atelier/0.1' } });
+    if (res.ok) {
+      const html = await res.text();
+      // Same cheerio extraction as Knowledge Extractor ingestion — strip scripts/styles/nav, keep body text
+      const { load } = await import('cheerio');
+      const $ = load(html);
+      $('script, style, nav, footer, header').remove();
+      oppRequirementsText = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 20_000);
+    }
+  } catch { /* ignore — generic template path used */ }
+
+  // Work-sample selection: start with supporting_image_ids from Rubric (coherent selection already
+  // curated for this opportunity's aesthetic). If fewer than 10, backfill with even-spaced portfolio sample.
+  const workSamples = selectWorkSamples(supportingIds, portfolio, 12);
+
+  // Draft all 5 materials sequentially within this match (keeps per-match rate-limit pressure low)
+  const voiceSkill = await fs.readFile('skills/artist-statement-voice.md', 'utf-8').catch(() => '');
+  const proposalSkill = await fs.readFile('skills/project-proposal-structure.md', 'utf-8').catch(() => '');
+  const cvSkill = await fs.readFile('skills/cv-format-by-institution.md', 'utf-8').catch(() => '');
+
+  const artist_statement = await draftMaterial('artist_statement', { akb, opp, voiceSkill });
+  const project_proposal = await draftMaterial('project_proposal', { akb, opp, proposalSkill, oppRequirementsText });
+  const cv_formatted = await draftMaterial('cv', { akb, opp, cvSkill });
+  const cover_letter = await draftMaterial('cover_letter', { akb, opp, voiceSkill });
+  const work_sample_selection = workSamples;  // already an array; no LLM call — rationale attached inline
+
+  await db.execute({
+    sql: `INSERT INTO drafted_packages (run_match_id, artist_statement, project_proposal, cv_formatted, cover_letter, work_sample_selection_json)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [row.id, artist_statement, project_proposal, cv_formatted, cover_letter, JSON.stringify(work_sample_selection)]
+  });
+}
+```
+
+#### Per-material drafter + prompts
+
+```ts
+type MaterialType = 'artist_statement' | 'project_proposal' | 'cv' | 'cover_letter';
+type DraftCtx = {
+  akb: ArtistKnowledgeBase;
+  opp: Opportunity;
+  voiceSkill?: string;
+  proposalSkill?: string;
+  cvSkill?: string;
+  oppRequirementsText?: string;
+};
+
+const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
+  artist_statement: (ctx) => ({
+    system: ctx.voiceSkill + '\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. 300-500 words. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the artist statement now.`
+  }),
+  project_proposal: (ctx) => ({
+    system: ctx.proposalSkill + '\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. If the opportunity\'s stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}\n\nOPPORTUNITY_REQUIREMENTS (from their page, may be partial):\n${ctx.oppRequirementsText || '(not available — use generic structure)'}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the project proposal now.`
+  }),
+  cv: (ctx) => ({
+    system: ctx.cvSkill + '\n\n---\n\nYou are formatting a CV for a specific institution\'s application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble.',
+    user: `OPPORTUNITY: ${ctx.opp.name} — submission format requirements per your skill file.\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nFormat the CV now.`
+  }),
+  cover_letter: (ctx) => ({
+    system: ctx.voiceSkill + '\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity\'s selectors. 200-300 words. Named addressee if the opportunity has a known director; else "Selection Committee". Pull facts ONLY from the provided AKB. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}\n\nARTIST_AKB:\n${JSON.stringify(ctx.akb, null, 2)}\n\nWrite the cover letter now.`
+  })
+};
+
+async function draftMaterial(type: MaterialType, ctx: DraftCtx): Promise<string> {
+  const { system, user } = PROMPTS[type](ctx);
+  const resp = await client.messages.create({
+    model: 'claude-opus-4-7',
+    max_tokens: 3000,
+    thinking: { type: 'adaptive' },
+    system,
+    messages: [{ role: 'user', content: user }]
+  });
+  const text = resp.content.find(b => b.type === 'text')?.text?.trim() ?? '';
+  return text;
+}
+```
+
+#### Work-sample selection
+
+```ts
+type WorkSample = {
+  portfolio_image_id: number;
+  thumb_url: string;
+  filename: string;
+  rationale: string;   // short per-image justification — generated post-hoc or inherited from Rubric
+};
+
+function selectWorkSamples(
+  supportingIds: number[],
+  portfolio: Array<{ id: number; thumb_url: string; filename: string; exif_json: string | null }>,
+  target: number
+): WorkSample[] {
+  const byId = new Map(portfolio.map(p => [p.id, p]));
+
+  // Priority 1: Rubric-supplied supporting image IDs (curated for this opportunity's aesthetic)
+  const supportingChosen = supportingIds
+    .map(id => byId.get(id))
+    .filter((p): p is NonNullable<typeof p> => !!p)
+    .slice(0, target);
+
+  if (supportingChosen.length >= target) {
+    return supportingChosen.slice(0, target).map(p => ({
+      portfolio_image_id: p.id,
+      thumb_url: p.thumb_url,
+      filename: p.filename,
+      rationale: 'cited as supporting the institution\'s aesthetic signature in the Rubric Matcher\'s reasoning'
+    }));
+  }
+
+  // Priority 2: backfill with even-spaced sample from remainder
+  const usedIds = new Set(supportingChosen.map(p => p.id));
+  const remaining = portfolio.filter(p => !usedIds.has(p.id));
+  const backfillCount = target - supportingChosen.length;
+  const step = remaining.length > 0 ? remaining.length / backfillCount : 0;
+  const backfill = Array.from({ length: backfillCount }, (_, i) => remaining[Math.floor(i * step)]).filter(Boolean);
+
+  return [
+    ...supportingChosen.map(p => ({
+      portfolio_image_id: p.id,
+      thumb_url: p.thumb_url,
+      filename: p.filename,
+      rationale: 'cited as supporting the institution\'s aesthetic signature'
+    })),
+    ...backfill.map(p => ({
+      portfolio_image_id: p.id,
+      thumb_url: p.thumb_url,
+      filename: p.filename,
+      rationale: 'representative of the artist\'s broader range'
+    }))
+  ];
+}
+```
+
+#### Rate limits
+
+The Anthropic SDK auto-retries 429s via `max_retries: 2`. Don't add app-level retry — double-implementing causes exponential backoff compounding.
+
+#### Concurrency rationale
+
+- `p-limit(5)` at the match level: 5 matches drafting concurrently
+- Within each match, the 4 LLM calls run SEQUENTIALLY (artist_statement → project_proposal → cv → cover_letter)
+- Net: 5 concurrent Anthropic calls at peak, ~15s × (60/5) = ~180s for 12 matches × 5 materials (one is the non-LLM work sample). Fits in `maxDuration: 300` (Vercel Pro)
+- Hobby tier (60s cap): if deploying to Hobby for demo, split into batches via `?batch=N` query param. Not needed if Pro
 
 ### 4.2 Orchestrator (`lib/agents/orchestrator.ts`)
 
@@ -2244,25 +2668,338 @@ function computeAffordability(fee: number | undefined, budget: number): number {
 }
 ```
 
-- [ ] Run composite scoring on all `included = 1` matches; sort descending; take top 15
-- [ ] Generate cover narrative via `messages.create()` — system prompt = "you are writing the cover page of a Career Dossier for an artist; synthesize the StyleFingerprint into a 2-3 paragraph narrative", input = full StyleFingerprint
-- [ ] Generate ranking narrative — input = top 15 matches with their reasoning + composite scores; output = 3-4 paragraphs explaining the ranking
-- [ ] Generate "filtered out" one-liners — for each `included = 0` match, generate a single sentence from its reasoning ("Why not Magnum: documentary social practice, low fit with landscape formalism")
-- [ ] Persist to `dossiers`
+#### Orchestrator entry point
+
+The Orchestrator runs as part of `/api/runs/[id]/finalize/route.ts` (triggered by the polling handler on Rubric terminal idle, per §Long-running run orchestration). Runs BEFORE Package Drafter — it computes composite scores so the Drafter knows which matches are top-N.
+
+```ts
+// lib/agents/orchestrator.ts
+import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicKey } from '@/lib/auth/api-key';
+import { getDb } from '@/lib/db/client';
+import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
+import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
+import type { Opportunity } from '@/lib/schemas/opportunity';
+import type { RunConfig } from '@/lib/schemas/run';
+
+const client = new Anthropic({ apiKey: getAnthropicKey() });
+
+export async function orchestrateDossier(runId: number): Promise<void> {
+  const db = getDb();
+
+  // Load run context
+  const runRow = (await db.execute({
+    sql: `SELECT akb_version_id, style_fingerprint_id, config_json FROM runs WHERE id = ?`,
+    args: [runId]
+  })).rows[0] as any;
+  const akb: ArtistKnowledgeBase = JSON.parse(((await db.execute({
+    sql: `SELECT json FROM akb_versions WHERE id = ?`, args: [runRow.akb_version_id]
+  })).rows[0] as any).json);
+  const fingerprint: StyleFingerprint = JSON.parse(((await db.execute({
+    sql: `SELECT json FROM style_fingerprints WHERE id = ?`, args: [runRow.style_fingerprint_id]
+  })).rows[0] as any).json);
+  const config: RunConfig = JSON.parse(runRow.config_json);
+
+  // Step 1 — load all matches with their Opportunity JSON, compute composite scores, persist
+  const matchRows = (await db.execute({
+    sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.reasoning, rm.included, o.raw_json
+          FROM run_matches rm
+          JOIN opportunities o ON o.id = rm.opportunity_id
+          WHERE rm.run_id = ?`,
+    args: [runId]
+  })).rows as Array<{ id: number; opportunity_id: number; fit_score: number; reasoning: string; included: number; raw_json: string }>;
+
+  for (const row of matchRows) {
+    const opp: Opportunity = JSON.parse(row.raw_json);
+    const composite = row.included === 1 ? compositeScore(row.fit_score, opp, config) : 0;
+    await db.execute({
+      sql: `UPDATE run_matches SET composite_score = ? WHERE id = ?`,
+      args: [composite, row.id]
+    });
+  }
+
+  // Step 2 — parallel LLM calls: cover narrative (from StyleFingerprint) + ranking narrative (from top matches)
+  const topIncluded = matchRows
+    .filter(r => r.included === 1)
+    .map(r => ({ ...r, opp: JSON.parse(r.raw_json) as Opportunity, composite: compositeScore(r.fit_score, JSON.parse(r.raw_json), config) }))
+    .sort((a, b) => b.composite - a.composite)
+    .slice(0, 15);
+
+  const filteredOut = matchRows.filter(r => r.included === 0);
+
+  const [coverNarrative, rankingNarrative] = await Promise.all([
+    generateCoverNarrative(akb, fingerprint),
+    generateRankingNarrative(topIncluded)
+  ]);
+
+  // Step 3 — generate filtered-out one-liners in parallel (capped concurrency)
+  const { default: pLimit } = await import('p-limit');
+  const limit = pLimit(5);
+  await Promise.all(filteredOut.map(r => limit(async () => {
+    const blurb = await generateFilteredOutBlurb(JSON.parse(r.raw_json), r.reasoning);
+    await db.execute({
+      sql: `UPDATE run_matches SET filtered_out_blurb = ? WHERE id = ?`,
+      args: [blurb, r.id]
+    });
+  })));
+
+  // Step 4 — persist dossier
+  await db.execute({
+    sql: `INSERT INTO dossiers (run_id, cover_narrative, ranking_narrative) VALUES (?, ?, ?)
+          ON CONFLICT(run_id) DO UPDATE SET cover_narrative = excluded.cover_narrative, ranking_narrative = excluded.ranking_narrative`,
+    args: [runId, coverNarrative, rankingNarrative]
+  });
+
+  // Orchestrator done — Package Drafter runs next (called from the same /finalize handler after this returns)
+}
+```
+
+#### Composite ranking formula (concrete)
+
+```ts
+function compositeScore(fit: number, opp: Opportunity, config: RunConfig): number {
+  const prestige = PRESTIGE_WEIGHTS[opp.award.prestige_tier] ?? 0.5;  // defensive fallback
+  const timeUrgency = computeUrgency(opp.deadline);
+  const affordability = computeAffordability(opp.entry_fee_usd, config.budget_usd);
+  return fit * prestige * timeUrgency * affordability;
+}
+
+const PRESTIGE_WEIGHTS: Record<string, number> = {
+  flagship: 1.0,
+  major: 0.85,
+  mid: 0.70,
+  regional: 0.55,
+  'open-call': 0.40
+};
+
+function computeUrgency(deadline: string | undefined): number {
+  if (!deadline) return 0.5;
+  const days = (new Date(deadline).getTime() - Date.now()) / 86400000;
+  if (days < 7)  return 0.3;
+  if (days < 30) return 1.0;
+  if (days < 90) return 0.85;
+  return 0.65;
+}
+
+function computeAffordability(fee: number | undefined, budget: number): number {
+  if (!fee) return 1.0;
+  if (budget === 0) return 1.0;
+  if (fee > budget) return 0;
+  const ratio = fee / budget;
+  return 1 - (ratio * 0.5);
+}
+```
+
+**Staleness note:** `computeUrgency` uses `Date.now()` at finalize time. The dossier is a snapshot; re-renders later show the same score. If a user returns to a dossier after the sweet-spot window closes, the urgency badge on the UI may still say "< 30 days" — that's intentional for v1 (the dossier is a point-in-time artifact). Re-running produces a fresh urgency score.
+
+#### LLM calls for narratives
+
+```ts
+async function generateCoverNarrative(akb: ArtistKnowledgeBase, fp: StyleFingerprint): Promise<string> {
+  const resp = await client.messages.create({
+    model: 'claude-opus-4-7', max_tokens: 1500, thinking: { type: 'adaptive' },
+    system: `You are writing the COVER PAGE of a Career Dossier for a working visual artist. Synthesize the StyleFingerprint + career highlights from the AKB into a 2-3 paragraph narrative the artist can read aloud. Plain text, no markdown, no preamble. The voice is serious but warm — not a marketing blurb. Lead with the work's formal identity, then the career positioning, then what the dossier ahead will do for them.`,
+    messages: [{ role: 'user', content: `ARTIST_AKB:\n${JSON.stringify(akb, null, 2)}\n\nSTYLE_FINGERPRINT:\n${JSON.stringify(fp, null, 2)}\n\nWrite the cover narrative now.` }]
+  });
+  return resp.content.find(b => b.type === 'text')?.text?.trim() ?? '';
+}
+
+async function generateRankingNarrative(topMatches: Array<{ opp: Opportunity; fit_score: number; composite: number; reasoning: string }>): Promise<string> {
+  const matchSummaries = topMatches.map((m, i) =>
+    `${i + 1}. ${m.opp.name} (composite ${m.composite.toFixed(2)}, fit ${m.fit_score.toFixed(2)}): ${m.reasoning}`
+  ).join('\n\n');
+  const resp = await client.messages.create({
+    model: 'claude-opus-4-7', max_tokens: 1500, thinking: { type: 'adaptive' },
+    system: `You are writing the RANKING NARRATIVE section of a Career Dossier — 3-4 paragraphs explaining why the top opportunities are ordered the way they are, what thematic threads connect them, and which to prioritize applying to first. Reference specific opportunities by name. Plain text, no markdown, no preamble.`,
+    messages: [{ role: 'user', content: `TOP ${topMatches.length} OPPORTUNITIES (already composite-ranked):\n\n${matchSummaries}\n\nWrite the ranking narrative now.` }]
+  });
+  return resp.content.find(b => b.type === 'text')?.text?.trim() ?? '';
+}
+
+async function generateFilteredOutBlurb(opp: Opportunity, reasoning: string): Promise<string> {
+  const resp = await client.messages.create({
+    model: 'claude-opus-4-7', max_tokens: 200, thinking: { type: 'disabled' },  // short; skip thinking cost
+    system: `Summarize why the given opportunity was filtered out for this artist into ONE sentence starting with "Why not ${opp.name}:". The reasoning provided is the Rubric Matcher's full analysis — boil it down to its sharpest single sentence. Plain text, no markdown, no preamble.`,
+    messages: [{ role: 'user', content: `OPPORTUNITY: ${opp.name}\nRUBRIC_REASONING: ${reasoning}\n\nWrite the one-sentence "why not" blurb.` }]
+  });
+  return resp.content.find(b => b.type === 'text')?.text?.trim() ?? `Why not ${opp.name}: filtered (reasoning unavailable).`;
+}
+```
+
+#### Top-N clamping
+
+If `topIncluded.length < 15`, the dossier renders whatever's available (minimum 1). If `topIncluded.length === 0`, the dossier still renders cover + "no fits found, try widening your window or affiliations" message. Do NOT treat zero included as a fatal error — it's a valid output.
+
+#### `/api/runs/[id]/finalize/route.ts`
+
+```ts
+import { waitUntil } from '@vercel/functions';
+import { getDb } from '@/lib/db/client';
+import { orchestrateDossier } from '@/lib/agents/orchestrator';
+import { draftPackages } from '@/lib/agents/package-drafter';
+
+export const runtime = 'nodejs';
+export const maxDuration = 300;  // Vercel Pro 5-min cap
+
+export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const runId = Number(id);
+  const db = getDb();
+
+  await db.execute({ sql: `UPDATE runs SET status = 'finalizing' WHERE id = ?`, args: [runId] });
+
+  // Load context
+  const runRow = (await db.execute({ sql: `SELECT user_id, akb_version_id FROM runs WHERE id = ?`, args: [runId] })).rows[0] as any;
+  const akbJson = ((await db.execute({ sql: `SELECT json FROM akb_versions WHERE id = ?`, args: [runRow.akb_version_id] })).rows[0] as any).json;
+
+  try {
+    // 1. Orchestrator — composite scores + cover/ranking narratives + filtered-out blurbs
+    await orchestrateDossier(runId);
+    // 2. Package Drafter — artist statement, proposal, CV, cover letter, work samples per top match
+    await draftPackages(runId, JSON.parse(akbJson), runRow.user_id);
+    // draftPackages sets runs.status = 'complete' on success
+  } catch (e: any) {
+    await db.execute({
+      sql: `UPDATE runs SET status = 'error', error = ?, finished_at = unixepoch() WHERE id = ?`,
+      args: [e?.message ?? String(e), runId]
+    });
+  }
+
+  return Response.json({ ok: true });
+}
+```
 
 ### 4.3 Dossier UI (`app/(dashboard)/dossier/[runId]/page.tsx`)
-- [ ] Cover page (aesthetic read narrative)
-- [ ] Top-N opportunities grid: card per opportunity with logo, deadline, award, fit score badge, expand → reasoning + drafted materials inline
-- [ ] Deadline calendar component (visual timeline) — use `@nivo/calendar` or hand-roll a simple month-grid SVG
-- [ ] Filtered-out section (collapsed by default, expand to read why-nots)
-- [ ] Per-package: copy-to-clipboard, download as `.docx` (use the `docx` package already in installs)
 
-**Logo scraping:** add `lib/logos.ts` with `getLogoUrl(opportunityUrl: string): Promise<string | null>`:
-1. Fetch the opportunity URL, parse with cheerio
-2. First try `meta[property="og:image"]` — the Open Graph image is usually the org's hero/logo
-3. Fallback to `link[rel="icon"]` or `link[rel="apple-touch-icon"]` — favicons are at least branded
-4. Final fallback: `null` — UI shows a placeholder gradient with first letter of org name
-5. Cache result in a new `opportunity_logos` table keyed by `opportunity_id` to avoid re-scraping every dossier render
+#### Data loading
+
+```ts
+// app/(dashboard)/dossier/[runId]/page.tsx — server component
+import { getDb } from '@/lib/db/client';
+import { getLogoUrl } from '@/lib/logos';
+
+export default async function DossierPage({ params }: { params: Promise<{ runId: string }> }) {
+  const { runId } = await params;
+  const db = getDb();
+
+  const dossierRow = (await db.execute({
+    sql: `SELECT cover_narrative, ranking_narrative FROM dossiers WHERE run_id = ?`,
+    args: [Number(runId)]
+  })).rows[0] as any;
+
+  if (!dossierRow) {
+    // Run either errored or finalize hasn't completed yet — show status page instead
+    return <RunStatusPage runId={Number(runId)} />;
+  }
+
+  const includedMatches = (await db.execute({
+    sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.composite_score, rm.reasoning,
+                 rm.supporting_image_ids, rm.hurting_image_ids,
+                 o.name, o.url, o.deadline, o.award_summary, o.raw_json,
+                 dp.artist_statement, dp.project_proposal, dp.cv_formatted,
+                 dp.cover_letter, dp.work_sample_selection_json
+          FROM run_matches rm
+          JOIN opportunities o ON o.id = rm.opportunity_id
+          LEFT JOIN drafted_packages dp ON dp.run_match_id = rm.id
+          WHERE rm.run_id = ? AND rm.included = 1
+          ORDER BY rm.composite_score DESC NULLS LAST
+          LIMIT 15`,
+    args: [Number(runId)]
+  })).rows;
+
+  const filteredOut = (await db.execute({
+    sql: `SELECT o.name, rm.filtered_out_blurb
+          FROM run_matches rm
+          JOIN opportunities o ON o.id = rm.opportunity_id
+          WHERE rm.run_id = ? AND rm.included = 0 AND rm.filtered_out_blurb IS NOT NULL
+          ORDER BY rm.fit_score DESC`,
+    args: [Number(runId)]
+  })).rows;
+
+  // Batch-load logos (cached per opportunity_id)
+  const logoMap = new Map<number, string | null>();
+  await Promise.all(includedMatches.map(async (m: any) => {
+    logoMap.set(m.opportunity_id, await getLogoUrl(m.opportunity_id, m.url));
+  }));
+
+  return <DossierView
+    cover={dossierRow.cover_narrative}
+    ranking={dossierRow.ranking_narrative}
+    matches={includedMatches}
+    filteredOut={filteredOut}
+    logos={logoMap}
+  />;
+}
+```
+
+#### Rendered sections
+
+- [ ] Cover page: rendered `cover_narrative` prose (not JSON — designed typography, generous margins)
+- [ ] Ranking narrative: the 3-4 paragraph intro before the opportunities grid
+- [ ] Top-N opportunities grid: card per match with logo (or placeholder), deadline, award summary, composite + fit score badges. Expand → reasoning + drafted materials inline (artist statement / proposal / CV / cover letter as tabs)
+- [ ] Work sample selection: the per-match 10-15 images rendered as a thumbnail strip inside the card's expanded view, each with the rationale tooltip
+- [ ] Deadline calendar component: simple month-grid SVG (hand-rolled; no `@nivo/calendar` dep unless it's already pulled in). Each top-N opportunity plotted on its deadline date with a dot + name on hover
+- [ ] Filtered-out section: collapsed by default, expand to read all `filtered_out_blurb` sentences as a scannable list ("Why not Magnum: ...", "Why not X: ...")
+- [ ] Per-package actions: copy-to-clipboard per material; download as `.docx` per material via the `docx` package
+
+#### Logo scraping (`lib/logos.ts`)
+
+```ts
+import { load } from 'cheerio';
+import { getDb } from '@/lib/db/client';
+
+export async function getLogoUrl(opportunityId: number, opportunityUrl: string): Promise<string | null> {
+  const db = getDb();
+
+  // Cache lookup (TTL 90 days — logos rarely change; avoid refetching on every dossier render)
+  const cached = (await db.execute({
+    sql: `SELECT logo_url, fetched_at FROM opportunity_logos WHERE opportunity_id = ? AND fetched_at > unixepoch() - (90 * 86400)`,
+    args: [opportunityId]
+  })).rows[0] as any;
+  if (cached) return cached.logo_url;  // null is a valid cached result
+
+  let logoUrl: string | null = null;
+  try {
+    const res = await fetch(opportunityUrl, { signal: AbortSignal.timeout(8_000), headers: { 'User-Agent': 'Mozilla/5.0 Atelier/0.1' } });
+    if (res.ok) {
+      const $ = load(await res.text());
+      // Priority order: og:image (usually a hero/logo), twitter:image, apple-touch-icon, favicon
+      const candidates = [
+        $('meta[property="og:image"]').attr('content'),
+        $('meta[name="twitter:image"]').attr('content'),
+        $('link[rel="apple-touch-icon"]').attr('href'),
+        $('link[rel="icon"]').attr('href')
+      ].filter((u): u is string => !!u);
+      const first = candidates[0];
+      if (first) {
+        // Resolve relative URLs against the opportunity URL
+        logoUrl = new URL(first, opportunityUrl).toString();
+      }
+    }
+  } catch { /* silent fail — null cached */ }
+
+  // Cache result (including null, to prevent re-scraping on every render)
+  await db.execute({
+    sql: `INSERT INTO opportunity_logos (opportunity_id, logo_url) VALUES (?, ?)
+          ON CONFLICT(opportunity_id) DO UPDATE SET logo_url = excluded.logo_url, fetched_at = unixepoch()`,
+    args: [opportunityId, logoUrl]
+  });
+  return logoUrl;
+}
+```
+
+UI falls back to `<div class="logo-placeholder">{opp.name[0]}</div>` when `logoUrl === null` — a gradient tile with the first letter. Avoids broken-image boxes in the dossier grid.
+
+#### DOCX download
+
+```ts
+// app/api/dossier/[runId]/material/[materialType]/docx/route.ts
+import { Document, Packer, Paragraph, HeadingLevel } from 'docx';
+// GET — renders a .docx for a single material from drafted_packages
+// materialType ∈ 'artist_statement' | 'project_proposal' | 'cv' | 'cover_letter'
+```
+
+Implementation: fetch the drafted_packages row for the given run_match_id, pull the specific material column, build a Document with a title heading + paragraphs (split on `\n\n`), `Packer.toBuffer(doc)`, return as `Response` with `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
 
 ### 4.4 PDF export (`lib/pdf/dossier.tsx`)
 - [ ] `@react-pdf/renderer` document mirroring the web view
@@ -2357,9 +3094,10 @@ Most of Path B is already in Path A: Turso scales multi-tenant, Vercel Blob scal
 
 1. **Auth:** add NextAuth or Clerk. Wire to a `users` table (already exists in schema). Replace `lib/auth/user.ts` body to return the session user's ID. **~half day.**
 2. **BYO API key:** add a Settings UI field for the user's `ANTHROPIC_API_KEY`. Store encrypted at rest in a new `user_api_keys` table (use `crypto.subtle` AES-GCM with an `ENCRYPTION_KEY` env var). Update `lib/auth/api-key.ts` to look up the per-user key. **~half day.**
+   - **Important:** Phase 2 modules (`lib/agents/style-analyst.ts`, `lib/agents/knowledge-extractor.ts`, etc.) currently construct `new Anthropic({ apiKey: getAnthropicKey() })` at MODULE TOP LEVEL. This caches the key at import time. For Path B, refactor each agent module to construct the client inside the request handler instead (so per-request user keys flow through). About 30 min of mechanical edits across the agent files. Flag for the Path B PR.
 3. **Quotas + abuse prevention:** rate-limit run starts per user (e.g., 5 runs/day on free tier). **~quarter day.**
 
-**Estimated scope: ~1-1.5 days post-hackathon.** Agent code, schema, blob store, and DB are all unchanged.
+**Estimated scope: ~1.5-2 days post-hackathon** (added 30min for the module-level client refactor in #2). Agent logic, schema, blob store, and DB are all unchanged.
 
 ---
 

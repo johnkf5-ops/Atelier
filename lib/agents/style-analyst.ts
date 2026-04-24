@@ -66,10 +66,20 @@ export async function analyzePortfolio(images: AnalyzableImage[]): Promise<TStyl
     throw new Error('analyzePortfolio called with no images');
   }
   const chunks = chunk(images, CHUNK_SIZE);
-  const partials = await Promise.all(chunks.map((c) => analyzeChunk(c)));
-  if (partials.length === 1) {
-    // Single chunk — still synthesize so the output is the full schema, not partial.
-    return synthesizePartials(partials);
+  // Promise.allSettled — one bad chunk (parse failure, transient API hiccup)
+  // shouldn't kill the whole run. Synthesize from whatever survived.
+  const settled = await Promise.allSettled(chunks.map((c) => analyzeChunk(c)));
+  const partials = settled
+    .filter((r): r is PromiseFulfilledResult<TPartialStyleFingerprint> => r.status === 'fulfilled')
+    .map((r) => r.value);
+  const failures = settled.filter((r) => r.status === 'rejected').length;
+  if (partials.length === 0) {
+    throw new Error(
+      `All ${chunks.length} Style Analyst chunks failed — check Anthropic API status`,
+    );
+  }
+  if (failures > 0) {
+    console.warn(`[style-analyst] ${failures}/${chunks.length} chunks failed; synthesizing from ${partials.length}`);
   }
   return synthesizePartials(partials);
 }
