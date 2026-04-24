@@ -14,7 +14,7 @@
     "@dnd-kit/sortable": "^8.0.0",
     "@libsql/client": "^0.14.0",
     "@react-pdf/renderer": "^4.0.0",
-    "@vercel/blob": "^0.27.0",
+    "@vercel/blob": "^2.3.3",
     "cheerio": "^1.0.0",
     "docx": "^9.0.0",
     "exifr": "^7.1.3",
