@@ -126,6 +126,20 @@ export default function UploadClient() {
   async function onDelete(id: number) {
     await fetch(`/api/portfolio/${id}`, { method: 'DELETE' });
     setImages((cur) => cur.filter((i) => i.id !== id));
+    // If this image was part of an open scrape-review batch, drop it from
+    // both tracking sets so the Confirm/Discard counter stays honest.
+    setReviewIds((cur) => {
+      if (!cur.has(id)) return cur;
+      const next = new Set(cur);
+      next.delete(id);
+      return next;
+    });
+    setKeepIds((cur) => {
+      if (!cur.has(id)) return cur;
+      const next = new Set(cur);
+      next.delete(id);
+      return next;
+    });
   }
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
@@ -477,22 +491,18 @@ function Tile({
         {...attributes}
         {...listeners}
       />
-      {inReview ? (
-        // Review-batch mode: only the Keep toggle. The per-tile delete button
-        // would bypass reviewIds/keepIds and leave the "Confirm X/Y" counter
-        // stale — use the checkbox instead, then Confirm/Discard commits.
+      {inReview && (
         <label className="absolute top-1 left-1 flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-xs cursor-pointer">
           <input type="checkbox" checked={kept} onChange={onToggleKeep} />
           keep
         </label>
-      ) : (
-        <button
-          onClick={onDelete}
-          className="absolute top-1 right-1 rounded bg-black/70 px-2 py-1 text-xs text-rose-300 opacity-0 group-hover:opacity-100"
-        >
-          delete
-        </button>
       )}
+      <button
+        onClick={onDelete}
+        className="absolute top-1 right-1 rounded bg-black/70 px-2 py-1 text-xs text-rose-300 opacity-0 group-hover:opacity-100"
+      >
+        delete
+      </button>
     </div>
   );
 }
