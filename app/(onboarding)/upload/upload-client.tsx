@@ -301,10 +301,14 @@ export default function UploadClient() {
     setAnalystError(null);
     startStageTimer(images.length);
     try {
+      // Vision pass over N images typically runs 30-90s, but the server has
+      // maxDuration=300. Client timeout matches server ceiling so a real 5-min
+      // response can land. On network error the banner surfaces the kind so
+      // dev-server bounces / hot-reload drops are diagnosable from the screen.
       const result = await fetchJson<{
         fingerprint: StyleFingerprint;
         version: number;
-      }>('/api/style-analyst/run', { method: 'POST' });
+      }>('/api/style-analyst/run', { method: 'POST', timeoutMs: 300_000 });
       if (!result.ok) {
         setAnalystError(result.error);
       } else {
@@ -424,8 +428,16 @@ export default function UploadClient() {
       )}
 
       {analystError && (
-        <div className="rounded border border-rose-700 bg-rose-950/30 p-3 text-sm text-rose-300">
-          Analysis failed: {analystError}
+        <div className="rounded border border-rose-700 bg-rose-950/30 p-3 text-sm text-rose-300 flex items-center justify-between gap-3">
+          <span>Analysis failed: {analystError}</span>
+          <button
+            type="button"
+            onClick={runAnalyst}
+            disabled={analyzing}
+            className="shrink-0 px-3 py-1.5 border border-rose-500/40 rounded hover:bg-rose-500/10 text-rose-200 text-xs disabled:opacity-40"
+          >
+            Retry
+          </button>
         </div>
       )}
 
