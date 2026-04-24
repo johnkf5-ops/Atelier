@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 import StyleFingerprintCard from './style-fingerprint-card';
+import { fetchJson } from '@/lib/api/fetch-client';
 import {
   DndContext,
   PointerSensor,
@@ -56,9 +57,14 @@ export default function UploadClient() {
   const [keepIds, setKeepIds] = useState<Set<number>>(new Set());
 
   const refresh = useCallback(async () => {
-    const res = await fetch('/api/portfolio/upload', { cache: 'no-store' });
-    const j = await res.json();
-    setImages(j.images ?? []);
+    const result = await fetchJson<{ images: Image[] }>('/api/portfolio/upload', {
+      cache: 'no-store',
+    });
+    if (!result.ok) {
+      setErrors([`Could not load portfolio: ${result.error}`]);
+      return;
+    }
+    setImages(result.data.images ?? []);
   }, []);
 
   useEffect(() => {
@@ -68,19 +74,14 @@ export default function UploadClient() {
   // Load existing fingerprint on mount so returning users see their card immediately.
   useEffect(() => {
     void (async () => {
-      try {
-        const res = await fetch('/api/style-analyst/run', { cache: 'no-store' });
-        if (!res.ok) return;
-        const j = (await res.json()) as {
-          fingerprint: StyleFingerprint | null;
-          version?: number;
-        };
-        if (j.fingerprint) {
-          setAnalystFingerprint(j.fingerprint);
-          setAnalystVersion(j.version);
-        }
-      } catch {
-        // ignore — user just hasn't analyzed yet
+      const result = await fetchJson<{
+        fingerprint: StyleFingerprint | null;
+        version?: number;
+      }>('/api/style-analyst/run', { cache: 'no-store' });
+      if (!result.ok) return; // user just hasn't analyzed yet, or DB is empty
+      if (result.data.fingerprint) {
+        setAnalystFingerprint(result.data.fingerprint);
+        setAnalystVersion(result.data.version);
       }
     })();
   }, []);
@@ -93,9 +94,20 @@ export default function UploadClient() {
       try {
         const fd = new FormData();
         for (const f of files) fd.append('files', f);
-        const res = await fetch('/api/portfolio/upload', { method: 'POST', body: fd });
-        const j = await res.json();
-        if (j.errors?.length) setErrors(j.errors.map((e: { filename: string; error: string }) => `${e.filename}: ${e.error}`));
+        const result = await fetchJson<{
+          inserted: Array<{ id: number; filename: string; thumb_url: string }>;
+          errors: Array<{ filename: string; error: string }>;
+          total: number;
+        }>('/api/portfolio/upload', { method: 'POST', body: fd });
+        if (!result.ok) {
+          setErrors([`Upload failed: ${result.error}`]);
+          return;
+        }
+        if (result.data.errors?.length) {
+          setErrors(
+            result.data.errors.map((e) => `${e.filename}: ${e.error}`),
+          );
+        }
         await refresh();
       } finally {
         setBusy(false);
@@ -275,20 +287,16 @@ export default function UploadClient() {
     setAnalystError(null);
     startStageTimer(images.length);
     try {
-      const res = await fetch('/api/style-analyst/run', { method: 'POST' });
-      const j = (await res.json()) as {
-        fingerprint?: StyleFingerprint;
-        version?: number;
-        error?: string;
-      };
-      if (!res.ok || j.error) {
-        setAnalystError(j.error ?? `HTTP ${res.status}`);
-      } else if (j.fingerprint) {
-        setAnalystFingerprint(j.fingerprint);
-        setAnalystVersion(j.version);
+      const result = await fetchJson<{
+        fingerprint: StyleFingerprint;
+        version: number;
+      }>('/api/style-analyst/run', { method: 'POST' });
+      if (!result.ok) {
+        setAnalystError(result.error);
+      } else {
+        setAnalystFingerprint(result.data.fingerprint);
+        setAnalystVersion(result.data.version);
       }
-    } catch (err) {
-      setAnalystError((err as Error).message);
     } finally {
       stopStageTimer();
       setAnalyzing(false);

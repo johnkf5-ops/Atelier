@@ -1,9 +1,11 @@
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { hasAnthropicKey } from '@/lib/auth/api-key';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const status: Record<string, unknown> = {
     db: false,
     env: hasAnthropicKey(),
@@ -18,4 +20,4 @@ export async function GET() {
     status.db_error = (err as Error).message;
   }
   return Response.json(status);
-}
+});

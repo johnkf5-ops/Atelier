@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { getCurrentUserId } from '@/lib/auth/user';
+import { ensureDbReady } from '@/lib/db/client';
 import { listRunsForUser, formatRelative, type RunSummary } from '@/lib/db/queries/runs';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +18,7 @@ function rowHref(r: RunSummary): string {
 }
 
 export default async function RunsPage() {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const runs = await listRunsForUser(userId);
 

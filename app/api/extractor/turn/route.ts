@@ -1,9 +1,10 @@
 import { NextRequest } from 'next/server';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { loadLatestAkb, saveAkb } from '@/lib/akb/persistence';
 import { mergeAkb } from '@/lib/akb/merge';
 import { nextInterviewTurn, type Turn } from '@/lib/agents/interview';
+import { withApiErrorHandling } from '@/lib/api/response';
 import { z } from 'zod';
 
 export const runtime = 'nodejs';
@@ -13,7 +14,8 @@ const Body = z.object({
   user_message: z.string().nullable(),
 });
 
-export async function POST(req: NextRequest) {
+export const POST = withApiErrorHandling(async (req: NextRequest) => {
+  await ensureDbReady();
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
@@ -86,9 +88,10 @@ export async function POST(req: NextRequest) {
     akb,
     saved,
   });
-}
+});
 
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const db = getDb();
   const r = await db.execute({
@@ -97,4 +100,4 @@ export async function GET() {
     args: [userId],
   });
   return Response.json({ turns: r.rows });
-}
+});

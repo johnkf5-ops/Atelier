@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import NewRunClient from './new-run-client';
 
@@ -7,6 +7,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export default async function NewRunPage() {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const db = getDb();
 

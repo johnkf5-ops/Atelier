@@ -1,11 +1,13 @@
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { analyzePortfolio } from '@/lib/agents/style-analyst';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
-export async function POST() {
+export const POST = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const db = getDb();
 
@@ -45,9 +47,10 @@ export async function POST() {
     fingerprint,
     elapsed_ms,
   });
-}
+});
 
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const db = getDb();
   const r = await db.execute({
@@ -63,4 +66,4 @@ export async function GET() {
     fingerprint: JSON.parse(row.json as string),
     created_at: Number(row.created_at),
   });
-}
+});

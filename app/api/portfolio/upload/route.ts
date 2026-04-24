@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import {
   ingestImage,
@@ -7,11 +7,13 @@ import {
   getNextOrdinal,
   PORTFOLIO_CAP,
 } from '@/lib/portfolio/ingest';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
+export const POST = withApiErrorHandling(async (req: NextRequest) => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
 
   const currentCount = await getPortfolioCount(userId);
@@ -46,9 +48,10 @@ export async function POST(req: NextRequest) {
 
   const total = await getPortfolioCount(userId);
   return Response.json({ inserted, errors, total });
-}
+});
 
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const db = getDb();
   const r = await db.execute({
@@ -59,4 +62,4 @@ export async function GET() {
     args: [userId],
   });
   return Response.json({ images: r.rows, total: r.rows.length });
-}
+});

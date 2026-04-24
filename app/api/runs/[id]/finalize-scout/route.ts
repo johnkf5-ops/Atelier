@@ -2,47 +2,51 @@ import pLimit from 'p-limit';
 import { put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
 import sharp from 'sharp';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { uploadToFilesApi } from '@/lib/anthropic-files';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300; // Vercel Pro 5-min cap
 
-export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const runId = Number(id);
-  const db = getDb();
+export const POST = withApiErrorHandling(
+  async (req: Request, { params }: { params: Promise<{ id: string }> }) => {
+    await ensureDbReady();
+    const { id } = await params;
+    const runId = Number(id);
+    const db = getDb();
 
-  await db.execute({ sql: `UPDATE runs SET status = 'finalizing_scout' WHERE id = ?`, args: [runId] });
+    await db.execute({ sql: `UPDATE runs SET status = 'finalizing_scout' WHERE id = ?`, args: [runId] });
 
-  // Recipients tied to this run's opportunities that haven't yet been mirrored to Blob.
-  const rows = (
-    await db.execute({
-      sql: `SELECT pr.id, pr.opportunity_id, pr.name, pr.year, pr.portfolio_urls
-            FROM past_recipients pr
-            JOIN run_opportunities ro ON ro.opportunity_id = pr.opportunity_id
-            WHERE ro.run_id = ?
-              AND pr.portfolio_urls LIKE '[%'
-              AND pr.portfolio_urls NOT LIKE '%blob.vercel-storage%'`,
-      args: [runId],
-    })
-  ).rows as unknown as Array<{
-    id: number;
-    opportunity_id: number;
-    name: string;
-    year: number | null;
-    portfolio_urls: string;
-  }>;
+    // Recipients tied to this run's opportunities that haven't yet been mirrored to Blob.
+    const rows = (
+      await db.execute({
+        sql: `SELECT pr.id, pr.opportunity_id, pr.name, pr.year, pr.portfolio_urls
+              FROM past_recipients pr
+              JOIN run_opportunities ro ON ro.opportunity_id = pr.opportunity_id
+              WHERE ro.run_id = ?
+                AND pr.portfolio_urls LIKE '[%'
+                AND pr.portfolio_urls NOT LIKE '%blob.vercel-storage%'`,
+        args: [runId],
+      })
+    ).rows as unknown as Array<{
+      id: number;
+      opportunity_id: number;
+      name: string;
+      year: number | null;
+      portfolio_urls: string;
+    }>;
 
-  const limit = pLimit(10);
-  await Promise.all(rows.map((row) => limit(() => downloadRow(row))));
+    const limit = pLimit(10);
+    await Promise.all(rows.map((row) => limit(() => downloadRow(row))));
 
-  waitUntil(
-    fetch(new URL(`/api/runs/${runId}/start-rubric`, req.url), { method: 'POST' }).catch(() => {}),
-  );
+    waitUntil(
+      fetch(new URL(`/api/runs/${runId}/start-rubric`, req.url), { method: 'POST' }).catch(() => {}),
+    );
 
-  return Response.json({ downloaded_recipients: rows.length });
-}
+    return Response.json({ downloaded_recipients: rows.length });
+  },
+);
 
 async function downloadRow(row: {
   id: number;

@@ -1,15 +1,17 @@
 import { NextRequest } from 'next/server';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { RunConfig, defaultWindow } from '@/lib/schemas/run';
 import { startScoutSession } from '@/lib/agents/opportunity-scout';
 import { loadLatestAkb } from '@/lib/akb/persistence';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-export async function POST(req: NextRequest) {
+export const POST = withApiErrorHandling(async (req: NextRequest) => {
+  await ensureDbReady();
   const bodyRaw = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   const body: Record<string, unknown> = {
     ...defaultWindow(),
@@ -50,4 +52,4 @@ export async function POST(req: NextRequest) {
 
   const sessionId = await startScoutSession(runId, akb, fingerprint, config);
   return Response.json({ run_id: runId, session_id: sessionId, phase: 'scout' });
-}
+});

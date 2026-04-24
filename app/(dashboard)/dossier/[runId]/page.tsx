@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getLogoUrl } from '@/lib/logos';
 import DossierView, { type DossierMatch, type DossierFilteredOut } from './dossier-view';
 
@@ -7,6 +7,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export default async function DossierPage({ params }: { params: Promise<{ runId: string }> }) {
+  await ensureDbReady();
   const { runId } = await params;
   const runIdNum = Number(runId);
   if (!Number.isInteger(runIdNum)) redirect('/runs');

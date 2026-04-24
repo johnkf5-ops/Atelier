@@ -1,6 +1,8 @@
+import { ensureDbReady } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { loadLatestAkb, saveAkb } from '@/lib/akb/persistence';
 import { ArtistKnowledgeBase } from '@/lib/schemas/akb';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 
@@ -10,7 +12,8 @@ export const runtime = 'nodejs';
  * "Done" action at end of /interview and as the hard boundary before
  * /review's "Continue to dossier" button.
  */
-export async function POST() {
+export const POST = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const { akb, version } = await loadLatestAkb(userId);
   if (version === 0) {
@@ -31,4 +34,4 @@ export async function POST() {
   }
   const saved = await saveAkb(userId, parsed.data, 'merge');
   return Response.json({ saved, akb: parsed.data });
-}
+});

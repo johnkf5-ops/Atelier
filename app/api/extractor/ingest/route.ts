@@ -1,8 +1,10 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { ensureDbReady } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { loadLatestAkb } from '@/lib/akb/persistence';
 import { ingestUrls } from '@/lib/extractor/ingest-urls';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -12,7 +14,8 @@ const Body = z.object({
   source: z.enum(['auto-discover', 'paste', 'manual']).default('paste'),
 });
 
-export async function POST(req: NextRequest) {
+export const POST = withApiErrorHandling(async (req: NextRequest) => {
+  await ensureDbReady();
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
@@ -38,4 +41,4 @@ export async function POST(req: NextRequest) {
     saved: result.akb_version_id != null ? { id: result.akb_version_id } : null,
     akb,
   });
-}
+});

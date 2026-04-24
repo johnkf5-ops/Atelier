@@ -1,6 +1,8 @@
+import { ensureDbReady } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { loadLatestAkb } from '@/lib/akb/persistence';
 import { ArtistKnowledgeBase } from '@/lib/schemas/akb';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const dynamic = 'force-dynamic';
 
@@ -10,7 +12,8 @@ export const dynamic = 'force-dynamic';
  * "Continue to dossier" button when valid=false and surfaces the issues
  * inline at the field paths.
  */
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const userId = getCurrentUserId();
   const { akb, version } = await loadLatestAkb(userId);
   if (version === 0) {
@@ -29,4 +32,4 @@ export async function GET() {
     version,
     issues: r.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
   });
-}
+});

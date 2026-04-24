@@ -1,8 +1,10 @@
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
+import { withApiErrorHandling } from '@/lib/api/response';
 
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export const GET = withApiErrorHandling(async () => {
+  await ensureDbReady();
   const db = getDb();
   const tables = (
     await db.execute(
@@ -24,4 +26,4 @@ export async function GET() {
     migrations = [];
   }
   return Response.json({ tables, indexes, migrations });
-}
+});
