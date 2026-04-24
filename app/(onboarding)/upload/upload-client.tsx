@@ -475,6 +475,13 @@ function Tile({
     opacity: isDragging ? 0.4 : 1,
   };
   const dimmed = inReview && !kept;
+  // Some scraped thumb loads time out when 20+ images race for the 6 HTTP/1.1
+  // connections per origin that the browser allows. `loading="lazy"` lets the
+  // browser stagger. If a load still fails, retry once with a cache-buster and
+  // show a readable fallback rather than leaking the filename alt text.
+  const [attempt, setAttempt] = useState(0);
+  const [failed, setFailed] = useState(false);
+  const srcWithBuster = attempt === 0 ? img.thumb_url : `${img.thumb_url}?r=${attempt}`;
   return (
     <div
       ref={setNodeRef}
@@ -485,12 +492,27 @@ function Tile({
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={img.thumb_url}
-        alt={img.filename}
+        src={srcWithBuster}
+        alt=""
+        loading="lazy"
+        decoding="async"
+        onError={() => {
+          if (attempt < 1) {
+            setAttempt(1);
+          } else {
+            console.error(`[portfolio] image failed to load after retry: ${img.thumb_url}`);
+            setFailed(true);
+          }
+        }}
         className={`w-full h-full object-cover cursor-grab transition ${dimmed ? 'opacity-30 grayscale' : ''}`}
         {...attributes}
         {...listeners}
       />
+      {failed && (
+        <div className="absolute inset-0 flex items-center justify-center text-[10px] text-neutral-500 bg-neutral-950">
+          failed to load
+        </div>
+      )}
       {inReview && (
         <label className="absolute top-1 left-1 flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-xs cursor-pointer">
           <input type="checkbox" checked={kept} onChange={onToggleKeep} />
