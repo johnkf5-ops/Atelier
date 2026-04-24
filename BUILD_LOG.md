@@ -53,3 +53,19 @@ The completeness signal (`next_field_target === null`) is already returned by th
 
 Plus: sidebar "AKB (live)" → "Knowledge Base (live)", page title "Knowledge Extractor" → "Build your Knowledge Base".
 
+### Group E — Review flow
+
+**Commit:** `ddb6c42`.
+
+**E1 React controlled/uncontrolled input warning on /review.** Every form edit logged *"A component is changing an uncontrolled input to be controlled"*. Root cause in `review-client.tsx`: AKB schema marks `home_base.state`, `practice.typical_scale`, and `year_of_birth` optional, and `emptyAkb()` never writes `state` into the row at all. The form read `draft.identity.home_base.state` directly, so the first render got `undefined`, the user typed, and React flipped modes.
+
+Fixed upstream, not at the input level. New `normalizeAkbForForm()` runs on mount AND on every post-save response: every form-editable leaf is coerced to a concrete string, empty array, or null before it enters `setDraft`. The `Akb` form type was also tightened so `public_name`/`pronouns`/`typical_scale` are `string` (not `string | undefined`) and `year_of_birth` is `number | null` (not `number | undefined`). Result: inputs cannot receive `undefined` from the state layer, so the warning is structurally impossible — no per-field `value ?? ''` bandaid needed.
+
+### Group F — Post-interview → runs flow
+
+**Commit:** `bb19f7a`.
+
+**F1 "AKB" jargon + dead-end after interview.** Every user-visible "AKB" string is now "Knowledge Base": the interview completion banner ("Knowledge Base complete — N facts captured"), `/review`'s validation banner ("Knowledge Base is incomplete"), and every error message returned by `/api/akb/validate`, `/api/akb/finalize`, and `/api/runs/start`. Code comments with "AKB" remain — internal, per the spec. `/review`'s "Continue to dossier →" button (which had been linking to the old `/runs` stub) now reads "Start your first run →" and routes to `/runs/new`, closing the onboarding→run handoff that Group D opened with its completion-banner CTA.
+
+End-to-end next-step chain now has zero dead ends: **upload → analyze → fingerprint card's "Next: Build your Knowledge Base" → auto-discover → interview → "Knowledge Base complete" banner → "Review & start your first run" → review → "Start your first run" → `/runs/new` → `Start new run` → `/runs/[id]` → dossier**.
+
