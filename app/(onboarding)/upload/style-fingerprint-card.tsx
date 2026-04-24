@@ -100,7 +100,7 @@ export default function StyleFingerprintCard({
 
       <div className="border-t border-neutral-800 pt-4 space-y-3">
         <p className="text-sm text-neutral-400 leading-relaxed">
-          Next, we'll research your public record — shows, publications, residencies — so Atelier
+          Next, we&rsquo;ll research your public record — shows, publications, residencies — so Atelier
           can match you to the right opportunities.
         </p>
         <Link
