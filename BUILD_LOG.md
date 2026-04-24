@@ -26,3 +26,13 @@ Narrative log of shipped work per §5.1.a polish batch. Each entry: commit SHA +
 
 Plus: `/upload` now fetches any existing fingerprint on mount so returning users see their card without re-analyzing.
 
+### Group C — Auto-discover + Knowledge Extractor flow
+
+**Commit:** `aff07ab`.
+
+**C1 Auto-discover ingest silently "succeeded" with no AKB write.** Root cause in `app/(onboarding)/interview/auto-discover-panel.tsx`: `confirmAndIngest` did `void j` on the `/api/extractor/ingest` response, then always rendered a green "Ingested. The interview below will pick up from the new AKB." panel — regardless of whether `saved` was null or `changed_fields` was empty. If every URL failed fetch/extract (or if every field already had manual provenance and merge was a no-op), the user got the success UI and no new `akb_versions` row, exactly matching the reported symptom.
+
+Fix: `IngestSummaryPanel` reads the actual response. When `saved` is non-null it shows the new KB version ID + changed-field count on green. When `saved` is null with `changed_fields.length === 0` it shows "No new facts extracted from the selected pages. Try adding URLs with richer bio / press content." on amber. Failed sources surface behind a collapsible disclosure with per-URL reason strings. The ingest route itself (`lib/extractor/ingest-urls.ts`) is already structurally correct — it returns per-source `ok/error/changed` fields and writes a new akb_version iff `allChanged.size > 0`. Making the UI honest eliminates the "silent zero-write" failure mode.
+
+**C2 Scraper review UI dominated by log dump.** Thumbnails already rendered in the main portfolio grid with `inReview` emerald-outline, but the verbose `<pre>` scrape log competed for visual weight. Now the log collapses behind a `<details>` summary ("Scrape log (N lines)"), and a new emerald primary line ("N images pending review in the grid below — uncheck any false positives, then Confirm") anchors the review action.
+
