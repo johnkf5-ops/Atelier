@@ -477,18 +477,22 @@ function Tile({
         {...attributes}
         {...listeners}
       />
-      {inReview && (
+      {inReview ? (
+        // Review-batch mode: only the Keep toggle. The per-tile delete button
+        // would bypass reviewIds/keepIds and leave the "Confirm X/Y" counter
+        // stale — use the checkbox instead, then Confirm/Discard commits.
         <label className="absolute top-1 left-1 flex items-center gap-1 rounded bg-black/70 px-2 py-1 text-xs cursor-pointer">
           <input type="checkbox" checked={kept} onChange={onToggleKeep} />
           keep
         </label>
+      ) : (
+        <button
+          onClick={onDelete}
+          className="absolute top-1 right-1 rounded bg-black/70 px-2 py-1 text-xs text-rose-300 opacity-0 group-hover:opacity-100"
+        >
+          delete
+        </button>
       )}
-      <button
-        onClick={onDelete}
-        className="absolute top-1 right-1 rounded bg-black/70 px-2 py-1 text-xs text-rose-300 opacity-0 group-hover:opacity-100"
-      >
-        delete
-      </button>
     </div>
   );
 }
