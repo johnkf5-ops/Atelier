@@ -4,6 +4,16 @@ import { getDb } from './client';
 
 let _ran = false;
 
+/**
+ * Allows ensureDbReady() to force re-application after it detects the DB
+ * has been wiped externally (e.g. `pnpm db:reset` against a running dev
+ * server). schema.sql uses CREATE TABLE IF NOT EXISTS and the migration
+ * file runner checks the _migrations table, so re-running is idempotent.
+ */
+export function resetMigrationsMemo(): void {
+  _ran = false;
+}
+
 export async function runMigrations(): Promise<void> {
   if (_ran) return;
   _ran = true;

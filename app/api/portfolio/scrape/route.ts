@@ -3,6 +3,7 @@ import { z } from 'zod';
 import sharp from 'sharp';
 import pLimit from 'p-limit';
 import { createHash } from 'node:crypto';
+import { ensureDbReady } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 import {
   ingestImage,
@@ -36,6 +37,7 @@ function sse(event: Event): string {
 }
 
 export async function POST(req: NextRequest) {
+  await ensureDbReady();
   const parsed = Body.safeParse(await req.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });

@@ -2,6 +2,12 @@ import { createClient, type Client } from '@libsql/client';
 
 let _db: Client | null = null;
 let _bootstrapPromise: Promise<void> | null = null;
+// True once a bootstrap has completed AND a subsequent sentinel check
+// confirmed the schema is intact. Reset whenever the sentinel check fails
+// (e.g. the DB was wiped externally by `pnpm db:reset` against a running
+// server — without this, _bootstrapPromise's memoization leaves the server
+// permanently stuck believing it's ready when the tables are gone).
+let _schemaVerified = false;
 
 export function getDb(): Client {
   if (!_db) {
@@ -14,26 +20,49 @@ export function getDb(): Client {
 }
 
 /**
- * Lazy first-access bootstrap: runs migrations + seeds the default user row.
- * Every API route that hits the DB should `await ensureDbReady()` before its
- * first query so a freshly-reset DB rebuilds its schema + single-tenant user
- * on the next request instead of 500ing with "no such table".
+ * Lazy, self-healing bootstrap: runs migrations + seeds the default user row
+ * on first access AND re-runs both if a sentinel check reveals the DB has
+ * been wiped since.
  *
- * Memoized via _bootstrapPromise so concurrent requests cooperate on one run.
+ * The sentinel is a cheap `SELECT 1 FROM sqlite_master WHERE name='users'`
+ * (~1ms). It fires on every call after first boot to catch the "dev ran
+ * pnpm db:reset without restarting the server" case. Migrations + the
+ * INSERT OR IGNORE seed are both idempotent so re-running is free on a
+ * healthy DB — the sentinel just skips straight to verified=true.
+ *
  * Dynamic imports avoid a cycle (migrations.ts imports client.ts).
  */
 export async function ensureDbReady(): Promise<void> {
+  if (_schemaVerified && (await schemaExists())) return;
+  _schemaVerified = false;
   if (_bootstrapPromise) return _bootstrapPromise;
   _bootstrapPromise = (async () => {
-    const { runMigrations } = await import('./migrations');
+    const { runMigrations, resetMigrationsMemo } = await import('./migrations');
+    // Migrations memoize "done" internally; reset that too so a wiped DB
+    // gets a full re-apply.
+    resetMigrationsMemo();
     await runMigrations();
     await seedDefaultUser();
+    _schemaVerified = true;
   })().catch((err) => {
-    // Reset so a later request retries; otherwise a one-shot failure sticks.
     _bootstrapPromise = null;
+    _schemaVerified = false;
     throw err;
+  }).finally(() => {
+    _bootstrapPromise = null;
   });
   return _bootstrapPromise;
+}
+
+async function schemaExists(): Promise<boolean> {
+  try {
+    const r = await getDb().execute(
+      `SELECT 1 FROM sqlite_master WHERE type='table' AND name='users' LIMIT 1`,
+    );
+    return r.rows.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function seedDefaultUser(): Promise<void> {

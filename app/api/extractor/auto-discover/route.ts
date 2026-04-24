@@ -1,12 +1,13 @@
 import { AutoDiscoverInput } from '@/lib/schemas/discovery';
 import { discoverArtist, parseDiscovery, type DiscoveryEvent } from '@/lib/extractor/auto-discover';
-import { getDb } from '@/lib/db/client';
+import { ensureDbReady, getDb } from '@/lib/db/client';
 import { getCurrentUserId } from '@/lib/auth/user';
 
 export const runtime = 'nodejs';
 export const maxDuration = 90; // discovery can take 30-60s
 
 export async function POST(req: Request) {
+  await ensureDbReady();
   const input = AutoDiscoverInput.parse(await req.json());
   const userId = getCurrentUserId();
 
