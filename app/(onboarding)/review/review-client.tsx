@@ -6,23 +6,65 @@ import { useEffect, useMemo, useState } from 'react';
 type Akb = Record<string, unknown> & {
   identity: {
     legal_name: string;
-    public_name?: string;
-    pronouns?: string;
+    public_name: string;
+    pronouns: string;
     citizenship: string[];
     home_base: { city: string; state: string; country: string };
-    year_of_birth?: number;
+    year_of_birth: number | null;
   };
   practice: {
     primary_medium: string;
     secondary_media: string[];
     process_description: string;
     materials_and_methods: string[];
-    typical_scale?: string;
+    typical_scale: string;
   };
   career_stage: 'emerging' | 'mid-career' | 'established' | 'late-career';
   intent: { statement: string; influences: string[]; aspirations: string[] };
   source_provenance: Record<string, string>;
 };
+
+// The server may return AKB rows with `undefined` or missing optional leaves
+// (e.g. empty-Akb omits home_base.state entirely). Normalize to concrete
+// empty strings/nulls before first render so inputs are ALWAYS controlled
+// — no "changing an uncontrolled input to be controlled" React warning.
+function normalizeAkbForForm(raw: Record<string, unknown>): Akb {
+  const r = raw as Record<string, unknown>;
+  const identity = (r.identity ?? {}) as Record<string, unknown>;
+  const home_base = (identity.home_base ?? {}) as Record<string, unknown>;
+  const practice = (r.practice ?? {}) as Record<string, unknown>;
+  const intent = (r.intent ?? {}) as Record<string, unknown>;
+  return {
+    ...r,
+    identity: {
+      legal_name: (identity.legal_name as string) ?? '',
+      public_name: (identity.public_name as string) ?? '',
+      pronouns: (identity.pronouns as string) ?? '',
+      citizenship: (identity.citizenship as string[]) ?? [],
+      home_base: {
+        city: (home_base.city as string) ?? '',
+        state: (home_base.state as string) ?? '',
+        country: (home_base.country as string) ?? '',
+      },
+      year_of_birth: (identity.year_of_birth as number | null) ?? null,
+    },
+    practice: {
+      primary_medium: (practice.primary_medium as string) ?? '',
+      secondary_media: (practice.secondary_media as string[]) ?? [],
+      process_description: (practice.process_description as string) ?? '',
+      materials_and_methods: (practice.materials_and_methods as string[]) ?? [],
+      typical_scale: (practice.typical_scale as string) ?? '',
+    },
+    career_stage:
+      ((r.career_stage as Akb['career_stage']) ?? 'emerging'),
+    intent: {
+      statement: (intent.statement as string) ?? '',
+      influences: (intent.influences as string[]) ?? [],
+      aspirations: (intent.aspirations as string[]) ?? [],
+    },
+    source_provenance: (r.source_provenance as Record<string, string>) ?? {},
+  };
+}
 
 type StyleFp = Record<string, unknown> | null;
 
@@ -45,8 +87,9 @@ export default function ReviewClient() {
         fetch('/api/akb/current').then((r) => r.json()),
         fetch('/api/style-analyst/run').then((r) => r.json()),
       ]);
-      setAkb(a.akb);
-      setDraft(a.akb);
+      const normalized = a.akb ? normalizeAkbForForm(a.akb as Record<string, unknown>) : null;
+      setAkb(normalized);
+      setDraft(normalized);
       setFp(f.fingerprint ?? null);
       refreshValidation();
     })();
@@ -73,8 +116,9 @@ export default function ReviewClient() {
       if (j.error) {
         setStatus(`error: ${j.error}`);
       } else {
-        setAkb(j.akb);
-        setDraft(j.akb);
+        const normalized = normalizeAkbForForm(j.akb as Record<string, unknown>);
+        setAkb(normalized);
+        setDraft(normalized);
         setStatus(`saved · changed: ${j.changed?.join(', ') || 'nothing'}`);
         refreshValidation();
       }
@@ -135,11 +179,11 @@ export default function ReviewClient() {
             value={draft.identity.legal_name}
             onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, legal_name: v } })} />
           <Field label="Public name" path="identity.public_name" akb={draft}
-            value={draft.identity.public_name ?? ''}
-            onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, public_name: v || undefined } })} />
+            value={draft.identity.public_name}
+            onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, public_name: v } })} />
           <Field label="Pronouns" path="identity.pronouns" akb={draft}
-            value={draft.identity.pronouns ?? ''}
-            onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, pronouns: v || undefined } })} />
+            value={draft.identity.pronouns}
+            onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, pronouns: v } })} />
           <ArrayField label="Citizenship" path="identity.citizenship" akb={draft}
             value={draft.identity.citizenship}
             onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, citizenship: v } })} />
@@ -153,10 +197,10 @@ export default function ReviewClient() {
             value={draft.identity.home_base.country}
             onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, home_base: { ...draft.identity.home_base, country: v } } })} />
           <Field label="Year of birth" path="identity.year_of_birth" akb={draft}
-            value={String(draft.identity.year_of_birth ?? '')}
+            value={draft.identity.year_of_birth == null ? '' : String(draft.identity.year_of_birth)}
             onChange={(v) => {
-              const n = v === '' ? undefined : Number(v);
-              setDraft({ ...draft, identity: { ...draft.identity, year_of_birth: Number.isFinite(n as number) ? (n as number) : undefined } });
+              const n = v === '' ? null : Number(v);
+              setDraft({ ...draft, identity: { ...draft.identity, year_of_birth: Number.isFinite(n as number) ? (n as number) : null } });
             }} />
         </Section>
 
@@ -174,8 +218,8 @@ export default function ReviewClient() {
             value={draft.practice.materials_and_methods}
             onChange={(v) => setDraft({ ...draft, practice: { ...draft.practice, materials_and_methods: v } })} />
           <Field label="Typical scale" path="practice.typical_scale" akb={draft}
-            value={draft.practice.typical_scale ?? ''}
-            onChange={(v) => setDraft({ ...draft, practice: { ...draft.practice, typical_scale: v || undefined } })} />
+            value={draft.practice.typical_scale}
+            onChange={(v) => setDraft({ ...draft, practice: { ...draft.practice, typical_scale: v } })} />
           <SelectField label="Career stage" path="career_stage" akb={draft}
             value={draft.career_stage}
             options={['emerging', 'mid-career', 'established', 'late-career']}
