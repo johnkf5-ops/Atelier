@@ -3344,6 +3344,142 @@ For the demo recording (per spec §Demo strategy, "First Style Analyst pass = li
 
 - [ ] **All §3.7 smoke tests pass** (`pnpm test`); integration tests pass at least once (`pnpm test:integration`); one full e2e runs clean (`pnpm test:e2e`)
 
+### 5.1.a Pre-demo polish batch (MUST ship before §5.2 recording)
+
+**Why this section exists:** the clean-run test in §5.1 surfaced 11 real issues — 2 bugs and 9 UX gaps — that a judge will hit the moment they touch the deploy. These are NOT bandaids. Each is a real product issue that affects every user, not just the demo. This section documents every issue, its root cause, the fix, and the acceptance criteria, so the coder has a single canonical hand-off and the hackathon record has evidence of discipline.
+
+**Order of work:** user-flow order. Fix one flow completely (bug + UX in that flow) before moving on. Retest the whole flow after each group lands. No partial merges.
+
+---
+
+#### Group A — Entry & Runs management
+
+**Fix A1 — `/runs` page is a stub** (task #20)
+- **Broken:** `app/(dashboard)/runs/page.tsx` renders a placeholder with no run list and no way to start a new run. Judge lands here after a first run and has nothing to do.
+- **Fix:** Render the user's run list (newest first) with: run_id, status badge (`running` / `complete` / `errored`), started_at (relative), top-line counts (`N discovered / M scored / K included`). Include a prominent "New Run" button that routes to a new `/runs/new` page (Fix A2). Link each row to its dossier or status page per current status.
+- **Files:** `app/(dashboard)/runs/page.tsx`, new `app/(dashboard)/runs/new/page.tsx`, new `lib/db/queries/runs.ts` helper `listRunsForUser(userId)`.
+- **Acceptance:** after a fresh run completes, judge navigates to `/runs` and sees the completed run with a link to its dossier AND a "New Run" button. Clicking the button takes them to a page where they can start another run. No placeholder text.
+
+**Fix A2 — Re-run cadence guidance + visible path to start another run** (task #22)
+- **Broken:** there is no page or prompt telling the user when to run Atelier again or how to start the next run. After the first dossier, the product looks done forever.
+- **Fix:** new `app/(dashboard)/runs/new/page.tsx` that:
+  1. Shows guidance copy: "Atelier surfaces new opportunities as they open. Re-run every 2–4 weeks, or when you update your portfolio / AKB."
+  2. Lists what the run will use: current StyleFingerprint (with last-updated date), current AKB version, portfolio image count.
+  3. Has a single "Start New Run" button that POSTs to `/api/runs` and redirects to the status page.
+- **Files:** new `app/(dashboard)/runs/new/page.tsx`.
+- **Acceptance:** from `/runs` the "New Run" button lands here; copy reads naturally to a non-technical user; one click starts a run and navigates to its status page.
+
+**Fix A3 — Favicon 404** (task #21)
+- **Broken:** `/favicon.ico` 404s on every page load; console noise.
+- **Fix:** add `app/favicon.ico` (or `public/favicon.ico` per Next.js 15 App Router convention — App Router prefers the `app/` location). Use a simple monochrome mark, not a placeholder. If no brand mark exists, use a neutral "A" glyph.
+- **Files:** `app/favicon.ico`.
+- **Acceptance:** fresh incognito load of any page shows no favicon 404 in Network tab, and a visible favicon in the browser tab.
+
+---
+
+#### Group B — Upload → Style Analyst flow
+
+**Fix B1 — No progress indicator during Style Analyst** (task #8)
+- **Broken:** after upload, the user clicks "Analyze" and the vision call takes 30–90s with no visible feedback. Looks frozen.
+- **Fix:** show a progress state on the Style Analyst page with:
+  1. Spinner + copy "Analyzing your portfolio…"
+  2. Live status line that updates as the call progresses (at minimum: "Reading N images…" → "Identifying aesthetic lineage…" → "Writing fingerprint…"). Status can come from intermediate API writes or a simple staged timer if real progress isn't available.
+  3. Disable the Analyze button while running.
+- **Files:** wherever the Style Analyst UI lives (likely `app/(onboarding)/style-analyst/page.tsx` or `app/(onboarding)/upload/page.tsx`).
+- **Acceptance:** clicking Analyze immediately shows the progress state; user never sees a frozen screen.
+
+**Fix B2 — Render StyleFingerprint as designed view, not JSON** (task #10)
+- **Broken:** completed StyleFingerprint is shown as a raw JSON dump. Non-technical user can't read it.
+- **Fix:** render as a polished card view:
+  - **Lineage** (with names pulled from the fingerprint, comma-separated)
+  - **Register** (prose sentence)
+  - **Palette** (prose + optional color swatches if hex values present)
+  - **Crop / format** (prose)
+  - **Subject** (prose)
+  - **Anti-references** (if present) styled as a distinct block
+  - "View raw" disclosure at the bottom for the curious / for audit, NOT as default
+- **Files:** wherever the Style Analyst result view lives; likely a new `components/StyleFingerprintCard.tsx`.
+- **Acceptance:** after Style Analyst completes, user sees the polished card; JSON is hidden behind a "View raw" toggle.
+
+**Fix B3 — Post-Style-Analyst next-step CTA** (task #9)
+- **Broken:** after the fingerprint renders, the user has no visible next step. They don't know to go build their Knowledge Base.
+- **Fix:** primary CTA at the bottom of the fingerprint card: "Next: Build your Knowledge Base" linking to `/interview` (or `/auto-discover` if that's the new entry). Include a one-sentence explainer: "We'll research your public record — shows, publications, residencies — so we can match you to the right opportunities."
+- **Files:** same as Fix B2.
+- **Acceptance:** user can complete upload → analyze → navigate to interview without touching the URL bar or guessing.
+
+---
+
+#### Group C — Auto-discover + Knowledge Extractor flow
+
+**Fix C1 — Auto-discover ingest route returns 200 but never writes `akb_versions`** (task #17, BUG)
+- **Broken:** `/api/akb/auto-discover` (or whatever the route is) fires, returns 200 in ~43s, but no new `akb_versions` row is written. v1 of AKB ends up with only the legal_name from the interview's first turn. Cost is incurred (~$0.50–1 per call) with zero persisted result.
+- **Root cause:** unknown — needs debugging. Likely candidates: the agent session returns but the ingest handler's DB write path is broken, errors silently, or the response shape the handler expects doesn't match what the agent returns. Check if the handler is awaiting the write, if there's a silent catch, and if the akb_versions INSERT is actually firing.
+- **Fix:** trace the route end-to-end. Add explicit error logging at the write step. Confirm the ingest agent's output is being parsed into the AKB merge format expected by `mergeAkbPartial`. Verify a new `akb_versions` row is written with the discovered facts. Include the writeback in a transaction if not already.
+- **Files:** `app/api/akb/auto-discover/route.ts` (or equivalent), `lib/agents/knowledge-extractor.ts`, `lib/db/queries/akb.ts`.
+- **Acceptance:** run the flow, confirm a new `akb_versions` row exists after the 200 response, confirm the row contains the discovered facts (affiliations, publications, residencies, exhibitions), confirm the UI reflects these facts without a manual re-fetch. Write a smoke test in `tests/integration/auto-discover.test.ts` that asserts the row is written.
+
+**Fix C2 — Scraper review UI shows log dump, not thumbnails** (task #12)
+- **Broken:** after auto-discover runs, the review screen shows a log of URLs and fetch results, not the actual images that were discovered. User can't evaluate what to keep.
+- **Fix:** render discovered images as a thumbnail grid. Each thumbnail shows:
+  - image
+  - source URL (truncated, with hover for full)
+  - source archetype if known (portfolio / publication / social)
+  - accept / reject toggle
+- Support bulk accept / reject. Persist the user's selections so they feed into the portfolio for Style Analyst re-analysis.
+- **Files:** whichever page hosts the auto-discover review UI; likely `app/(onboarding)/auto-discover/review/page.tsx` or similar.
+- **Acceptance:** user sees actual thumbnails, can accept/reject each or in bulk, selections persist to the portfolio table.
+
+---
+
+#### Group D — Interview flow
+
+**Fix D1 — Interview page state + clarity after auto-discover** (task #15)
+- **Broken:** after auto-discover, the Interview page doesn't tell the user what it's doing. Is it running? Waiting? Done? No state indicator.
+- **Fix:** the Interview page has three visible states that are always obvious:
+  1. **Idle / ready** — "Your Knowledge Base has N facts. Click Start Interview to fill gaps."
+  2. **In progress** — "Interview running…" with spinner and current question visible. Disable other controls.
+  3. **Complete** — "Interview complete. M new facts added." with CTA to review or proceed.
+- Include a visible progress indicator (N of M questions answered) if the interview has a known question count; otherwise a live question counter.
+- **Files:** `app/(onboarding)/interview/page.tsx`.
+- **Acceptance:** at every point during the flow, the user knows what state the interview is in and what their next action is.
+
+**Fix D2 — Hide internal field paths from Interview UI** (task #16)
+- **Broken:** questions display as `identity.citizenship → What's your full legal name?` leaking the internal AKB schema path. Confusing and unprofessional.
+- **Fix:** show only the question text. Also verify the target/question match — the bug report notes that the target field (`identity.citizenship`) doesn't always match the asked question ("What's your full legal name?"). This is a real logic bug, not just a display issue. Audit the gap-detection + question-generation pipeline so the target field always matches the question being asked.
+- **Files:** `app/(onboarding)/interview/page.tsx`, `lib/agents/extractor-gaps.ts`, `lib/agents/knowledge-extractor.ts` (wherever questions are generated).
+- **Acceptance:** the user never sees dot-path field references in the UI. Every question's target field matches the content of the question. Add a unit test that asserts `generatedQuestion.targetField` is about the same concept as `generatedQuestion.questionText` for a sample of 10 gap targets.
+
+---
+
+#### Group E — Review flow (`/review`)
+
+**Fix E1 — Controlled/uncontrolled input warning** (task #19, BUG)
+- **Broken:** editing fields on `/review` logs `A component is changing an uncontrolled input to be controlled` to the console. Classic React bug: initial value is `undefined`, then becomes a string after first edit.
+- **Fix:** root-cause the initial state. Every input must have a defined initial value (empty string `""`, not `undefined`). If the underlying AKB field is optional, normalize to `""` at the form-state layer, and only convert `""` back to `undefined` (or omit) at submit time. Don't use `value={field ?? ""}` as a bandaid — fix the state initialization upstream.
+- **Files:** `app/(onboarding)/review/page.tsx`, plus whatever form-state layer feeds it.
+- **Acceptance:** editing every field on `/review` produces zero React console warnings.
+
+---
+
+#### Group F — Post-interview → runs flow
+
+**Fix F1 — Post-interview completion CTA + "AKB" jargon** (task #18)
+- **Broken:** after completing the interview, the user sees a completion screen that references "AKB" and has no clear next step. User doesn't know what "AKB" is or what to do next.
+- **Fix:**
+  1. Rename every user-facing "AKB" reference to "Knowledge Base". Internal schema / code can keep `akb_` prefix; UI strings must never use the acronym.
+  2. After the interview completes, show: "Knowledge Base complete — N facts across M categories." with a primary CTA: "Review & Start Your First Run" linking to `/review` (or to `/runs/new` if the review is optional).
+- **Files:** `app/(onboarding)/interview/page.tsx`, `app/(onboarding)/review/page.tsx`, any other user-facing view referencing "AKB". Grep for `AKB` in `app/`, `components/`, and any string literal in `lib/` that's rendered to the UI.
+- **Acceptance:** grep of all files rendered to users shows no "AKB" string. Completion screen has a clear next-step CTA that gets the user to their first run.
+
+---
+
+#### Acceptance gate — §5.1.a
+
+- [ ] All 11 fixes merged to main
+- [ ] Full clean-run test (from §5.1) passes with zero regressions
+- [ ] Fresh incognito prod walk-through (upload → analyze → auto-discover → review discovered images → interview → review AKB → start run → dossier) produces zero uncaught console errors, zero leaked internal strings ("AKB", dot-paths), and a continuous set of next-step CTAs — the user never hits a dead end
+- [ ] Every item above logged in `BUILD_LOG.md` with commit SHAs and the specific bug/gap → fix narrative
+
 ### 5.2 Demo recording
 
 - [ ] **Record setup:** ScreenFlow (macOS, paid but best for post-production) OR QuickTime (free, simpler) OR OBS Studio (free, more flexible). Recommend ScreenFlow if available — the 10x playback compression is critical and ScreenFlow's clip-speed controls are cleanest. Retina display at native resolution; browser window at 1440×900 for a clean 1080p crop.
