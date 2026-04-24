@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "setup:agents": "tsx scripts/setup-managed-agents.ts"
+    "setup:agents": "tsx scripts/setup-managed-agents.ts",
+    "test": "vitest run tests/smoke"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
@@ -44,7 +45,8 @@
     "postcss": "^8.4.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
