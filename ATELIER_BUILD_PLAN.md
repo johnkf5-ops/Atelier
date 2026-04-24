@@ -2450,11 +2450,64 @@ export async function draftPackages(runId: number, akb: ArtistKnowledgeBase, use
 
   // Concurrency: 5 matches in parallel, each drafting its 5 materials sequentially.
   // Net: 5 concurrent messages.create calls at any moment, ~150s for 60 calls.
+  // Use allSettled so one match's failure doesn't abort the other 14 (the dossier still ships).
   const limit = pLimit(5);
-  await Promise.all(matchRows.map((row: any) => limit(() => draftPackageForMatch(row, akb, portfolio))));
+  const settled = await Promise.allSettled(
+    matchRows.map((row: any) => limit(() => draftPackageForMatch(row, akb, portfolio)))
+  );
+
+  // Log per-match failures to run_events for post-mortem visibility
+  const failures = settled
+    .map((r, i) => r.status === 'rejected' ? { match_id: (matchRows[i] as any).id, reason: String(r.reason?.message ?? r.reason) } : null)
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (failures.length > 0) {
+    await db.execute({
+      sql: `INSERT INTO run_events (run_id, agent, kind, payload_json) VALUES (?, 'package-drafter', 'error', ?)`,
+      args: [runId, JSON.stringify({ failed_matches: failures, succeeded: settled.length - failures.length })]
+    });
+    console.warn(`[package-drafter] ${failures.length}/${settled.length} matches failed`, failures);
+  }
 
   await db.execute({ sql: `UPDATE runs SET status = 'complete', finished_at = unixepoch() WHERE id = ?`, args: [runId] });
 }
+```
+
+#### Hand-written skill defaults (fallback when skill files haven't landed)
+
+```ts
+// Used when skills/artist-statement-voice.md, etc. don't exist yet.
+// Short but deliberate — prevents silent quality degradation if §4.6 timing slips.
+
+const DEFAULT_VOICE_SKILL = `Voice for institutional artist statements + cover letters:
+- Third person, present tense.
+- Concrete over abstract — "rust-belt grain elevators at dawn" not "industrial structures in changing light".
+- Lead with what the work IS, not what it MEANS. Meaning emerges from material specifics.
+- No "explores", "examines", "interrogates", "questions" — overused MFA filler.
+- No emotional adjectives ("haunting", "evocative", "powerful"). Let the description do the work.
+- Proper nouns when grounding lineage (Adams, Eggleston, Sugimoto, Crewdson). Skip if not load-bearing.
+- 2-3 short paragraphs for statements. 2 paragraphs for cover letters.`;
+
+const DEFAULT_PROPOSAL_SKILL = `Generic project proposal structure (use when opportunity-specific requirements unavailable):
+1. ONE-LINE THESIS — what is the project, in plain English, no jargon
+2. CONTEXT — what existing body of work this extends, what conversation it joins
+3. METHOD — concrete materials, locations, timeline (months not vague phases)
+4. DELIVERABLES — what the funder gets at the end (number of works, format, scale)
+5. BUDGET FRAME — implicit in deliverables; mention only if explicitly asked
+6. WHY NOW / WHY YOU — single sentence each, not a sales pitch
+Total 400-600 words unless the opportunity specifies a length.`;
+
+const DEFAULT_CV_SKILL = `Generic chronological CV format (use when no institution-specific format known):
+NAME (top, large)
+b. YEAR, BIRTHPLACE | Lives and works in CITY
+EDUCATION (most recent first; degree, institution, year)
+SOLO EXHIBITIONS (year, title, venue, city)
+GROUP EXHIBITIONS (most recent 8-12; same format; "(curated by NAME)" if notable)
+PUBLICATIONS (most recent first; publication, title, year, page if known)
+AWARDS AND HONORS (year, name)
+COLLECTIONS (institution name only — no descriptions)
+REPRESENTATION (gallery, city, since year)
+
+Length: 2 pages max. Skip empty sections.`;
 ```
 
 #### Per-match drafter
@@ -2497,10 +2550,12 @@ async function draftPackageForMatch(
   // curated for this opportunity's aesthetic). If fewer than 10, backfill with even-spaced portfolio sample.
   const workSamples = selectWorkSamples(supportingIds, portfolio, 12);
 
-  // Draft all 5 materials sequentially within this match (keeps per-match rate-limit pressure low)
-  const voiceSkill = await fs.readFile('skills/artist-statement-voice.md', 'utf-8').catch(() => '');
-  const proposalSkill = await fs.readFile('skills/project-proposal-structure.md', 'utf-8').catch(() => '');
-  const cvSkill = await fs.readFile('skills/cv-format-by-institution.md', 'utf-8').catch(() => '');
+  // Draft all 5 materials sequentially within this match (keeps per-match rate-limit pressure low).
+  // If a skill file is missing (Phase 4.6 hasn't landed yet), fall back to a hand-written DEFAULT
+  // so the Drafter still produces useful output instead of silently degrading to "<empty>\n\n---\n\nYou are writing...".
+  const voiceSkill = await fs.readFile('skills/artist-statement-voice.md', 'utf-8').catch(() => DEFAULT_VOICE_SKILL);
+  const proposalSkill = await fs.readFile('skills/project-proposal-structure.md', 'utf-8').catch(() => DEFAULT_PROPOSAL_SKILL);
+  const cvSkill = await fs.readFile('skills/cv-format-by-institution.md', 'utf-8').catch(() => DEFAULT_CV_SKILL);
 
   const artist_statement = await draftMaterial('artist_statement', { akb, opp, voiceSkill });
   const project_proposal = await draftMaterial('project_proposal', { akb, opp, proposalSkill, oppRequirementsText });
@@ -2631,42 +2686,7 @@ The Anthropic SDK auto-retries 429s via `max_retries: 2`. Don't add app-level re
 
 ### 4.2 Orchestrator (`lib/agents/orchestrator.ts`)
 
-**Composite ranking — fully defined:**
-
-```ts
-function compositeScore(match: RunMatch, opportunity: Opportunity, config: RunConfig): number {
-  const fit = match.fit_score;                          // 0-1, from Rubric Matcher
-  const prestige = PRESTIGE_WEIGHTS[opportunity.award.prestige_tier];  // see table below
-  const timeUrgency = computeUrgency(opportunity.deadline);            // see formula below
-  const affordability = computeAffordability(opportunity.entry_fee_usd, config.budget_usd);
-  return fit * prestige * timeUrgency * affordability;
-}
-
-const PRESTIGE_WEIGHTS = {
-  flagship: 1.0,    // Guggenheim, MacDowell, NEA, Creative Capital — top-tier
-  major: 0.85,      // Critical Mass, USA, Anonymous Was A Woman — heavyweight but not flagship
-  mid: 0.70,        // Joan Mitchell, Ruth Arts, mid-tier residencies
-  regional: 0.55,   // state arts councils, regional commissions
-  'open-call': 0.40, // CaFE-tier open calls
-};
-
-function computeUrgency(deadline: string | undefined): number {
-  if (!deadline) return 0.5;  // unknown deadline = neutral
-  const days = (new Date(deadline).getTime() - Date.now()) / 86400000;
-  if (days < 7)  return 0.3;  // too late to do well — penalize
-  if (days < 30) return 1.0;  // sweet spot — actionable now
-  if (days < 90) return 0.85; // good — plan ahead
-  return 0.65;                 // far out — won't act on it soon
-}
-
-function computeAffordability(fee: number | undefined, budget: number): number {
-  if (!fee) return 1.0;       // no fee = ideal
-  if (budget === 0) return 1.0;  // no budget set = don't penalize
-  if (fee > budget) return 0;    // over budget = excluded entirely
-  const ratio = fee / budget;    // 0-1
-  return 1 - (ratio * 0.5);      // half-weight: a fee at 100% of budget still scores 0.5, not 0
-}
-```
+The Orchestrator computes composite scores for all matches, generates dossier narratives + per-opportunity filtered-out blurbs, and pre-caches opportunity logos. It runs BEFORE Package Drafter inside `/api/runs/[id]/finalize`. Composite ranking formula is defined inline in the Orchestrator code below (§"Composite ranking formula").
 
 #### Orchestrator entry point
 
@@ -2700,47 +2720,68 @@ export async function orchestrateDossier(runId: number): Promise<void> {
   })).rows[0] as any).json);
   const config: RunConfig = JSON.parse(runRow.config_json);
 
-  // Step 1 — load all matches with their Opportunity JSON, compute composite scores, persist
+  // Step 1 — load all matches with their Opportunity JSON, parse ONCE, compute composite ONCE, persist
   const matchRows = (await db.execute({
-    sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.reasoning, rm.included, o.raw_json
+    sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.reasoning, rm.included, o.url, o.raw_json
           FROM run_matches rm
           JOIN opportunities o ON o.id = rm.opportunity_id
           WHERE rm.run_id = ?`,
     args: [runId]
-  })).rows as Array<{ id: number; opportunity_id: number; fit_score: number; reasoning: string; included: number; raw_json: string }>;
+  })).rows as Array<{ id: number; opportunity_id: number; fit_score: number; reasoning: string; included: number; url: string; raw_json: string }>;
 
-  for (const row of matchRows) {
+  // Decorate each row with parsed opportunity + computed composite. JSON.parse + compositeScore happen ONCE per row.
+  const decorated = matchRows.map(row => {
     const opp: Opportunity = JSON.parse(row.raw_json);
     const composite = row.included === 1 ? compositeScore(row.fit_score, opp, config) : 0;
-    await db.execute({
-      sql: `UPDATE run_matches SET composite_score = ? WHERE id = ?`,
-      args: [composite, row.id]
-    });
-  }
+    return { ...row, opp, composite };
+  });
 
-  // Step 2 — parallel LLM calls: cover narrative (from StyleFingerprint) + ranking narrative (from top matches)
-  const topIncluded = matchRows
-    .filter(r => r.included === 1)
-    .map(r => ({ ...r, opp: JSON.parse(r.raw_json) as Opportunity, composite: compositeScore(r.fit_score, JSON.parse(r.raw_json), config) }))
+  // Persist composite scores in one batch
+  await db.batch(decorated.map(d => ({
+    sql: `UPDATE run_matches SET composite_score = ? WHERE id = ?`,
+    args: [d.composite, d.id]
+  })));
+
+  // Step 2 — derive top-N included + top-K filtered (cap blurbs at top 15 by fit_score to bound cost/time)
+  const topIncluded = decorated
+    .filter(d => d.included === 1)
     .sort((a, b) => b.composite - a.composite)
     .slice(0, 15);
 
-  const filteredOut = matchRows.filter(r => r.included === 0);
+  const filteredOutTopK = decorated
+    .filter(d => d.included === 0)
+    .sort((a, b) => b.fit_score - a.fit_score)  // by fit_score: the close-misses get blurbs; long-tail filtered don't
+    .slice(0, 15);
+
+  // Step 3 — parallel: cover narrative + ranking narrative + logo pre-cache + filtered-out blurbs
+  const { default: pLimit } = await import('p-limit');
+  const llmLimit = pLimit(5);
+  const fetchLimit = pLimit(5);
+  const { getLogoUrl } = await import('@/lib/logos');
 
   const [coverNarrative, rankingNarrative] = await Promise.all([
     generateCoverNarrative(akb, fingerprint),
     generateRankingNarrative(topIncluded)
   ]);
 
-  // Step 3 — generate filtered-out one-liners in parallel (capped concurrency)
-  const { default: pLimit } = await import('p-limit');
-  const limit = pLimit(5);
-  await Promise.all(filteredOut.map(r => limit(async () => {
-    const blurb = await generateFilteredOutBlurb(JSON.parse(r.raw_json), r.reasoning);
-    await db.execute({
-      sql: `UPDATE run_matches SET filtered_out_blurb = ? WHERE id = ?`,
-      args: [blurb, r.id]
-    });
+  // Filtered-out blurbs (capped concurrency)
+  await Promise.all(filteredOutTopK.map(d => llmLimit(async () => {
+    try {
+      const blurb = await generateFilteredOutBlurb(d.opp, d.reasoning);
+      await db.execute({
+        sql: `UPDATE run_matches SET filtered_out_blurb = ? WHERE id = ?`,
+        args: [blurb, d.id]
+      });
+    } catch (e: any) {
+      console.warn(`[orchestrator] blurb failed for match ${d.id}: ${e?.message ?? e}`);
+    }
+  })));
+
+  // Pre-cache logos for all top-N included opportunities (so dossier render is instant)
+  await Promise.all(topIncluded.map(d => fetchLimit(async () => {
+    try {
+      await getLogoUrl(d.opportunity_id, d.url);  // populates opportunity_logos cache; return value ignored here
+    } catch { /* logo failure is non-fatal */ }
   })));
 
   // Step 4 — persist dossier
@@ -2888,8 +2929,11 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
   })).rows[0] as any;
 
   if (!dossierRow) {
-    // Run either errored or finalize hasn't completed yet — show status page instead
-    return <RunStatusPage runId={Number(runId)} />;
+    // Run errored OR finalize hasn't completed yet (race: browser arrived before /finalize wrote dossiers row).
+    // Redirect to /runs/[runId] which already handles in-progress + error UI via the polling handler.
+    // Belt-and-suspenders against the done:true gate — even if that gate misfires, the user lands somewhere coherent.
+    const { redirect } = await import('next/navigation');
+    redirect(`/runs/${runId}`);
   }
 
   const includedMatches = (await db.execute({
@@ -3002,32 +3046,156 @@ import { Document, Packer, Paragraph, HeadingLevel } from 'docx';
 Implementation: fetch the drafted_packages row for the given run_match_id, pull the specific material column, build a Document with a title heading + paragraphs (split on `\n\n`), `Packer.toBuffer(doc)`, return as `Response` with `Content-Type: application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
 
 ### 4.4 PDF export (`lib/pdf/dossier.tsx`)
-- [ ] `@react-pdf/renderer` document mirroring the web view
-- [ ] `app/api/dossier/[id]/pdf/route.ts` streams the PDF
-- [ ] "Download Dossier PDF" button on `/dossier/[id]`
+
+```ts
+// lib/pdf/dossier.tsx
+import { Document, Page, Text, View, Image, StyleSheet, Font } from '@react-pdf/renderer';
+
+const styles = StyleSheet.create({
+  page: { padding: 48, fontFamily: 'Helvetica' },
+  coverTitle: { fontSize: 28, marginBottom: 16 },
+  coverNarrative: { fontSize: 12, lineHeight: 1.5, marginBottom: 32 },
+  h2: { fontSize: 18, marginTop: 24, marginBottom: 12 },
+  matchCard: { marginBottom: 24, borderBottom: '1pt solid #ddd', paddingBottom: 16 },
+  matchTitle: { fontSize: 14, fontWeight: 'bold' },
+  matchMeta: { fontSize: 10, color: '#666', marginBottom: 8 },
+  materialBlock: { fontSize: 10, marginTop: 8, lineHeight: 1.4 }
+});
+
+export function DossierDocument(props: {
+  cover: string;
+  ranking: string;
+  matches: Array<{ name: string; deadline?: string; award_summary?: string; fit_score: number; composite_score: number | null; reasoning: string; artist_statement?: string; project_proposal?: string; cv_formatted?: string; cover_letter?: string }>;
+  filteredOut: Array<{ name: string; filtered_out_blurb: string }>;
+}) {
+  return (
+    <Document>
+      <Page size="LETTER" style={styles.page}>
+        <Text style={styles.coverTitle}>Career Dossier</Text>
+        <Text style={styles.coverNarrative}>{props.cover}</Text>
+        <Text style={styles.h2}>Ranked Opportunities</Text>
+        <Text style={styles.coverNarrative}>{props.ranking}</Text>
+      </Page>
+      {props.matches.map((m, i) => (
+        <Page key={i} size="LETTER" style={styles.page}>
+          <View style={styles.matchCard}>
+            <Text style={styles.matchTitle}>{i + 1}. {m.name}</Text>
+            <Text style={styles.matchMeta}>
+              Deadline: {m.deadline ?? 'rolling'} · Award: {m.award_summary ?? 'see page'} · Fit: {m.fit_score.toFixed(2)} · Composite: {(m.composite_score ?? 0).toFixed(2)}
+            </Text>
+            <Text style={styles.materialBlock}>{m.reasoning}</Text>
+            {m.artist_statement && <><Text style={styles.h2}>Artist Statement</Text><Text style={styles.materialBlock}>{m.artist_statement}</Text></>}
+            {m.project_proposal && <><Text style={styles.h2}>Project Proposal</Text><Text style={styles.materialBlock}>{m.project_proposal}</Text></>}
+            {m.cover_letter && <><Text style={styles.h2}>Cover Letter</Text><Text style={styles.materialBlock}>{m.cover_letter}</Text></>}
+            {m.cv_formatted && <><Text style={styles.h2}>CV</Text><Text style={styles.materialBlock}>{m.cv_formatted}</Text></>}
+          </View>
+        </Page>
+      ))}
+      {props.filteredOut.length > 0 && (
+        <Page size="LETTER" style={styles.page}>
+          <Text style={styles.h2}>Filtered Out</Text>
+          {props.filteredOut.map((f, i) => (
+            <Text key={i} style={styles.materialBlock}>{f.filtered_out_blurb}</Text>
+          ))}
+        </Page>
+      )}
+    </Document>
+  );
+}
+```
+
+- [ ] `app/api/dossier/[runId]/pdf/route.ts`: render-on-demand, not streamed. `@react-pdf/renderer` exposes `renderToBuffer(element)` which returns a `Promise<Buffer>`. Return as `Response` with `Content-Type: application/pdf`.
+  ```ts
+  import { renderToBuffer } from '@react-pdf/renderer';
+  import { DossierDocument } from '@/lib/pdf/dossier';
+
+  export async function GET(_req: Request, { params }: { params: Promise<{ runId: string }> }) {
+    const { runId } = await params;
+    const data = await loadDossierData(Number(runId));  // same query as DossierPage above
+    const buffer = await renderToBuffer(<DossierDocument {...data} />);
+    return new Response(buffer, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="atelier-dossier-${runId}.pdf"`
+      }
+    });
+  }
+  ```
+- [ ] "Download Dossier PDF" button on `/dossier/[runId]` — `<a href="/api/dossier/[runId]/pdf" download>Download PDF</a>`
+- [ ] `dossiers.pdf_path` column is UNUSED in v1 (PDF is render-on-demand, not cached). Left in schema for v1.1 when caching to Blob becomes worth the complexity.
 
 ### 4.5 Run polling UI
 
 (Was "streaming" — switched to polling per the Vercel orchestration design in the §Long-running run orchestration reference section.)
 
-- [ ] `app/api/runs/[id]/events/route.ts` (GET): pull-on-read pattern — fetch new Anthropic events since cursor, persist, return diff. See §Long-running run orchestration for the implementation pattern
+- [ ] `app/api/runs/[id]/events/route.ts` (GET): pull-on-read pattern — fetch new Anthropic events since cursor, persist, return diff. See §Long-running run orchestration for the implementation pattern. Returns `{events, phase, phaseDone, runStatus, done, errored}`.
 - [ ] `app/(dashboard)/runs/[id]/page.tsx` — Run-in-progress UI:
   - `useEffect` polling loop calling `/api/runs/[id]/events` every 3 seconds
-  - Renders incoming events into a live activity feed (agent thinking, tool calls, tool results, status changes)
-  - When response includes `done: true`, redirects to `/dossier/[runId]`
-  - Used both during real runs and during the demo recording (the demo just plays back a real prior run's saved events at 10x via a `?playback=<run_id>&speed=10` URL param)
+  - Renders incoming events into a live activity feed. Event filters:
+    - SHOW: `agent.message` (text), `agent.thinking` (collapsible), `agent.custom_tool_use` (as "persisted X"), `session.status_*` transitions
+    - HIDE or fold: `agent.tool_use` / `agent.tool_result` for low-level file ops (bash, read, write, edit, glob, grep) — too noisy for the UI. Show web_search / web_fetch though (interesting).
+  - Header banner shows `runStatus` in plain English: "Scout searching 40 sources...", "Downloading recipient images...", "Rubric Matcher scoring opportunities...", "Drafting packages...", etc. Maps `runStatus` values to strings.
+  - When response includes `done: true` → navigate to `/dossier/[runId]`
+  - When response includes `errored: true` → show error with the `runs.error` text + "Retry from last phase" button
 
-### 4.6 Remaining skill files
+#### Demo playback mode
 
-(Same provenance model as §1.5: research-mode agent drafts, builder audits.)
+For the demo recording (per spec §Demo strategy, "First Style Analyst pass = live; rest = playback at 10x"):
 
-- [ ] `juror-reading.md` — fully fleshed out (most important after `opportunity-sources.md`)
-- [ ] `artist-statement-voice.md` — anti-patterns + 3-5 worked examples
-- [ ] `project-proposal-structure.md`
-- [ ] `cv-format-by-institution.md` — Guggenheim, MacDowell, NEA, Creative Capital at minimum
-- [ ] `submission-calendar.md`
-- [ ] `past-winner-archives.md`
-- [ ] `cost-vs-prestige-tiers.md`
+- [ ] URL param: `/runs/[id]?playback=<run_id>&speed=10`
+- [ ] When `playback` param is present, the page does NOT poll the live `/events` endpoint. Instead:
+  ```ts
+  // app/(dashboard)/runs/[id]/page.tsx — playback mode
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const playbackRunId = url.searchParams.get('playback');
+    const speed = Number(url.searchParams.get('speed') ?? '1');
+    if (!playbackRunId) return;  // live mode
+
+    let cancelled = false;
+    (async () => {
+      const events = await fetch(`/api/runs/${playbackRunId}/events-all`).then(r => r.json());
+      // events-all returns rows ordered by id ASC, each carrying _created_at (unix epoch seconds INTEGER from run_events.created_at)
+      for (let i = 0; i < events.length; i++) {
+        if (cancelled) return;
+        const ev = events[i];
+        const next = events[i + 1];
+        // _created_at is unix epoch SECONDS (integer). Multiply by 1000 to get ms. Apply speed factor.
+        const gapMs = next ? Math.max(0, (next._created_at - ev._created_at) * 1000 / speed) : 0;
+        dispatchEventToUI(ev);
+        await new Promise(r => setTimeout(r, Math.min(gapMs, 5000)));  // cap max gap at 5s so dead air doesn't hang
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  ```
+- [ ] `app/api/runs/[id]/events-all/route.ts` (GET): returns all run_events rows for a run, ordered by `id ASC`. Used only for playback — does NOT hit Anthropic.
+  ```ts
+  export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+    const { id } = await params;
+    const rows = (await getDb().execute({
+      sql: `SELECT event_id, kind, payload_json, created_at FROM run_events WHERE run_id = ? ORDER BY id ASC`,
+      args: [Number(id)]
+    })).rows.map((r: any) => ({ ...JSON.parse(r.payload_json), _kind: r.kind, _created_at: r.created_at }));
+    return Response.json(rows);
+  }
+  ```
+- [ ] Demo recording recipe: (a) do a full real run against John's real data, wait for `complete`; (b) record video on a fresh tab with `?playback=<run_id>&speed=10`; (c) voiceover layered on top in post
+
+### 4.6 Remaining skill files (Package Drafter consumption)
+
+(Same provenance model as §1.5: research-mode agent drafts, builder audits. `juror-reading.md` and `aesthetic-vocabulary.md` already landed in §2.13 for the Rubric Matcher — not repeated here.)
+
+Loaded into Package Drafter's per-material system prompts (see §4.1). Authored before Phase 4 draftPackages runs; otherwise the Drafter falls back to hand-written defaults (acceptable for v1 but weaker output).
+
+- [ ] `artist-statement-voice.md` — anti-patterns + 3-5 worked examples of strong institutional artist statements. Feeds §4.1 `artist_statement` + `cover_letter` prompts.
+- [ ] `project-proposal-structure.md` — generic grant-proposal structure (research questions, timeline, budget framing, deliverables, impact) for opportunities whose URL fetch doesn't surface specific requirements. Feeds §4.1 `project_proposal` prompt.
+- [ ] `cv-format-by-institution.md` — institution-specific CV format conventions. Minimum coverage: Guggenheim, MacDowell, NEA, Creative Capital. Each entry gives: section order, date formatting, what to include/exclude, length cap. Feeds §4.1 `cv` prompt.
+- [ ] `submission-calendar.md` — seasonal patterns of when major opportunities open/close. Used to inform the `ranking_narrative` (e.g., "prioritize X now, Y is dormant until Sept") — not a Drafter input directly, more a Orchestrator context file.
+- [ ] `past-winner-archives.md` — where each opportunity publishes past recipient lists. Mirrors info already in `opportunity-sources.md`; this file documents the SCRAPING MECHANICS per archive (selectors, pagination, auth). Deprioritize — Scout's web_fetch handles most of this generically.
+- [ ] `cost-vs-prestige-tiers.md` — entry-fee-vs-signal heuristics. Used by user-facing copy on the Run Config page ("spending $40 on Opportunity X is a pay-to-play trap; redirect toward Y"). Not a Drafter input.
+
+Quality gate for §4.6 (matches §2.13's bar): at least 500 words per Drafter-consumed file (`artist-statement-voice`, `project-proposal-structure`, `cv-format-by-institution`); the three non-Drafter files can be shorter or stub-with-backlog if time-constrained.
 
 ### Acceptance gate — Phase 4
 1. End-to-end run from John's AKB produces a dossier with ≥10 opportunities + drafted materials
@@ -3042,28 +3210,161 @@ Implementation: fetch the drafted_packages row for the given run_match_id, pull 
 **Goal:** Clean recorded demo + submitted package.
 
 ### 5.1 Pre-flight
-- [ ] Run `scripts/setup-managed-agents.ts` against the Anthropic prod API; capture the resulting `ATELIER_ENV_ID`, `SCOUT_AGENT_ID`, `RUBRIC_AGENT_ID` into Vercel env vars
-- [ ] Full clean run from empty Turso DB on a fresh deploy (drop tables, re-run migrations, run the pipeline end-to-end)
-- [ ] All 6 agent activities observable in the run polling UI
+
+- [ ] Run `scripts/setup-managed-agents.ts` against the Anthropic prod API; capture the resulting `ATELIER_ENV_ID`, `SCOUT_AGENT_ID`, `RUBRIC_AGENT_ID` into Vercel env vars (Production + Preview + Development)
+
+- [ ] **Disable Vercel Deployment Protection** (Project Settings → Deployment Protection → off) so hackathon judges hitting the prod URL see the app, NOT a Vercel auth page. This is non-negotiable for the submission. Confirm by loading the prod URL in an incognito window with no Vercel account logged in.
+
+- [ ] **Database reset script** — `scripts/reset-db.ts` for the clean-run test. Script MUST have a hard guardrail or it can nuke production data. Single-tenant hackathon means prod URL and local URL BOTH contain "atelier" (substring check is defeated). Use a dedicated env-var opt-in that ONLY the local `.env.local` sets:
+
+  ```ts
+  // scripts/reset-db.ts
+  import { createClient } from '@libsql/client';
+
+  async function main() {
+    // PRIMARY GUARDRAIL: explicit opt-in env var. Set ATELIER_IS_RESETTABLE_DB=true ONLY in your
+    // local .env.local. NEVER set this in Vercel's Production env vars. If accidentally set in
+    // Vercel + you run this script with the prod TURSO_DATABASE_URL = data loss.
+    if (process.env.ATELIER_IS_RESETTABLE_DB !== 'true') {
+      console.error('Refusing to reset: ATELIER_IS_RESETTABLE_DB is not set to "true".');
+      console.error('This guard is ONLY set in your local .env.local — NEVER in Vercel.');
+      console.error('If you are SURE you want to reset this DB, edit .env.local to add:');
+      console.error('  ATELIER_IS_RESETTABLE_DB=true');
+      process.exit(1);
+    }
+
+    // BELT-AND-SUSPENDERS: confirmation flag on argv
+    const confirmArg = process.argv[2];
+    if (confirmArg !== '--yes-reset-everything') {
+      console.error('Pass --yes-reset-everything to confirm. This DROPS all tables.');
+      process.exit(1);
+    }
+
+    // Bonus: log the URL host (not the token) so the operator sees what they're about to nuke
+    const url = process.env.TURSO_DATABASE_URL!;
+    const host = new URL(url.replace(/^libsql:/, 'https:')).host;
+    console.log(`About to drop all tables on Turso DB at: ${host}`);
+    console.log('Proceeding in 3 seconds — Ctrl-C to abort.');
+    await new Promise(r => setTimeout(r, 3000));
+
+    const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+    const tables = (await db.execute(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)).rows.map((r: any) => r.name);
+    for (const t of tables) await db.execute(`DROP TABLE IF EXISTS ${t}`);
+    console.log(`Dropped ${tables.length} tables.`);
+  }
+  main().catch(e => { console.error(e); process.exit(1); });
+  ```
+
+  Setup:
+  - Add `ATELIER_IS_RESETTABLE_DB=true` to your LOCAL `.env.local` only
+  - DO NOT add this var to Vercel's Production env vars (verify in Vercel dashboard)
+  - Add `ATELIER_IS_RESETTABLE_DB` to `.env.example` with comment: `# Set to "true" ONLY in local .env.local. NEVER set in Vercel Production.`
+
+  Run: `pnpm tsx scripts/reset-db.ts --yes-reset-everything`. On next server boot, `runMigrations()` rebuilds everything fresh.
+
+  **For full safety post-hackathon:** provision a second Turso DB (`atelier-dev` or similar) and point local `.env.local` at it. Then prod and dev URLs are physically separate. Single-DB acceptable for hackathon since cost of accidental wipe is "rerun the demo data ingest once," not "lost user data."
+
+- [ ] **Clean-run test** (after reset): upload portfolio → run Style Analyst → Knowledge Extractor (auto-discover + interview + review) → start a full run → wait for dossier → download PDF. The full path must work on a fresh DB with no manual DB poking.
+
+- [ ] All 6 agent activities observable in the run polling UI (Scout, finalize-scout, start-rubric, Rubric, Orchestrator, Package Drafter)
+
 - [ ] No hardcoded test data anywhere; all real
-- [ ] `pnpm build` clean; no TS errors; no console errors in prod
+
+- [ ] `pnpm build` clean; no TS errors
+
+- [ ] **Browser DevTools console check:** open the prod URL in a fresh incognito window with DevTools open. Walk the full user path (upload → analyze → interview → review → run → dossier). Assert zero uncaught errors in the console. Network tab shows no failed requests beyond expected (e.g., an opportunity_logos fetch that 404s is OK — we handle that).
+
+- [ ] **All §3.7 smoke tests pass** (`pnpm test`); integration tests pass at least once (`pnpm test:integration`); one full e2e runs clean (`pnpm test:e2e`)
 
 ### 5.2 Demo recording
-- [ ] Pre-run the full pipeline morning of recording, save the run
-- [ ] Record per shot-list in spec §Demo strategy
-- [ ] First Style Analyst pass = live recording; rest = playback of the saved run at 10x
-- [ ] Single take of kicker line
+
+- [ ] **Record setup:** ScreenFlow (macOS, paid but best for post-production) OR QuickTime (free, simpler) OR OBS Studio (free, more flexible). Recommend ScreenFlow if available — the 10x playback compression is critical and ScreenFlow's clip-speed controls are cleanest. Retina display at native resolution; browser window at 1440×900 for a clean 1080p crop.
+- [ ] **Voiceover:** record SEPARATE from screen capture. Do a first pass of the screen activity, then record voice against playback in editing. This lets you retake voice without rerecording the demo.
+- [ ] **Pre-run the full pipeline morning of recording.** Use John's real data. Save the `run_id`.
+- [ ] **Record per spec §Demo strategy shot-list** (3 min total):
+  - 0:00–0:15 cold open (black screen quote, cut to John in gallery)
+  - 0:15–0:45 identity + stakes (builder on camera, cut to laptop)
+  - 0:45–1:15 Style Analyst fires — LIVE recording of first Style Analyst pass (real, no playback)
+  - 1:15–1:45 Knowledge Extractor — builder on camera + interview questions
+  - 1:45–2:15 Opportunity Scout + Rubric Matcher — **10x playback via `/runs/[id]?playback=<run_id>&speed=10`**
+  - 2:15–2:45 Package Drafter — builder reads artist statement on camera
+  - 2:45–3:00 kicker line + end card with GitHub link
+- [ ] **Single take of kicker line.** Emotional honesty over polish per the spec.
+- [ ] Export at 1080p H.264 MP4, max file size per submission platform requirements.
 
 ### 5.3 README + submission
-- [ ] README: one-paragraph what-it-is, 90-second setup (`pnpm i`, env, `pnpm dev`), architecture diagram, link to spec, link to skills directory
-- [ ] Note in README linking Athena repo as "prior 5-day-build evidence of velocity"
-- [ ] Written summary (180 words — pull from spec §Written summary)
-- [ ] Submit via CV platform
+
+- [ ] **README.md** — create at repo root (if not present) with these sections in order:
+
+  ```markdown
+  # Atelier
+
+  AI art director for working visual artists. Upload your portfolio, build an
+  Artist Knowledge Base from public web data, and get a ranked Career Dossier
+  with draft submission materials for the grants, residencies, competitions,
+  and galleries that actually fit your aesthetic.
+
+  **Built for the "Built with Opus 4.7" hackathon (Apr 2026).**
+  **Submission focus:** Problem Statement #1 — Build From What You Know.
+
+  ## What it does
+  <one paragraph: six specialist agents, Claude Managed Agents, skills-as-knowledge>
+
+  ## Demo video
+  <youtube/vimeo unlisted link — DO NOT forget this>
+
+  ## Prior work
+  Atelier builds on rapid-prototype experience from [Project Athena](link) —
+  a 33k-line prediction-market pipeline shipped in ~2 days. Same velocity model
+  applied to the visual-arts-application problem.
+
+  ## Architecture
+  <one short paragraph + link to ATELIER_BUILD_PLAN.md>
+
+  ## Setup (local)
+  ```bash
+  git clone https://github.com/johnkf5-ops/Atelier.git
+  cd Atelier
+  pnpm install
+  cp .env.example .env.local    # fill in ANTHROPIC_API_KEY, TURSO_DATABASE_URL, TURSO_AUTH_TOKEN, BLOB_READ_WRITE_TOKEN
+  pnpm tsx scripts/setup-managed-agents.ts   # one-time — creates Scout + Rubric agents, prints IDs to add to .env.local
+  pnpm dev
+  # open http://localhost:3000/upload
+  ```
+  ## Skills (the moat)
+  See [skills/](./skills) — 10+ hand-audited lived-knowledge files codifying
+  the visual-arts submission economy. Each file is inspectable.
+
+  ## Testing
+  See [TESTING.md](./TESTING.md) — smoke / integration / e2e test categories
+  + what each verifies.
+  ```
+
+- [ ] **Written summary (180 words)** — pull from spec §Written summary verbatim. Save as `SUMMARY.md` at repo root so reviewers can find it without reading the README.
+
+- [ ] **`.env.example`** at repo root: every env var name from `.env.local`, with values as empty strings + inline comments explaining where to get each. DO NOT commit actual values.
+
+- [ ] **Submission mechanics** (confirm these 48h before deadline; platform may evolve):
+  - Deadline: 2026-04-26 8:00 PM EST (hard stop — no late submissions accepted)
+  - Platform: the Cerebral Valley × Anthropic hackathon submission portal (URL provided by organizers in the participant packet — if unclear, check the hackathon Discord/Slack)
+  - Required submission fields (typical — verify against the actual portal):
+    - Project name (final: "Atelier" unless renamed)
+    - Team / solo builder (solo, John Knopf)
+    - GitHub repo URL: https://github.com/johnkf5-ops/Atelier
+    - Live demo URL: the Vercel production URL (Deployment Protection OFF per §5.1)
+    - Demo video URL: YouTube unlisted OR Vimeo unlisted (both work; YouTube preferred for reviewer familiarity). Upload ~24h before submission so the URL is stable.
+    - Written summary: paste from SUMMARY.md
+    - Problem Statement selection: #1 "Build From What You Know"
+    - Prize category targets: Most Creative Opus 4.7 Exploration, Best Use of Claude Managed Agents, Keep Thinking (per spec §Side-prize fit)
+  - After submission: confirm confirmation email received. Screenshot the submission page as backup evidence.
 
 ### Acceptance gate — Phase 5
-1. Repo clones + boots clean on a machine that has never seen it
-2. Demo video uploaded
-3. Submission confirmation received
+
+1. Repo clones + boots clean on a machine that has never seen it (run §5.3 setup steps against a new laptop / fresh clone; dev server comes up green)
+2. Vercel Deployment Protection is OFF; prod URL opens for unauthenticated visitors
+3. Demo video uploaded to YouTube/Vimeo with unlisted visibility
+4. README + SUMMARY.md + .env.example + TESTING.md all committed
+5. Submission platform confirmation received; deadline hit with ≥2h buffer
 
 ---
 

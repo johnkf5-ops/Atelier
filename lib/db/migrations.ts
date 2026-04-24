@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { getDb } from './client';
 
@@ -8,6 +8,8 @@ export async function runMigrations(): Promise<void> {
   if (_ran) return;
   _ran = true;
   const db = getDb();
+
+  // 1) Apply base schema.sql (idempotent CREATE TABLE IF NOT EXISTS).
   const sqlPath = path.join(process.cwd(), 'lib', 'db', 'schema.sql');
   const sql = await readFile(sqlPath, 'utf-8');
   const statements = splitStatements(sql);
@@ -15,9 +17,52 @@ export async function runMigrations(): Promise<void> {
     await db.execute(stmt);
   }
 
-  // Post-DDL guarded migrations for column-constraint changes that
-  // CREATE TABLE IF NOT EXISTS can't apply to an existing table.
+  // 2) Apply any guarded migrations that CREATE TABLE IF NOT EXISTS can't
+  // cover (column drops, constraint relaxations, etc.).
   await ensureRunEventsRunIdNullable();
+
+  // 3) Apply ordered migration files from lib/db/migrations/. Each filename
+  // sorted lexicographically (e.g. 001_*.sql, 002_*.sql) runs once and is
+  // recorded in the _migrations table.
+  await applyMigrationFiles();
+}
+
+async function applyMigrationFiles(): Promise<void> {
+  const db = getDb();
+  const dir = path.join(process.cwd(), 'lib', 'db', 'migrations');
+  let files: string[];
+  try {
+    files = (await readdir(dir)).filter((f) => f.endsWith('.sql')).sort();
+  } catch {
+    return;
+  }
+  if (files.length === 0) return;
+
+  const appliedRows = await db.execute('SELECT name FROM _migrations');
+  const applied = new Set(appliedRows.rows.map((r) => String(r.name)));
+
+  for (const name of files) {
+    if (applied.has(name)) continue;
+    const content = await readFile(path.join(dir, name), 'utf-8');
+    const stmts = splitStatements(content);
+    for (const stmt of stmts) {
+      try {
+        await db.execute(stmt);
+      } catch (err) {
+        // ALTER TABLE ADD COLUMN fails with "duplicate column" if the column
+        // already exists from a prior partial run. Swallow that specific case
+        // so the migration remains idempotent even on post-failure re-runs.
+        const msg = (err as Error).message ?? '';
+        if (/duplicate column name/i.test(msg)) continue;
+        throw new Error(`migration ${name} failed on: ${stmt.slice(0, 80)} — ${msg}`);
+      }
+    }
+    await db.execute({
+      sql: 'INSERT INTO _migrations (name) VALUES (?)',
+      args: [name],
+    });
+    console.log(`[migrations] applied ${name}`);
+  }
 }
 
 async function ensureRunEventsRunIdNullable(): Promise<void> {

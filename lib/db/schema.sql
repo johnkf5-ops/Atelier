@@ -148,5 +148,23 @@ CREATE TABLE IF NOT EXISTS dossiers (
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
 
+-- Join table: which opportunities did Scout discover for which run?
+-- Populated by persist_opportunity. Opportunities are cross-run in the
+-- `opportunities` cache; this scopes them to a specific run.
+CREATE TABLE IF NOT EXISTS run_opportunities (
+  run_id INTEGER NOT NULL REFERENCES runs(id),
+  opportunity_id INTEGER NOT NULL REFERENCES opportunities(id),
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (run_id, opportunity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_run_opportunities_run_id ON run_opportunities(run_id);
+
+-- Migration tracking — one row per applied migration file, prevents
+-- re-running ALTER TABLE statements.
+CREATE TABLE IF NOT EXISTS _migrations (
+  name TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL DEFAULT (unixepoch())
+);
+
 -- Seed the singleton user row (single-user v1)
 INSERT OR IGNORE INTO users (id, name) VALUES (1, 'John Knopf');
