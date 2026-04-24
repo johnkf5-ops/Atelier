@@ -69,3 +69,16 @@ Fixed upstream, not at the input level. New `normalizeAkbForForm()` runs on moun
 
 End-to-end next-step chain now has zero dead ends: **upload → analyze → fingerprint card's "Next: Build your Knowledge Base" → auto-discover → interview → "Knowledge Base complete" banner → "Review & start your first run" → review → "Start your first run" → `/runs/new` → `Start new run` → `/runs/[id]` → dossier**.
 
+### Acceptance gate — §5.1.a
+
+- `pnpm build` — passes (one ESLint unescaped-apostrophe fix committed as `a0330cc`).
+- `pnpm test` — 14/14 smoke tests pass in 1.75s.
+- Local dev server route sweep — 10/10 routes return 200: `/`, `/upload`, `/interview`, `/review`, `/runs`, `/runs/new`, `/runs/5`, `/dossier/5`, `/settings`, `/icon.svg`.
+
+Commits merged (8 total for §5.1.a):
+`2ecc110` Group A · `3d9235a` log A · `84c864f` Group B · `7178bf6` log B · `aff07ab` Group C · `5291e63` log C · `800bea7` Group D · `95d0008` log D · `ddb6c42` Group E · `bb19f7a` Group F · `e25ff0e` log E+F · `a0330cc` apostrophe fix.
+
+Manual items still pending (user-owned, not code):
+- §5.1 #2 — Deployment Protection OFF (Vercel dashboard)
+- §5.1 #4 — Fresh incognito prod walk-through after DP toggle
+
