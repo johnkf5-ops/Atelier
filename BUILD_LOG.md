@@ -122,3 +122,25 @@ Root-caused in three parts:
 
 When a future migration adds a table, updating `EXPECTED_TABLES` is the contract. If someone forgets, the test fails on the next CI run. This catches the exact class of bug we just hit, forever. 19/19 smoke tests pass.
 
+### Post-gate regression (part 3): structural consolidation
+
+**Commit:** `633d3dd`.
+
+The previous two fixes patched ensureDbReady and made migrations self-heal, but the scrape SSE route kept surfacing *no such table: portfolio_images*. Root cause was structural, not per-route: we had **two** sources of schema truth — `lib/db/schema.sql` plus four `lib/db/migrations/*.sql` files — and they'd drifted. The runner applied schema.sql then walked migrations in order, but any failure partway through left the DB in an incomplete state with the `_ran` memo claiming it had finished.
+
+Fix per the user's spec:
+
+1. **One source of truth: `lib/db/schema.sql`.** Every CREATE from the four migration files is folded back into the canonical CREATE TABLE / CREATE INDEX statements (`portfolio_images` UNIQUE dedup, `run_events.event_id` + unique index, `past_recipients.file_ids`, `run_matches.composite_score/filtered_out_blurb`, `opportunity_logos` table, etc). Every statement is CREATE IF NOT EXISTS. The entire `lib/db/migrations/` directory is deleted.
+
+2. **One runner: `lib/db/migrations.ts`.** Applies `schema.sql` in one pass. No file globbing. No `_migrations` bookkeeping. Exports `EXPECTED_TABLES` as the contract and `verifyAllTables()` for post-apply verification. Logs every statement count on boot for visibility.
+
+3. **Self-verifying `pnpm db:reset`.** `scripts/reset-db.ts` now does drop → apply schema.sql → seed users(id=1) → verify all 16 EXPECTED_TABLES → exit non-zero if any missing. No "rebuild on first HTTP request" promise — reset guarantees a ready DB before it returns.
+
+4. **Admin reset button.** `POST /api/admin/reset` runs the same flow, behind the `ATELIER_IS_RESETTABLE_DB` guard. A `ResetDbPanel` renders in `/settings` (only when the guard is true) so the incognito walk-through loop is click-driven: **Reset → walk → Reset → walk**. No terminal. No server restart.
+
+5. **`lib/db/CHANGELOG.md`** documents the schema history since the migrations git log no longer carries it.
+
+Live-verified: `pnpm tsx scripts/reset-db.ts --yes-reset-everything` dropped 16 tables, applied 23 statements, seeded user, verified 16 tables. `POST /api/admin/reset` same. All 7 user-facing routes return 200 after either reset path. 19/19 smoke tests pass including the self-heal and every-table assertions.
+
+**Loop-friendly walk-through:** John should now be able to click the Reset button on `/settings`, run the full onboarding → dossier path, click Reset again, repeat, with zero terminal involvement and zero missing-table errors ever.
+
