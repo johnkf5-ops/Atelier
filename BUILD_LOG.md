@@ -36,3 +36,20 @@ Fix: `IngestSummaryPanel` reads the actual response. When `saved` is non-null it
 
 **C2 Scraper review UI dominated by log dump.** Thumbnails already rendered in the main portfolio grid with `inReview` emerald-outline, but the verbose `<pre>` scrape log competed for visual weight. Now the log collapses behind a `<details>` summary ("Scrape log (N lines)"), and a new emerald primary line ("N images pending review in the grid below — uncheck any false positives, then Confirm") anchors the review action.
 
+### Group D — Interview flow
+
+**Commit:** `800bea7`.
+
+**D1 No visible interview state.** User had no way to tell if the interview was idle, running, or done. New `StateBanner` at the top of `app/(onboarding)/interview/interview-client.tsx` derives one of four states from the turn log + last agent's `next_field_target`:
+
+- **empty** — no KB yet, prompts auto-discover
+- **ready** — KB has N facts, hints "Start the interview to fill remaining gaps"
+- **in_progress** — amber banner, live fact count
+- **complete** — emerald banner with "Review & start your first run →" CTA (sets up Group F's handoff)
+
+The completeness signal (`next_field_target === null`) is already returned by the existing turn API; this is a consumer of data the server already emits, no backend change needed.
+
+**D2 Dot-path schema leak + wrong-target mismatch.** Every turn in the chat rendered `agent → identity.citizenship` underneath the message. Two bugs in one: (a) dot-paths are internal; a judge shouldn't see "AKB schema plumbing" in the transcript, (b) `next_field_target` per its own schema is the *next* question's target, not the one just asked — so the label was semantically misaligned with the text. Fix removes the `→ {path}` line entirely. Turn labels now render just "Atelier" / "You". `next_field_target` keeps flowing through for the `StateBanner` completeness check but never surfaces as a field label.
+
+Plus: sidebar "AKB (live)" → "Knowledge Base (live)", page title "Knowledge Extractor" → "Build your Knowledge Base".
+
