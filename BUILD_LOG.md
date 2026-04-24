@@ -182,3 +182,15 @@ Every failure logs to `console.warn` with request URL + kind, so a DevTools scre
 
 **Regression coverage:** `tests/smoke/fetch-client.test.ts` asserts every `kind` fires correctly against a mocked `fetch`. 26/26 smoke tests pass.
 
+## Walk-through batch (WALKTHROUGH_NOTES.md)
+
+### Note 7 — `/runs/new` reported 0 images while /upload showed 21
+
+**Commit:** `47f827f`.
+
+Inline portfolio-count query in `app/(dashboard)/runs/new/page.tsx` had `Number((rowObj as {n: number}))` — the cast wraps the whole row object, so `Number({n: 21})` is `NaN`, then `NaN || 0` returned 0. The `/upload` page used a separate `getPortfolioCount()` in `lib/portfolio/ingest.ts` that correctly read `.n`. Two impls, drift, blocking the Start Run button forever.
+
+Structural fix per spec: every portfolio query goes through a new `lib/db/queries/portfolio.ts` module (`getPortfolioCount`, `getNextPortfolioOrdinal`, `listPortfolio`, `existingPortfolioHashes`). `lib/portfolio/ingest.ts` becomes a re-export shim for back-compat so the upload + scrape routes keep working unchanged. `/runs/new` imports the canonical function directly; the buggy inline query is deleted.
+
+Regression test `tests/smoke/portfolio-count.test.ts` inserts 21 rows, asserts the canonical fn returns 21, asserts it never returns 0 when rows exist (the exact failure case), and asserts the back-compat aliases reference the same function reference (preventing a future fork). Live-verified `/runs/new` renders "21 images" — Start Run button enabled. 30/30 smoke tests pass.
+
