@@ -1,48 +1,41 @@
 import { NextRequest } from 'next/server';
+import { z } from 'zod';
 import { getCurrentUserId } from '@/lib/auth/user';
-import { ingestUrl, IngestRequest } from '@/lib/agents/knowledge-extractor';
-import { loadLatestAkb, saveAkb } from '@/lib/akb/persistence';
-import { mergeAkb, type Provenance } from '@/lib/akb/merge';
+import { loadLatestAkb } from '@/lib/akb/persistence';
+import { ingestUrls } from '@/lib/extractor/ingest-urls';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
 
+const Body = z.object({
+  urls: z.array(z.string().url()).min(1).max(20),
+  source: z.enum(['auto-discover', 'paste', 'manual']).default('paste'),
+});
+
 export async function POST(req: NextRequest) {
-  const parsed = IngestRequest.safeParse(await req.json());
+  const parsed = Body.safeParse(await req.json());
   if (!parsed.success) {
     return Response.json({ error: parsed.error.message }, { status: 400 });
   }
   const userId = getCurrentUserId();
-  let { akb } = await loadLatestAkb(userId);
-  const totalChanged: string[] = [];
+
   const perUrl: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }> = [];
+  const result = await ingestUrls(parsed.data.urls, userId, {
+    source: parsed.data.source,
+    onProgress: (e) => {
+      if (e.type === 'extracted') {
+        perUrl.push({ url: e.url, ok: true, changed: e.fields_added });
+      } else if (e.type === 'failed') {
+        perUrl.push({ url: e.url, ok: false, error: e.reason });
+      }
+    },
+  });
 
-  for (const url of parsed.data.urls) {
-    const r = await ingestUrl(url);
-    if (!r.ok || !r.partial) {
-      perUrl.push({ url, ok: false, error: r.error });
-      continue;
-    }
-    const provenance = `ingested:${url}` as Provenance;
-    try {
-      const { merged, changedFields } = mergeAkb(akb, r.partial, provenance);
-      akb = merged;
-      perUrl.push({ url, ok: true, changed: changedFields });
-      totalChanged.push(...changedFields);
-    } catch (err) {
-      perUrl.push({ url, ok: false, error: `merge failed: ${(err as Error).message}` });
-    }
-  }
-
-  let saved: { id: number; version: number } | null = null;
-  if (totalChanged.length > 0) {
-    saved = await saveAkb(userId, akb, 'ingest');
-  }
-
+  const { akb } = await loadLatestAkb(userId);
   return Response.json({
     sources: perUrl,
-    changed_fields: Array.from(new Set(totalChanged)),
-    saved,
+    changed_fields: result.fields_touched,
+    saved: result.akb_version_id != null ? { id: result.akb_version_id } : null,
     akb,
   });
 }

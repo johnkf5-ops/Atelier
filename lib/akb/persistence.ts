@@ -29,6 +29,21 @@ export async function loadLatestAkb(userId: number): Promise<{ akb: TAkb; versio
   return { akb: parsed.data, version: Number(row.version), id: Number(row.id) };
 }
 
+export async function loadAkbById(id: number): Promise<{ akb: TAkb; version: number } | null> {
+  const db = getDb();
+  const r = await db.execute({
+    sql: `SELECT version, json FROM akb_versions WHERE id = ?`,
+    args: [id],
+  });
+  if (r.rows.length === 0) return null;
+  const row = r.rows[0];
+  const parsed = ArtistKnowledgeBase.safeParse(JSON.parse(row.json as string));
+  if (!parsed.success) {
+    throw new Error(`AKB id=${id} failed validation: ${parsed.error.message}`);
+  }
+  return { akb: parsed.data, version: Number(row.version) };
+}
+
 export async function saveAkb(
   userId: number,
   akb: TAkb,

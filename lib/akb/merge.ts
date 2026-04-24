@@ -1,8 +1,22 @@
+import { z } from 'zod';
 import {
   ArtistKnowledgeBase,
   type ArtistKnowledgeBase as TAkb,
   type PartialArtistKnowledgeBase,
 } from '@/lib/schemas/akb';
+
+// Per-array-item validators (derived from the ArtistKnowledgeBase shape).
+// Used to filter out partially-populated items the extractor LLM produces —
+// keeping the strict AKB schema but tolerating lossy ingestion.
+const ARRAY_ITEM_SCHEMAS: Record<string, z.ZodTypeAny> = {
+  education: ArtistKnowledgeBase.shape.education.element,
+  bodies_of_work: ArtistKnowledgeBase.shape.bodies_of_work.element,
+  exhibitions: ArtistKnowledgeBase.shape.exhibitions.element,
+  publications: ArtistKnowledgeBase.shape.publications.element,
+  awards_and_honors: ArtistKnowledgeBase.shape.awards_and_honors.element,
+  collections: ArtistKnowledgeBase.shape.collections.element,
+  representation: ArtistKnowledgeBase.shape.representation.element,
+};
 
 export type Provenance = `ingested:${string}` | 'interview' | 'manual';
 
@@ -84,8 +98,12 @@ export function mergeAkb(
       for (const item of existing[key as keyof TAkb] as Array<Record<string, unknown>>) {
         seen.set(dedupeKey(item), item);
       }
+      const itemSchema = ARRAY_ITEM_SCHEMAS[key];
       let added = 0;
       for (const item of value as Array<Record<string, unknown>>) {
+        // Drop items that don't fully validate — LLMs often produce partial
+        // entries (missing year, venue, etc.) which would break final AKB validation.
+        if (itemSchema && !itemSchema.safeParse(item).success) continue;
         const k = dedupeKey(item);
         if (!seen.has(k)) {
           seen.set(k, item);

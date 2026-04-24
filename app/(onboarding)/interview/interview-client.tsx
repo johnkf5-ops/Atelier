@@ -1,10 +1,15 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import AutoDiscoverPanel from './auto-discover-panel';
 
 type Turn = { role: 'agent' | 'user'; content: string; akb_field_targeted?: string | null };
 
+type IngestMode = 'auto' | 'paste';
+
 export default function InterviewClient() {
+  const [mode, setMode] = useState<IngestMode>('auto');
+
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
@@ -12,6 +17,11 @@ export default function InterviewClient() {
   const [seedUrls, setSeedUrls] = useState('');
   const [ingestStatus, setIngestStatus] = useState<string | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
+
+  const refreshAkb = useCallback(async () => {
+    const a = await fetch('/api/akb').then((r) => r.json());
+    setAkb(a.akb);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -64,7 +74,7 @@ export default function InterviewClient() {
     }
   }
 
-  async function runIngest() {
+  async function runPasteIngest() {
     const urls = seedUrls
       .split(/\s+/)
       .map((s) => s.trim())
@@ -79,7 +89,7 @@ export default function InterviewClient() {
       const res = await fetch('/api/extractor/ingest', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ urls }),
+        body: JSON.stringify({ urls, source: 'paste' }),
       });
       const j = await res.json();
       setAkb(j.akb);
@@ -95,26 +105,39 @@ export default function InterviewClient() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
       <div className="space-y-4">
-        <section className="rounded border border-neutral-800 p-4 space-y-2">
-          <h2 className="text-sm uppercase tracking-wide text-neutral-500">Seed URLs</h2>
-          <textarea
-            value={seedUrls}
-            onChange={(e) => setSeedUrls(e.target.value)}
-            placeholder="Paste URLs (one per line) — personal site, gallery bio, press features..."
-            className="w-full h-24 bg-neutral-950 border border-neutral-800 rounded p-2 text-sm font-mono"
-            disabled={busy}
-          />
-          <div className="flex justify-between items-center">
-            <button
-              onClick={runIngest}
+        <div className="flex gap-2 border-b border-neutral-800">
+          <TabButton active={mode === 'auto'} onClick={() => setMode('auto')}>
+            Auto-discover
+          </TabButton>
+          <TabButton active={mode === 'paste'} onClick={() => setMode('paste')}>
+            Paste URLs
+          </TabButton>
+        </div>
+
+        {mode === 'auto' && <AutoDiscoverPanel onIngested={refreshAkb} />}
+
+        {mode === 'paste' && (
+          <section className="rounded border border-neutral-800 p-4 space-y-2">
+            <h2 className="text-sm uppercase tracking-wide text-neutral-500">Seed URLs</h2>
+            <textarea
+              value={seedUrls}
+              onChange={(e) => setSeedUrls(e.target.value)}
+              placeholder="Paste URLs (one per line) — personal site, gallery bio, press features..."
+              className="w-full h-24 bg-neutral-950 border border-neutral-800 rounded p-2 text-sm font-mono"
               disabled={busy}
-              className="rounded border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-800 disabled:opacity-40"
-            >
-              Ingest
-            </button>
-            {ingestStatus && <span className="text-xs text-neutral-400">{ingestStatus}</span>}
-          </div>
-        </section>
+            />
+            <div className="flex justify-between items-center">
+              <button
+                onClick={runPasteIngest}
+                disabled={busy}
+                className="rounded border border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-800 disabled:opacity-40"
+              >
+                Ingest
+              </button>
+              {ingestStatus && <span className="text-xs text-neutral-400">{ingestStatus}</span>}
+            </div>
+          </section>
+        )}
 
         <section className="rounded border border-neutral-800">
           <div ref={scrollerRef} className="h-96 overflow-y-auto p-4 space-y-3">
@@ -172,5 +195,26 @@ export default function InterviewClient() {
         </pre>
       </aside>
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-sm border-b-2 -mb-px transition ${
+        active ? 'border-neutral-200 text-neutral-100' : 'border-transparent text-neutral-500 hover:text-neutral-300'
+      }`}
+    >
+      {children}
+    </button>
   );
 }

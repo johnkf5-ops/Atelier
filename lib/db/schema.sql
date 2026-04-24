@@ -93,10 +93,12 @@ CREATE TABLE IF NOT EXISTS runs (
   error TEXT
 );
 
--- Per-run agent events (for stream UI + debugging)
+-- Per-run agent events (for stream UI + debugging).
+-- run_id is nullable: orphan events (e.g. auto-discover, pre-Run telemetry)
+-- log here too without a surrounding Run row.
 CREATE TABLE IF NOT EXISTS run_events (
   id INTEGER PRIMARY KEY,
-  run_id INTEGER NOT NULL REFERENCES runs(id),
+  run_id INTEGER REFERENCES runs(id),
   agent TEXT NOT NULL,
   kind TEXT NOT NULL,                -- 'start' | 'progress' | 'output' | 'error'
   payload_json TEXT NOT NULL,
