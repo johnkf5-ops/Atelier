@@ -1,7 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
+import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
+import StyleFingerprintCard from './style-fingerprint-card';
 import {
   DndContext,
   PointerSensor,
@@ -40,7 +42,11 @@ export default function UploadClient() {
   const [busy, setBusy] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
-  const [analystResult, setAnalystResult] = useState<unknown>(null);
+  const [analystFingerprint, setAnalystFingerprint] = useState<StyleFingerprint | null>(null);
+  const [analystVersion, setAnalystVersion] = useState<number | undefined>(undefined);
+  const [analystError, setAnalystError] = useState<string | null>(null);
+  const [analystStage, setAnalystStage] = useState<string>('');
+  const stageTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const [scrapeUrls, setScrapeUrls] = useState('');
   const [scraping, setScraping] = useState(false);
   const [scrapeLog, setScrapeLog] = useState<string[]>([]);
@@ -58,6 +64,26 @@ export default function UploadClient() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // Load existing fingerprint on mount so returning users see their card immediately.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch('/api/style-analyst/run', { cache: 'no-store' });
+        if (!res.ok) return;
+        const j = (await res.json()) as {
+          fingerprint: StyleFingerprint | null;
+          version?: number;
+        };
+        if (j.fingerprint) {
+          setAnalystFingerprint(j.fingerprint);
+          setAnalystVersion(j.version);
+        }
+      } catch {
+        // ignore — user just hasn't analyzed yet
+      }
+    })();
+  }, []);
 
   const onDrop = useCallback(
     async (files: File[]) => {
@@ -219,16 +245,52 @@ export default function UploadClient() {
     });
   }
 
+  function startStageTimer(imageCount: number) {
+    // Staged copy — Style Analyst has no real progress stream, so we cycle
+    // through three honest stages on a timer while the API call runs.
+    const stages = [
+      `Reading ${imageCount} images…`,
+      'Identifying aesthetic lineage…',
+      'Writing fingerprint…',
+    ];
+    let idx = 0;
+    setAnalystStage(stages[0]);
+    stageTimer.current = setInterval(() => {
+      idx = Math.min(idx + 1, stages.length - 1);
+      setAnalystStage(stages[idx]);
+    }, 12_000);
+  }
+
+  function stopStageTimer() {
+    if (stageTimer.current) {
+      clearInterval(stageTimer.current);
+      stageTimer.current = null;
+    }
+    setAnalystStage('');
+  }
+
   async function runAnalyst() {
     setAnalyzing(true);
-    setAnalystResult(null);
+    setAnalystFingerprint(null);
+    setAnalystError(null);
+    startStageTimer(images.length);
     try {
       const res = await fetch('/api/style-analyst/run', { method: 'POST' });
-      const j = await res.json();
-      setAnalystResult(j);
+      const j = (await res.json()) as {
+        fingerprint?: StyleFingerprint;
+        version?: number;
+        error?: string;
+      };
+      if (!res.ok || j.error) {
+        setAnalystError(j.error ?? `HTTP ${res.status}`);
+      } else if (j.fingerprint) {
+        setAnalystFingerprint(j.fingerprint);
+        setAnalystVersion(j.version);
+      }
     } catch (err) {
-      setAnalystResult({ error: (err as Error).message });
+      setAnalystError((err as Error).message);
     } finally {
+      stopStageTimer();
       setAnalyzing(false);
     }
   }
@@ -319,10 +381,26 @@ export default function UploadClient() {
         </button>
       </div>
 
-      {analystResult != null && (
-        <pre className="text-xs bg-neutral-950 border border-neutral-800 rounded p-3 overflow-auto max-h-96">
-{JSON.stringify(analystResult, null, 2)}
-        </pre>
+      {analyzing && (
+        <div className="rounded border border-neutral-800 bg-neutral-950 p-4 flex items-center gap-3">
+          <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden />
+          <div className="text-sm">
+            <div className="text-neutral-200">Analyzing your portfolio…</div>
+            {analystStage && (
+              <div className="text-xs text-neutral-500 mt-0.5">{analystStage}</div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {analystError && (
+        <div className="rounded border border-rose-700 bg-rose-950/30 p-3 text-sm text-rose-300">
+          Analysis failed: {analystError}
+        </div>
+      )}
+
+      {analystFingerprint && !analyzing && (
+        <StyleFingerprintCard fingerprint={analystFingerprint} version={analystVersion} />
       )}
 
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
