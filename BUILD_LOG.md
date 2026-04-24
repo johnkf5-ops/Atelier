@@ -98,3 +98,27 @@ Two root causes, both fixed without bandaids.
 
 **Verification:** 16/16 smoke tests pass. `pnpm build` clean. Full dev-server route sweep (`/`, `/upload`, `/interview`, `/review`, `/runs`, `/runs/new`, `/runs/5`, `/dossier/5`) all 200 or expected 307-redirect post-reset.
 
+### Post-gate regression (part 2): DB wipe against a running server
+
+**Commit:** `945645b`.
+
+John hit `SQLITE_UNKNOWN: no such table: portfolio_images` on the SSE scrape route after a second `pnpm db:reset`. The first fix (Commit `8083ff2`) ran migrations on first access, but both `runMigrations()` and `ensureDbReady()` memoized "done" for the life of the Node process. When the DB was wiped externally while the server kept running, the memoized state said "ready" but the tables were actually gone — permanently stuck until a manual dev-server restart.
+
+Root-caused in three parts:
+
+1. **Per-call sentinel in `lib/db/client.ts`.** `ensureDbReady` now does `SELECT 1 FROM sqlite_master WHERE name='users' LIMIT 1` on every call. ~1ms roundtrip on a healthy DB, effectively free. If the row is missing, it clears `_schemaVerified` + `_bootstrapPromise` and re-runs the full bootstrap. No-ops when the DB is fine; self-heals when the DB has been wiped.
+
+2. **`resetMigrationsMemo()` in `lib/db/migrations.ts`.** Exported so `ensureDbReady` can clear the `let _ran = true` memoization before re-running. Since `schema.sql` is `CREATE TABLE IF NOT EXISTS` throughout and the migration-file runner checks `_migrations` for idempotency, re-running is free — only the in-memory flag had to be reset.
+
+3. **SSE routes got `ensureDbReady` too.** `/api/portfolio/scrape` and `/api/extractor/auto-discover` were the only DB-touching routes that skipped the guard in the first pass. Both now `await ensureDbReady()` at the top of their handlers, closing the "first request after reset hits an SSE route" gap.
+
+**Contract test: `tests/smoke/db-bootstrap.test.ts` expanded.** New `EXPECTED_TABLES` list — `users`, `portfolio_images`, `style_fingerprints`, `akb_versions`, `extractor_turns`, `opportunities`, `past_recipients`, `opportunity_logos`, `runs`, `run_events`, `run_matches`, `run_event_cursors`, `drafted_packages`, `dossiers`, `run_opportunities`, `_migrations` (16 total). Five assertions:
+
+- every table in the list exists after first boot
+- `users(id=1)` seeded on first boot
+- `getPortfolioCount(1)` runs without throwing (the exact upload-handler call)
+- idempotent across double ensureDbReady calls
+- **NEW:** self-heals after external wipe — simulates `reset-db.ts`'s drop-all-tables loop, calls `ensureDbReady` again, asserts every table + seed comes back
+
+When a future migration adds a table, updating `EXPECTED_TABLES` is the contract. If someone forgets, the test fails on the next CI run. This catches the exact class of bug we just hit, forever. 19/19 smoke tests pass.
+
