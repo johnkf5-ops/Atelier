@@ -159,3 +159,26 @@ Fix in `upload-client.tsx`'s `Tile` component:
 
 The per-tile delete button already prunes `reviewIds`/`keepIds` (Commit `1fc703e`), so deleting a tile that genuinely failed to load still decrements the Confirm counter honestly.
 
+### Post-gate regression (part 5): "Failed to fetch" on Style Analyst
+
+**Commit:** `f32c980`.
+
+Style Analyst banner read *Analysis failed: Failed to fetch* — the raw TypeError from a `fetch()` that never reached the server. No POST logged server-side, so the request died client-side. Causes: dev-server hot-reload kill, connection reset, browser network blip. But the UI couldn't tell user or developer which.
+
+**Fix — categorised fetch errors.** `lib/api/fetch-client.ts` `fetchJson()` now returns a discriminated `SafeError` kind on every failure:
+
+- `network` — fetch() threw (the TypeError case), remapped to *"couldn't reach server — check your connection"*
+- `abort` — AbortController fired (user navigation or manual cancel)
+- `timeout` — client timer elapsed (default 120s, configurable)
+- `empty-body` — server returned a status with zero bytes
+- `parse-error` — non-JSON body
+- `http-error` — non-2xx with a parseable `{error}`
+
+Every failure logs to `console.warn` with request URL + kind, so a DevTools screenshot now contains enough context to diagnose without a back-and-forth.
+
+**Style Analyst timeout ceiling matched to server.** `runAnalyst` in `upload-client.tsx` passes `timeoutMs: 300_000` to match `maxDuration = 300` on the route. A real 5-minute vision pass can now land; anything longer is clearly a server hang, not a silent frontend timeout.
+
+**Retry button in the error banner.** The Analysis-failed banner now has a "Retry" button that re-fires `runAnalyst` without a page reload — the most common cause is a transient dev-server bounce and a single retry lands immediately.
+
+**Regression coverage:** `tests/smoke/fetch-client.test.ts` asserts every `kind` fires correctly against a mocked `fetch`. 26/26 smoke tests pass.
+
