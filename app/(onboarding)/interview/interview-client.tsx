@@ -274,7 +274,7 @@ function StateBanner({
   return (
     <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-100 flex items-center justify-between gap-4">
       <div>
-        Interview complete — {factCount} fact{factCount === 1 ? '' : 's'} captured.
+        Knowledge Base complete — {factCount} fact{factCount === 1 ? '' : 's'} captured.
       </div>
       <a
         href="/review"

@@ -146,14 +146,14 @@ export default function ReviewClient() {
           {saving ? 'Saving…' : dirty ? 'Save manual edits' : 'No changes'}
         </button>
         <Link
-          href="/runs"
+          href="/runs/new"
           aria-disabled={!ready}
           className={`rounded border border-neutral-700 px-4 py-2 text-sm ${
             ready ? 'hover:bg-neutral-800' : 'opacity-40 pointer-events-none'
           }`}
-          title={ready ? 'Continue to dossier' : `${validation?.issues.length ?? 0} field(s) still missing`}
+          title={ready ? 'Start your first run' : `${validation?.issues.length ?? 0} field(s) still missing`}
         >
-          Continue to dossier →
+          Start your first run →
         </Link>
         {status && <span className="text-xs text-neutral-400">{status}</span>}
       </div>
@@ -161,7 +161,7 @@ export default function ReviewClient() {
       {validation && !validation.valid && validation.issues.length > 0 && (
         <div className="rounded border border-amber-800 bg-amber-950/30 p-3 text-sm space-y-1">
           <div className="text-amber-300 font-medium">
-            AKB is incomplete — {validation.issues.length} field(s) missing or invalid:
+            Knowledge Base is incomplete — {validation.issues.length} field(s) missing or invalid:
           </div>
           <ul className="text-xs text-amber-200/80 font-mono space-y-0.5 max-h-40 overflow-auto">
             {validation.issues.map((i, idx) => (

@@ -14,7 +14,11 @@ export async function GET() {
   const userId = getCurrentUserId();
   const { akb, version } = await loadLatestAkb(userId);
   if (version === 0) {
-    return Response.json({ valid: false, version: 0, issues: [{ path: '', message: 'no AKB yet' }] });
+    return Response.json({
+      valid: false,
+      version: 0,
+      issues: [{ path: '', message: 'no Knowledge Base yet' }],
+    });
   }
   const r = ArtistKnowledgeBase.safeParse(akb);
   if (r.success) {

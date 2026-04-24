@@ -14,13 +14,13 @@ export async function POST() {
   const userId = getCurrentUserId();
   const { akb, version } = await loadLatestAkb(userId);
   if (version === 0) {
-    return Response.json({ error: 'no AKB yet' }, { status: 400 });
+    return Response.json({ error: 'no Knowledge Base yet' }, { status: 400 });
   }
   const parsed = ArtistKnowledgeBase.safeParse(akb);
   if (!parsed.success) {
     return Response.json(
       {
-        error: 'AKB incomplete — missing required fields',
+        error: 'Knowledge Base incomplete — missing required fields',
         issues: parsed.error.issues.map((i) => ({
           path: i.path.join('.'),
           message: i.message,

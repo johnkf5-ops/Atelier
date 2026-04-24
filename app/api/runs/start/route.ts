@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   // Require a valid AKB version + style_fingerprint version to anchor the run
   const { id: akbId, version: akbVersion } = await loadLatestAkb(userId);
   if (akbVersion === 0 || akbId === null) {
-    return Response.json({ error: 'no AKB yet — complete onboarding first' }, { status: 400 });
+    return Response.json({ error: 'no Knowledge Base yet — complete onboarding first' }, { status: 400 });
   }
   const fpRow = await db.execute({
     sql: `SELECT id, json FROM style_fingerprints WHERE user_id = ? ORDER BY version DESC LIMIT 1`,
