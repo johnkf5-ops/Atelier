@@ -331,16 +331,24 @@ export default function UploadClient() {
               >
                 Discard all scraped
               </button>
-              <span className="text-xs text-neutral-500">
-                Uncheck any false positives, then Confirm.
-              </span>
             </>
           )}
         </div>
+        {reviewIds.size > 0 && !scraping && (
+          <div className="text-xs text-emerald-300">
+            {reviewIds.size} image{reviewIds.size === 1 ? '' : 's'} pending review in the grid below —
+            uncheck any false positives, then Confirm.
+          </div>
+        )}
         {scrapeLog.length > 0 && (
-          <pre className="text-[11px] text-neutral-400 bg-neutral-950 border border-neutral-800 rounded p-2 max-h-48 overflow-auto">
+          <details className="text-[11px] text-neutral-500">
+            <summary className="cursor-pointer hover:text-neutral-300">
+              Scrape log ({scrapeLog.length} lines)
+            </summary>
+            <pre className="mt-2 text-[11px] text-neutral-400 bg-neutral-950 border border-neutral-800 rounded p-2 max-h-48 overflow-auto">
 {scrapeLog.join('\n')}
-          </pre>
+            </pre>
+          </details>
         )}
       </section>
 

@@ -70,6 +70,11 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
   const [result, setResult] = useState<DiscoveryResult | null>(null);
   const [usage, setUsage] = useState<DiscoveryUsage | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [ingestSummary, setIngestSummary] = useState<{
+    sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+    changed_fields: string[];
+    saved: { id: number } | null;
+  } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -83,6 +88,7 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
     setResult(null);
     setUsage(null);
     setChecked(new Set());
+    setIngestSummary(null);
   }
 
   async function startDiscovery() {
@@ -184,6 +190,7 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
     if (!result || checked.size === 0) return;
     setStatus('ingesting');
     setErrorMsg(null);
+    setIngestSummary(null);
     try {
       const urls = result.discovered.filter((e) => checked.has(e.url)).map((e) => e.url);
       const res = await fetch('/api/extractor/ingest', {
@@ -192,8 +199,12 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
         body: JSON.stringify({ urls, source: 'auto-discover' }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const j = await res.json();
-      void j;
+      const j = (await res.json()) as {
+        sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+        changed_fields: string[];
+        saved: { id: number } | null;
+      };
+      setIngestSummary(j);
       setStatus('complete');
       onIngested();
     } catch (err) {
@@ -316,12 +327,85 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
         </div>
       )}
 
-      {status === 'complete' && (
-        <div className="rounded border border-emerald-800 bg-emerald-950/20 p-3 text-sm text-emerald-300">
-          Ingested. The interview below will pick up from the new AKB.
-        </div>
+      {status === 'complete' && ingestSummary && (
+        <IngestSummaryPanel summary={ingestSummary} />
       )}
     </section>
+  );
+}
+
+function IngestSummaryPanel({
+  summary,
+}: {
+  summary: {
+    sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+    changed_fields: string[];
+    saved: { id: number } | null;
+  };
+}) {
+  const okCount = summary.sources.filter((s) => s.ok).length;
+  const failCount = summary.sources.length - okCount;
+  const nothingChanged = summary.changed_fields.length === 0;
+
+  return (
+    <div
+      className={`rounded border p-3 text-sm space-y-2 ${
+        summary.saved
+          ? 'border-emerald-700 bg-emerald-950/20 text-emerald-200'
+          : 'border-amber-700 bg-amber-950/20 text-amber-200'
+      }`}
+    >
+      <div>
+        {summary.saved ? (
+          <>
+            Knowledge Base v
+            <span className="font-mono">{summary.saved.id}</span> saved —{' '}
+            {summary.changed_fields.length} field
+            {summary.changed_fields.length === 1 ? '' : 's'} added.
+          </>
+        ) : nothingChanged ? (
+          <>No new facts extracted from the selected pages. Try adding URLs with richer bio / press content.</>
+        ) : (
+          <>Ingest completed but no Knowledge Base version was saved. Check logs.</>
+        )}
+        {failCount > 0 && (
+          <span className="text-neutral-400 ml-2">
+            ({okCount} ok, {failCount} failed)
+          </span>
+        )}
+      </div>
+
+      {summary.changed_fields.length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer hover:text-neutral-300">
+            Fields added ({summary.changed_fields.length})
+          </summary>
+          <ul className="mt-1 font-mono text-[11px] pl-4 list-disc">
+            {summary.changed_fields.map((f) => (
+              <li key={f}>{f}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {failCount > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer hover:text-neutral-300">
+            Failed sources ({failCount})
+          </summary>
+          <ul className="mt-1 text-[11px] pl-4 list-disc space-y-0.5">
+            {summary.sources
+              .filter((s) => !s.ok)
+              .map((s) => (
+                <li key={s.url}>
+                  <span className="text-neutral-500">{shortUrl(s.url)}</span>
+                  <span className="text-rose-300"> — {s.error ?? 'unknown'}</span>
+                </li>
+              ))}
+          </ul>
+        </details>
+      )}
+    </div>
   );
 }
 
