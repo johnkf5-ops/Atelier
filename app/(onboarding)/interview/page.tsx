@@ -6,9 +6,9 @@ export default function InterviewPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="font-serif text-3xl">Knowledge Extractor</h1>
+        <h1 className="font-serif text-3xl">Build your Knowledge Base</h1>
         <p className="text-neutral-400 text-sm mt-1">
-          Optionally seed with URLs (your site, gallery bios, press) — Claude ingests what is
+          Optionally seed with URLs (your site, gallery bios, press) — Atelier ingests what is
           public, then asks targeted questions to fill the gaps.
         </p>
       </div>

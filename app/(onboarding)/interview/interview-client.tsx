@@ -7,6 +7,42 @@ type Turn = { role: 'agent' | 'user'; content: string; akb_field_targeted?: stri
 
 type IngestMode = 'auto' | 'paste';
 
+type InterviewState = 'empty' | 'ready' | 'in_progress' | 'complete';
+
+function countFacts(akb: Record<string, unknown> | null): number {
+  if (!akb) return 0;
+  let n = 0;
+  const walk = (v: unknown): void => {
+    if (v == null || v === '') return;
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (typeof v === 'object') {
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        if (k === 'source_provenance') continue;
+        walk(val);
+      }
+      return;
+    }
+    n += 1;
+  };
+  walk(akb);
+  return n;
+}
+
+function deriveInterviewState(
+  turns: Turn[],
+  akb: Record<string, unknown> | null,
+): InterviewState {
+  if (!akb || Object.keys(akb).length === 0) return 'empty';
+  if (turns.length === 0) return 'ready';
+  const lastAgent = [...turns].reverse().find((t) => t.role === 'agent');
+  if (!lastAgent) return 'ready';
+  // next_field_target === null ⇒ interview complete
+  return lastAgent.akb_field_targeted === null ? 'complete' : 'in_progress';
+}
+
 export default function InterviewClient() {
   const [mode, setMode] = useState<IngestMode>('auto');
 
@@ -102,9 +138,14 @@ export default function InterviewClient() {
     }
   }
 
+  const factCount = countFacts(akb);
+  const interviewState = deriveInterviewState(turns, akb);
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
       <div className="space-y-4">
+        <StateBanner state={interviewState} factCount={factCount} />
+
         <div className="flex gap-2 border-b border-neutral-800">
           <TabButton active={mode === 'auto'} onClick={() => setMode('auto')}>
             Auto-discover
@@ -155,8 +196,7 @@ export default function InterviewClient() {
             {turns.map((t, i) => (
               <div key={i} className={t.role === 'agent' ? 'text-neutral-200' : 'text-emerald-300 pl-6'}>
                 <div className="text-xs uppercase tracking-wide text-neutral-500 mb-1">
-                  {t.role}
-                  {t.akb_field_targeted && ` → ${t.akb_field_targeted}`}
+                  {t.role === 'agent' ? 'Atelier' : 'You'}
                 </div>
                 <div className="text-sm whitespace-pre-wrap">{t.content}</div>
               </div>
@@ -189,11 +229,59 @@ export default function InterviewClient() {
       </div>
 
       <aside className="rounded border border-neutral-800 p-4">
-        <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">AKB (live)</h2>
+        <h2 className="text-sm uppercase tracking-wide text-neutral-500 mb-2">
+          Knowledge Base (live)
+        </h2>
         <pre className="text-[11px] text-neutral-300 overflow-auto max-h-[36rem] leading-snug">
 {akb ? JSON.stringify(akb, null, 2) : 'loading…'}
         </pre>
       </aside>
+    </div>
+  );
+}
+
+function StateBanner({
+  state,
+  factCount,
+}: {
+  state: InterviewState;
+  factCount: number;
+}) {
+  if (state === 'empty') {
+    return (
+      <div className="rounded border border-neutral-800 bg-neutral-900 p-3 text-sm text-neutral-300">
+        Your Knowledge Base is empty. Start with Auto-discover below to seed it from the web,
+        or paste URLs you want ingested.
+      </div>
+    );
+  }
+  if (state === 'ready') {
+    return (
+      <div className="rounded border border-neutral-800 bg-neutral-900 p-3 text-sm text-neutral-300">
+        Your Knowledge Base has {factCount} fact{factCount === 1 ? '' : 's'}.
+        <span className="text-neutral-500"> Start the interview to fill remaining gaps.</span>
+      </div>
+    );
+  }
+  if (state === 'in_progress') {
+    return (
+      <div className="rounded border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-100">
+        Interview in progress — answer below. {factCount} fact{factCount === 1 ? '' : 's'} captured so far.
+      </div>
+    );
+  }
+  // state === 'complete'
+  return (
+    <div className="rounded border border-emerald-500/30 bg-emerald-500/5 p-3 text-sm text-emerald-100 flex items-center justify-between gap-4">
+      <div>
+        Interview complete — {factCount} fact{factCount === 1 ? '' : 's'} captured.
+      </div>
+      <a
+        href="/review"
+        className="inline-block px-3 py-1.5 bg-neutral-100 text-neutral-900 text-xs rounded hover:bg-white whitespace-nowrap"
+      >
+        Review &amp; start your first run →
+      </a>
     </div>
   );
 }
