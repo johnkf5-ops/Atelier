@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "setup:agents": "tsx scripts/setup-managed-agents.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
@@ -16,6 +17,7 @@
     "@libsql/client": "^0.14.0",
     "@react-pdf/renderer": "^4.0.0",
     "@vercel/blob": "^2.3.3",
+    "@vercel/functions": "^3.4.4",
     "cheerio": "^1.0.0",
     "docx": "^9.0.0",
     "exifr": "^7.1.3",

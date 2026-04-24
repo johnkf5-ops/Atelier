@@ -573,7 +573,7 @@ return Response.json({ run_id: runId, session_id: session.id });
 
 ### Pulling events (in `app/api/runs/[id]/events/route.ts`, called repeatedly by browser)
 
-**Pagination pattern (verified against Anthropic docs 2026-04-23):** `events.list()` does NOT take an `after` cursor. The documented pattern is iterate-all-events + dedupe by `event.id`. We use a UNIQUE constraint on `run_events.event_id` + `INSERT OR IGNORE` to prevent concurrent-poll dupes.
+**Pagination pattern (verified in SDK exercise 2026-04-24):** the TypeScript SDK's `events.list()` uses a `page:` cursor parameter for manual pagination. The async iterator (`for await (const ev of client.beta.sessions.events.list(sessionId))`) handles the cursor internally — do NOT hand-build `page:` params unless you have a specific reason (e.g., the `processed_at` optimization suggestion below). Stick with the iterator. We dedupe via UNIQUE constraint on `run_events.event_id` + `INSERT OR IGNORE` so concurrent polls are safe regardless of pagination mechanics.
 
 **Streaming event-shape note (discovered during Phase 2.12 ship):** for `web_search` server tool, the `query` field arrives FULLY-FORMED in the `content_block_start` event's `content_block.input`, NOT via `input_json_delta` deltas. If you're streaming agent activity to a UI and want to display "Searching: <query>" the moment a search starts, prefer reading from `event.content_block.input.query` first; fall back to accumulating `input_json_delta` chunks across `content_block_delta` events for tools that DO stream input (custom tools and other server tools may differ). Both paths should be present.
 
@@ -627,8 +627,16 @@ if (latestEventId !== last_event_id) {
 // Handle requires_action gate inline — see "Custom tool result round-trip" below.
 // (call handleRequiresAction(runId, managed_session_id, newEvents) — implementation in §3.x)
 
-// Check for terminal state. Look at idle events from THIS poll first; if none, query the most recent
-// idle event from run_events (handles cross-poll terminal idle).
+// Check for terminal state.
+// IMPORTANT (verified during §3.0.b smoke 2026-04-24): `sessions.retrieve()` returns the live
+// session.status string ('idle', 'running', 'rescheduling', 'terminated') BUT does NOT include
+// stop_reason. stop_reason lives ONLY on session.status_idle events in the event stream.
+// Terminal detection must pair the live status with the most recent stop_reason from events
+// — relying on sessions.retrieve() alone causes pre-run idle states to read as terminal and
+// the polling handler returns done:true prematurely.
+//
+// Look at idle events from THIS poll first; if none, query the most recent idle event from
+// run_events (handles cross-poll terminal idle).
 let lastIdleStopReason: string | null = null;
 const idleInBatch = [...newEvents].reverse().find(e => e.type === 'session.status_idle');
 if (idleInBatch) {
@@ -3182,26 +3190,54 @@ For the demo recording (per spec §Demo strategy, "First Style Analyst pass = li
   ```
 - [ ] Demo recording recipe: (a) do a full real run against John's real data, wait for `complete`; (b) record video on a fresh tab with `?playback=<run_id>&speed=10`; (c) voiceover layered on top in post
 
-### 4.6 Remaining skill files (Package Drafter consumption)
+### 4.6 Remaining skill files (Package Drafter + extended skill base for §Depth scoring)
 
 (Same provenance model as §1.5: research-mode agent drafts, builder audits. `juror-reading.md` and `aesthetic-vocabulary.md` already landed in §2.13 for the Rubric Matcher — not repeated here.)
 
-Loaded into Package Drafter's per-material system prompts (see §4.1). Authored before Phase 4 draftPackages runs; otherwise the Drafter falls back to hand-written defaults (acceptable for v1 but weaker output).
+**Spec target: 20-30 skill files for §Depth & Execution scoring.** With §1.5's 2 + §2.13's 2 + §4.6's 16 below, we land at **20 total** — meeting the lower bound of the spec target. Each file below is load-bearing (consumed by an agent OR by the dossier render), not count-padding.
+
+#### Drafter-consumed (hard dependency on Phase 4 quality)
 
 - [ ] `artist-statement-voice.md` — anti-patterns + 3-5 worked examples of strong institutional artist statements. Feeds §4.1 `artist_statement` + `cover_letter` prompts.
 - [ ] `project-proposal-structure.md` — generic grant-proposal structure (research questions, timeline, budget framing, deliverables, impact) for opportunities whose URL fetch doesn't surface specific requirements. Feeds §4.1 `project_proposal` prompt.
 - [ ] `cv-format-by-institution.md` — institution-specific CV format conventions. Minimum coverage: Guggenheim, MacDowell, NEA, Creative Capital. Each entry gives: section order, date formatting, what to include/exclude, length cap. Feeds §4.1 `cv` prompt.
-- [ ] `submission-calendar.md` — seasonal patterns of when major opportunities open/close. Used to inform the `ranking_narrative` (e.g., "prioritize X now, Y is dormant until Sept") — not a Drafter input directly, more a Orchestrator context file.
-- [ ] `past-winner-archives.md` — where each opportunity publishes past recipient lists. Mirrors info already in `opportunity-sources.md`; this file documents the SCRAPING MECHANICS per archive (selectors, pagination, auth). Deprioritize — Scout's web_fetch handles most of this generically.
-- [ ] `cost-vs-prestige-tiers.md` — entry-fee-vs-signal heuristics. Used by user-facing copy on the Run Config page ("spending $40 on Opportunity X is a pay-to-play trap; redirect toward Y"). Not a Drafter input.
+- [ ] `cover-letter-templates.md` — distinct cover-letter shapes by opportunity type (foundation grant / gallery open call / residency / public art commission / museum donation pitch). Feeds §4.1 `cover_letter` prompt — selects template based on `opp.award.type`.
+- [ ] `artist-statement-voice-by-medium.md` — voice patterns differ across photography / painting / sculpture / video / installation. Photography lineage references (Frank, Eggleston, Mann) read different from painting lineage references (Marden, Tuymans, Doig). Feeds §4.1 by selecting the medium-specific section based on `akb.practice.primary_medium`.
+- [ ] `work-sample-rationale-patterns.md` — how to write the per-image rationale text in the work sample selection (3-5 sentence formula: what the image IS → what it does formally → why this institution will respond). Feeds §4.1 `work_sample_selection` text generation when we expand v1.1.
 
-Quality gate for §4.6 (matches §2.13's bar): at least 500 words per Drafter-consumed file (`artist-statement-voice`, `project-proposal-structure`, `cv-format-by-institution`); the three non-Drafter files can be shorter or stub-with-backlog if time-constrained.
+#### Drafter-consumed (medium-specific application norms)
+
+- [ ] `medium-specific-application-norms.md` — application requirements differ by medium: photographers need print specs + edition info, sculptors need installation diagrams + dimensions, painters need substrate details, video artists need duration + format, installation artists need site requirements. Feeds §4.1 `project_proposal` to ensure the right material info is included.
+
+#### Orchestrator + dossier context (informs ranking narrative + filtered-out blurbs)
+
+- [ ] `submission-calendar.md` — seasonal patterns of when major opportunities open/close (NEA Spring window, Guggenheim Sep deadline, MacDowell Apr/Sep windows, etc.). Informs the `ranking_narrative` ("prioritize X now, Y dormant until Sept").
+- [ ] `timeline-by-opportunity-type.md` — typical decision-to-result timelines. NEA: 8 months. MacDowell: 4 months. Yaddo: 3 months. Magnum: 6 months. Lets the dossier flag "this needs prep TODAY" vs "decide in Q3". Used in `composite_score` urgency tier override and ranking narrative.
+- [ ] `cost-vs-prestige-tiers.md` — entry-fee-vs-signal heuristics. Used by user-facing copy on the Run Config page ("spending $40 on Opportunity X is a pay-to-play trap; redirect toward Y").
+- [ ] `regional-arts-economies.md` — what each US region offers. NYSCA / Texas Commission / Illinois Arts Council / California Arts Council each have distinct programs + eligibility quirks. Informs ranking narrative when AKB.identity.home_base hits a region with strong local funding.
+- [ ] `gallery-tier-taxonomy.md` — primary vs secondary market, blue-chip vs mid-career galleries, what each represents and how an artist gets through their door. Feeds the Gallery Targeter (§3.5) interpretation of `roster_url` data.
+- [ ] `museum-acquisition-pathways.md` — how works enter museum collections (purchase committees, donations, direct curatorial picks, residency-to-acquisition pipelines). Informs `museum_acquisition_signals` in the StyleFingerprint AND the cover narrative when AKB.intent.aspirations mentions museum acquisition.
+
+#### Knowledge Extractor side
+
+- [ ] `interview-question-templates.md` — by AKB field. For `process_description`: "Walk me through making one piece, start to finish." For `intent.statement`: "If a curator asked you what your work is about in one sentence, what would you say?" For `bodies_of_work`: "What's the through-line connecting your last 3 series?" Feeds §2.7 interview prompt.
+- [ ] `akb-disambiguation-patterns.md` — same-name disambiguation playbook for the auto-discover (§2.12). Standard tells: medium mismatch (photographer vs musician), location mismatch, era mismatch (active 1980s vs active now). Feeds §2.12 system prompt.
+
+#### Aesthetic / lineage extension (Rubric Matcher + Style Analyst)
+
+- [ ] `photography-specific-lineages.md` — extends `aesthetic-vocabulary.md` with granular photographic lineages (Becher school, color landscape, New Topographics, street, portrait, documentary social practice, photojournalism, fashion-art crossover). Loaded into Style Analyst + Rubric Matcher when `akb.practice.primary_medium` includes "photography".
+
+#### Operational / mechanics
+
+- [ ] `past-winner-archives.md` — per-opportunity scraping mechanics where institutions publish past recipient lists. URL patterns, pagination handling, recipient-bio link patterns. Cuts Scout's discovery time for known sources.
+
+**Quality gate for §4.6:** at least 500 words per Drafter-consumed file (the first 7 above); at least 300 words per Orchestrator-context file (next 6); at least 200 words per Extractor + Operational file (last 3). Total 16 new files. Combined with §1.5 (2) + §2.13 (2) = **20 skill files total** for the repo, hitting the spec's lower bound. Stretch to 25-30 by adding per-major-prize deep-dives (`guggenheim-fellowship-deep.md`, `nea-grant-deep.md`, etc.) as time permits.
 
 ### Acceptance gate — Phase 4
 1. End-to-end run from John's AKB produces a dossier with ≥10 opportunities + drafted materials
 2. PDF exports cleanly, prints legibly
 3. John reads at least one drafted artist statement and confirms it's better than what he'd write
-4. ≥10 skill files committed; each is real lived knowledge, not LLM filler
+4. **≥20 skill files committed** (§1.5's 2 + §2.13's 2 + §4.6's 16), each passing the per-file word-count quality gate, each real lived knowledge not LLM filler. Stretch target: 25-30 via per-major-prize deep-dives
 
 ---
 
