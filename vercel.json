@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/api/runs/[id]/finalize/route.ts": { "maxDuration": 300 },
+    "app/api/runs/[id]/finalize-scout/route.ts": { "maxDuration": 300 },
+    "app/api/style-analyst/run/route.ts": { "maxDuration": 300 },
+    "app/api/portfolio/scrape/route.ts": { "maxDuration": 300 },
+    "app/api/extractor/ingest/route.ts": { "maxDuration": 300 },
+    "app/api/extractor/auto-discover/route.ts": { "maxDuration": 90 }
+  }
+}

@@ -103,7 +103,33 @@ async function readSkill(name: string): Promise<string> {
   return fs.readFile(path.join(process.cwd(), 'skills', name), 'utf-8');
 }
 
+async function printVersions() {
+  // Read-only: enumerate agents by name, print current version.
+  // Used by BUILD_LOG.md authoring to record the version pinned at
+  // each Phase-3/4 iteration without touching agents.update.
+  const names = [SCOUT_NAME, RUBRIC_NAME];
+  for (const name of names) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const existing = await findByName<any>((client.beta as any).agents.list(), name);
+    if (!existing) {
+      console.log(`${name}: not found`);
+      continue;
+    }
+    const model =
+      typeof existing.model === 'string'
+        ? existing.model
+        : existing.model?.id ?? existing.model?.name ?? JSON.stringify(existing.model);
+    console.log(
+      `${name}: id=${existing.id} version=${existing.version ?? '?'} model=${model} system_bytes=${(existing.system ?? '').length}`,
+    );
+  }
+}
+
 async function main() {
+  if (process.argv.includes('--versions')) {
+    await printVersions();
+    return;
+  }
   const env = await findOrCreateEnvironment();
 
   const scoutSystem = [await readSkill('opportunity-sources.md'), await readSkill('eligibility-patterns.md')].join(
