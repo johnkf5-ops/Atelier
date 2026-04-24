@@ -11,6 +11,7 @@ import {
   type MatchRow,
 } from '../lib/agents/package-drafter';
 import type { ArtistKnowledgeBase } from '../lib/schemas/akb';
+import type { StyleFingerprint } from '../lib/schemas/style-fingerprint';
 
 dotenvConfig({ path: '.env.local' });
 
@@ -32,7 +33,8 @@ async function main() {
   const matchRow = (
     await db.execute({
       sql: `SELECT rm.id, rm.run_id, rm.opportunity_id, rm.fit_score, rm.composite_score,
-                   rm.reasoning, rm.supporting_image_ids, o.name as opp_name, o.raw_json, r.user_id, r.akb_version_id
+                   rm.reasoning, rm.supporting_image_ids, o.name as opp_name, o.raw_json,
+                   r.user_id, r.akb_version_id, r.style_fingerprint_id
             FROM run_matches rm
             JOIN opportunities o ON o.id = rm.opportunity_id
             JOIN runs r ON r.id = rm.run_id
@@ -54,6 +56,7 @@ async function main() {
         raw_json: string;
         user_id: number;
         akb_version_id: number;
+        style_fingerprint_id: number;
       }
     | undefined;
   if (!matchRow) throw new Error('no match found');
@@ -66,6 +69,14 @@ async function main() {
     })
   ).rows[0] as unknown as { json: string };
   const akb = JSON.parse(akbRow.json) as ArtistKnowledgeBase;
+
+  const fpRow = (
+    await db.execute({
+      sql: 'SELECT json FROM style_fingerprints WHERE id = ?',
+      args: [matchRow.style_fingerprint_id],
+    })
+  ).rows[0] as unknown as { json: string };
+  const fingerprint = JSON.parse(fpRow.json) as StyleFingerprint;
 
   const portfolio = (
     await db.execute({
@@ -95,7 +106,7 @@ async function main() {
     supporting_image_ids: matchRow.supporting_image_ids,
     raw_json: matchRow.raw_json,
   };
-  await draftPackageForMatch(row, akb, portfolio);
+  await draftPackageForMatch(row, akb, fingerprint, portfolio);
   const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
   console.log(`drafted in ${elapsed}s\n`);
 

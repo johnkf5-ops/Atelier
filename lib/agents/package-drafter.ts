@@ -5,6 +5,7 @@ import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
 import { getDb } from '@/lib/db/client';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { Opportunity } from '@/lib/schemas/opportunity';
+import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 
 // Used when skills/artist-statement-voice.md etc. haven't landed yet.
 // Short but deliberate — prevents silent quality degradation if §4.6 timing slips.
@@ -52,32 +53,58 @@ export type MaterialType = 'artist_statement' | 'project_proposal' | 'cv' | 'cov
 type DraftCtx = {
   akb: ArtistKnowledgeBase;
   opp: Opportunity;
+  fingerprint: StyleFingerprint; // required — constrains all visual claims
   voiceSkill: string;
   proposalSkill: string;
   cvSkill: string;
   oppRequirementsText: string;
 };
 
+// Hard constraint applied to every per-material prompt (except CV, which is factual).
+// Prevents the Drafter from inventing an institutional-register framing (cool-tonal
+// palette, Sugimoto-lineage, durational-conceptual) that doesn't match the actual
+// visual work. The fingerprint is ground truth for visual claims.
+const FINGERPRINT_CONSTRAINT = `HARD CONSTRAINT — VISUAL CLAIMS MUST MATCH THE STYLE FINGERPRINT:
+Every descriptive claim you make about the artist's visual work (palette, lineage, composition, subject register, process) must be supported by the StyleFingerprint below. Do NOT write an aspirational framing that contradicts the fingerprint.
+
+- If the fingerprint says "saturated" palette, do NOT claim "cool-tonal" or "muted."
+- If the fingerprint's formal_lineage names commercial precedents (Peter Lik, Trey Ratcliff, Galen Rowell), do NOT pitch the work as "Sugimoto-lineage" or "New Topographics" or any institutional-register lineage the fingerprint does not name.
+- If the fingerprint's career_positioning_read names a commercial / destination-gallery register, WRITE FROM THAT register — own it honestly. Panels read the work samples alongside the statement; a statement whose visual claims contradict the attached images reads as overreach and disqualifies.
+- You MAY describe aspirations in intent.aspirations terms ("intent to deepen the regional practice") but do NOT describe the CURRENT work as having qualities it does not have.
+- Use vocabulary from the fingerprint's own fields when possible.
+
+Read the fingerprint carefully. Write about the work as it actually is. Commercial-register honesty beats institutional-register pretense every time.`;
+
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
     system:
       ctx.voiceSkill +
-      "\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. 300-500 words. No preamble, no markdown. Return plain text only.",
+      '\n\n---\n\n' +
+      FINGERPRINT_CONSTRAINT +
+      "\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. 300-500 words. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
 
-ARTIST_AKB:
+STYLE_FINGERPRINT (ground truth for visual claims):
+${JSON.stringify(ctx.fingerprint, null, 2)}
+
+ARTIST_AKB (ground truth for biographical + career claims):
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the artist statement now.`,
+Write the artist statement now. Describe the work as the fingerprint says it IS.`,
   }),
   project_proposal: (ctx) => ({
     system:
       ctx.proposalSkill +
-      "\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. If the opportunity's stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.",
+      '\n\n---\n\n' +
+      FINGERPRINT_CONSTRAINT +
+      "\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity's stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}
 
 OPPORTUNITY_REQUIREMENTS (from their page, may be partial):
 ${ctx.oppRequirementsText || '(not available — use generic structure)'}
+
+STYLE_FINGERPRINT:
+${JSON.stringify(ctx.fingerprint, null, 2)}
 
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
@@ -87,7 +114,7 @@ Write the project proposal now.`,
   cv: (ctx) => ({
     system:
       ctx.cvSkill +
-      "\n\n---\n\nYou are formatting a CV for a specific institution's application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble.",
+      "\n\n---\n\nYou are formatting a CV for a specific institution's application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble. (StyleFingerprint not needed here — CV is factual.)",
     user: `OPPORTUNITY: ${ctx.opp.name} — submission format requirements per your skill file.
 
 ARTIST_AKB:
@@ -98,8 +125,13 @@ Format the CV now.`,
   cover_letter: (ctx) => ({
     system:
       ctx.voiceSkill +
-      "\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity's selectors. 200-300 words. Named addressee if the opportunity has a known director; else \"Selection Committee\". Pull facts ONLY from the provided AKB. No preamble, no markdown. Return plain text only.",
+      '\n\n---\n\n' +
+      FINGERPRINT_CONSTRAINT +
+      "\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity's selectors. 200-300 words. Named addressee if the opportunity has a known director; else \"Selection Committee\". Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}
+
+STYLE_FINGERPRINT:
+${JSON.stringify(ctx.fingerprint, null, 2)}
 
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
@@ -197,6 +229,7 @@ export type MatchRow = {
 export async function draftPackageForMatch(
   row: MatchRow,
   akb: ArtistKnowledgeBase,
+  fingerprint: StyleFingerprint,
   portfolio: PortfolioImage[],
 ): Promise<void> {
   const db = getDb();
@@ -229,16 +262,24 @@ export async function draftPackageForMatch(
     readSkill('cv-format-by-institution.md', DEFAULT_CV_SKILL),
   ]);
 
-  const ctx: DraftCtx = { akb, opp, voiceSkill, proposalSkill, cvSkill, oppRequirementsText };
+  const ctx: DraftCtx = { akb, opp, fingerprint, voiceSkill, proposalSkill, cvSkill, oppRequirementsText };
 
   const artist_statement = await draftMaterial('artist_statement', ctx);
   const project_proposal = await draftMaterial('project_proposal', ctx);
   const cv_formatted = await draftMaterial('cv', ctx);
   const cover_letter = await draftMaterial('cover_letter', ctx);
 
+  // INSERT OR REPLACE so re-drafting the same match overwrites instead of
+  // violating the implicit PK + error on duplicate.
   await db.execute({
     sql: `INSERT INTO drafted_packages (run_match_id, artist_statement, project_proposal, cv_formatted, cover_letter, work_sample_selection_json)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+          VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(run_match_id) DO UPDATE SET
+            artist_statement = excluded.artist_statement,
+            project_proposal = excluded.project_proposal,
+            cv_formatted = excluded.cv_formatted,
+            cover_letter = excluded.cover_letter,
+            work_sample_selection_json = excluded.work_sample_selection_json`,
     args: [
       row.id,
       artist_statement,
@@ -256,6 +297,24 @@ export async function draftPackages(
   userId: number,
 ): Promise<void> {
   const db = getDb();
+
+  // Load StyleFingerprint from runs.style_fingerprint_id — required by the
+  // per-material prompts to constrain visual claims. Without this the Drafter
+  // invents institutional-register framing that contradicts the work.
+  const runRow = (
+    await db.execute({
+      sql: `SELECT style_fingerprint_id FROM runs WHERE id = ?`,
+      args: [runId],
+    })
+  ).rows[0] as unknown as { style_fingerprint_id: number };
+  if (!runRow) throw new Error(`run ${runId} not found`);
+  const fpJson = ((
+    await db.execute({
+      sql: `SELECT json FROM style_fingerprints WHERE id = ?`,
+      args: [runRow.style_fingerprint_id],
+    })
+  ).rows[0] as unknown as { json: string }).json;
+  const fingerprint: StyleFingerprint = JSON.parse(fpJson);
 
   const matchRows = (
     await db.execute({
@@ -289,7 +348,7 @@ export async function draftPackages(
   // Net: 5 concurrent messages.create calls at peak, ~150s for 12 matches × 4 materials.
   const limit = pLimit(5);
   const settled = await Promise.allSettled(
-    matchRows.map((row) => limit(() => draftPackageForMatch(row, akb, portfolio))),
+    matchRows.map((row) => limit(() => draftPackageForMatch(row, akb, fingerprint, portfolio))),
   );
 
   const failures = settled
