@@ -608,42 +608,22 @@ For ANY number we DO show users (deadline, prize, fee), audit precision:
 
 **Root cause:** the timeline was designed as a glanceable shape but the implementation strips all the context that would make the shape meaningful. A timeline that doesn't label its points is decoration, not data.
 
-**Fix (real, not patch — replace the visualization):**
+**Fix (real, not patch — delete the timeline, add sort toggle to existing list):**
 
-Replace the timeline visualization with a SORTED DEADLINE LIST:
+Updated thinking: the Top Opportunities list ALREADY shows the deadline for each one. The timeline is duplicating data already visible — and doing it worse. Don't build a second list; fix the one that exists.
 
-```
-DEADLINES — sorted nearest first
-
-May 31, 2026 (5 weeks)
-Nature Photographer of the Year (NPOTY) 2026 — $27,000 prize, $30 fee
-[click to expand opportunity card]
-
-Jun 30, 2026 (9 weeks)
-International Photography Awards (IPA) 2026 — $10,000 prize, $40 fee
-[click to expand opportunity card]
-
-Oct 13, 2026 (5 months)
-International Landscape Photographer of the Year (ILPOTY) — $5,000 prize, $25 fee
-[click to expand opportunity card]
-
-Oct 15, 2026 (5 months)
-Travel Photographer of the Year (TPOTY) 2026 — $1,370 prize, $25 fee
-[click to expand opportunity card]
-```
-
-Sort key: deadline ASC. Each row is clickable → smooth-scroll to that opportunity's full card on the same page. The list communicates everything the dots tried to + adds the actual information the user needs.
-
-Apply Note 13's number-discipline here too: humanize the date format ("May 31, 2026" not "2026-05-31"), surface time-until-deadline in human units ("5 weeks", "5 months"), round prize amounts.
+1. **Delete the Deadline Timeline panel entirely.** It's redundant decoration.
+2. **Add a sort toggle to the existing Top Opportunities list:** "Sort by: Best fit | Deadline | Prize amount". Default = Best fit (current behavior). User clicks Deadline → list re-sorts ascending. Single source of truth, user can pivot however they want.
+3. Apply Note 13's date discipline to the deadline field: humanize ("Jun 30, 2026 — 9 weeks") instead of `deadline: 2026-06-30`.
 
 **Acceptance:**
-- Dossier page shows a sorted-by-deadline list of every included opportunity, not a dot-on-line visualization.
-- Each row contains: human date, time-until, opportunity name, prize, fee.
-- Each row is clickable → scrolls to that opportunity's full card.
-- A user looking at the panel can answer "what do I need to apply to first" in one second.
+- The Deadline Timeline panel is gone from the dossier.
+- The Top Opportunities list has a sort selector. Toggling between Best fit / Deadline / Prize re-sorts the list.
+- Deadline field on each card reads as a human date with time-until ("Jun 30, 2026 — 9 weeks"), not ISO format.
+- A user can answer "what do I need to apply to first" by clicking Sort by Deadline. No second component needed.
 
-**File(s):** dossier page component, deadline-timeline component (replace or delete).
+**File(s):** dossier page component (delete timeline, add sort toggle), opp-list component, possibly a small client-side state for the sort selection.
 
-**Priority:** high — same as Note 13, ships before §5.2 demo recording.
+**Priority:** high — bundled with Note 13, ships before §5.2 demo recording.
 
 ---
