@@ -568,16 +568,18 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 **Symptom:** the bare "Atelier" header gives a first-time visitor (judge) zero context on what the product is. They have to navigate to the dossier or read the demo banner to figure out it's an AI art director for working artists.
 
-**Fix:** update the header to read **"Atelier | Your Personal Art Director"**. Pipe separator (cleaner than em-dash for chrome). "Personal" warms the institutional "Art Director" framing without diluting it. Matches the SUMMARY.md product positioning ("AI art director for working visual artists") in spirit while staying terse for header use.
+**Fix:** update ONLY the page header to read **"Atelier | Your Personal Art Director"**. Pipe separator (cleaner than em-dash for chrome). "Personal" warms the institutional "Art Director" framing without diluting it.
 
-Apply to:
-1. The header component (`components/header.tsx` or wherever the `<h1>Atelier</h1>` lives)
-2. The document `<title>` tag — `Atelier | Your Personal Art Director` so the browser tab + Google search snippets read consistently
-3. The PDF dossier cover page if it uses the bare "Atelier" wordmark
+**Scope is JUST the header.** Do NOT touch:
+- The browser tab `<title>` metadata
+- The PDF dossier cover wordmark
+- Any other branding surface
 
-**Acceptance:** every page header reads "Atelier | Your Personal Art Director". Browser tab title matches. No instances of bare "Atelier" left in chrome.
+If those need updating later they can be separate notes. This one is header-only.
 
-**Files:** wherever the header tagline lives (likely `app/layout.tsx` or `components/header.tsx`), `app/layout.tsx` for `metadata.title`, possibly `lib/pdf/dossier.tsx` if the cover wordmark needs the tagline too.
+**Acceptance:** the page header on every dashboard route reads "Atelier | Your Personal Art Director". No other surfaces touched.
+
+**Files:** wherever the header tagline lives (likely `components/header.tsx` or `app/layout.tsx`'s `<header>` block).
 
 **Priority:** low — small UI polish. Bundle whenever convenient.
 
