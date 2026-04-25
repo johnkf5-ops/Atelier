@@ -562,6 +562,72 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 30 — Send Rubric per-opp messages SEQUENTIALLY, not all-at-once. Note 29's queued-events pattern risks compaction at scale.
+
+**Where:** `lib/agents/rubric-matcher.ts` — `startRubricSession` currently calls `client.beta.sessions.events.send(sessionId, { events: [setup, ...allOppMessages] })` in one call. All 18 per-opp messages with all their image content blocks land in turn 1's context simultaneously.
+
+**Diagnosed from research + probe:**
+
+1. **Research subagent** (verified against Anthropic docs and SDK types): image content blocks in `user.message` events DO engage vision identically to `messages.create`. No silent downgrade. BUT: at production scale (12 portfolio + 5 recipient × 18 opps ≈ 100+ images at Opus 4.7 ~4784 tokens/image high-res ≈ 350K image tokens), the harness builds a `messages.create` payload from the event log on every turn. Stuffing everything into turn 1 risks blowing the context window OR triggering `agent.thread_context_compacted` events that replace images with text summaries — which produces the exact "reasoning reads as text-only after a few turns" symptom.
+
+2. **Production-scale probe** (`scripts/probe-prod-scale.mjs`): SEQUENTIAL pattern works perfectly. Sent setup message with 8 portfolio image blocks → awaited idle → sent per-opp message with 5 recipient image blocks + "describe what you see BEFORE scoring" instruction → agent returned `"VISION ENGAGED:"` with specific visible details ("Yosemite Half Dome with a swarm of overlaid light-particles", "turtle on a rock and a sleeping polar bear, both isolated against blown-out white negative space"). Specific details NOT in the StyleFingerprint or AKB. Vision genuinely engaged.
+
+The probe's sequential pattern is the documented happy path. Note 29's batched pattern is the anti-pattern flagged in research findings.
+
+**Fix:**
+
+### 30-fix.1 — Restructure `startRubricSession` to send messages sequentially
+
+```typescript
+// CURRENT (Note 29):
+await client.beta.sessions.events.send(sessionId, {
+  events: [setupMessage, ...oppMessages],   // ALL at once
+});
+
+// REPLACE WITH:
+await client.beta.sessions.events.send(sessionId, {
+  events: [setupMessage],   // Setup first
+});
+// Wait for setup to be acknowledged (status_idle), then per-opp loop:
+for (const oppMsg of oppMessages) {
+  await waitForIdle(sessionId);
+  await client.beta.sessions.events.send(sessionId, {
+    events: [oppMsg],   // One per opp
+  });
+}
+// Final wait for last opp's persist_match
+```
+
+The `waitForIdle` helper polls `sessions.retrieve(sessionId)` until status is `idle`. The agent processes setup → describes portfolio (acknowledges seeing it) → goes idle → next message → processes opp 1 (vision over recipient images + scoring) → calls persist_match → idle → next message, etc. Per-opp images only enter context for that opp's scoring turn.
+
+### 30-fix.2 — Add explicit per-opp "describe before score" instruction
+
+Modify `buildRubricOppMessage` to include a one-line instruction:
+
+> *"Before scoring, briefly note 1-2 specific visible details from the cohort images (palette, composition, named visual elements). This is the visual evidence for your fit reasoning. Then score per the persist_match contract below."*
+
+The agent's named visible details get written into `persist_match.reasoning` — providing demonstrable proof in the dossier text that vision engaged. Judges can read the dossier reasoning and see specific visual claims that go beyond StyleFingerprint vocabulary.
+
+### 30-fix.3 — Smoke test for sequential pattern + visible-detail proof
+
+`tests/smoke/rubric-sequential.test.ts`:
+- Mock `client.beta.sessions.events.send` and assert it's called N+1 times (1 setup + N opps), NOT once with all messages bundled
+- Mock `sessions.retrieve` to return idle between calls and assert the loop awaits idle before each subsequent send
+- Assert per-opp message text contains the "describe before score" instruction
+
+### Acceptance for Note 30
+
+- Fresh production run: agent processes opportunities sequentially, vision engages on each opp's recipient images
+- Dossier reasoning text references SPECIFIC visible details that aren't in StyleFingerprint vocabulary (proves vision)
+- Zero `agent.thread_context_compacted` events in the run log
+- Smoke test passes
+
+**Files:** `lib/agents/rubric-matcher.ts` (`startRubricSession` sequential restructure + `buildRubricOppMessage` describe-before-score addition), `tests/smoke/rubric-sequential.test.ts` (new). Probe `scripts/probe-prod-scale.mjs` retained as live diagnostic.
+
+**Priority:** highest. THIS is the actual production-scale unlock. Note 29 was architecturally right (image content blocks > resource mounts) but the queued-events implementation re-introduces the at-scale risk. Sequential sends + describe-before-score together produce demonstrable vision-grounded scoring in the dossier text. Should ship before John triggers the manual demo run.
+
+---
+
 ## Note 29 — `read` tool on mounted files returns text-only at session scale (95 resources). Restructure Rubric to use image content blocks instead of resource mounts (CRITICAL ARCHITECTURE)
 
 **Where:** `lib/agents/rubric-matcher.ts` + `app/api/runs/[id]/start-rubric/route.ts`. Diagnosed via per-bucket vision audit on run 2 after Note 28 fix landed.
