@@ -50,6 +50,34 @@ Code comments and PRE-SUBMIT-check examples that hardcoded "Knopf submits" / "Kn
 
 The README Credits paragraph ("fifteen years inside the visual-arts-submission economy") stays — that's John's biographical fact, not a positioning claim about the product.
 
+### 33-fix.6 — Empty-output floor in voice linters + revise-fallback hardening + max_tokens bump
+
+Caught in the post-Note-33 redraft audit: Epson International Pano Awards 2026 produced a 0-byte project_proposal while the other 5 opps drafted full 1187–1685 char proposals. Three coupled root causes, all real:
+
+1. **Silent empty-output ship-to-dossier.** The terminal-punctuation guard in `checkStatementVoice` / `checkProposalVoice` / `checkCoverLetterVoice` short-circuits on `text.length > 0`, so when the model returns an empty text block (all `max_tokens` budget consumed by adaptive thinking and no prose emitted), every other lint passes vacuously. The empty string ships as a finished material into `drafted_packages`. Fix: explicit `MIN_DRAFT_CHARS = 20` floor at the top of all three voice checks. Empty or near-empty output triggers the existing one-shot revise pass.
+
+2. **Revise-fallback also-empty silent ship.** The three `draftXWithVoiceCheck` functions had `revised.length > 0 ? revised : first` as the fallback, which silently shipped 0-byte `first` when both the first draft AND the revision pass returned empty. Replaced with: if revised meets the floor, return it; else if first meets the floor, return it; else throw. Bubbles the failure up to the caller (`run_events` row written, dossier UI flag, run-status visible) instead of materializing a 0-byte material as if successful.
+
+3. **Budget exhaustion proximate cause.** Adaptive thinking on Opus 4.7 with dense opportunity-page contexts (Epson Pano's 20K-char page text + full AKB JSON + StyleFingerprint JSON) can consume the entire 4000-token budget before emitting prose. Note 26 already bumped `artist_statement` 3000→4000; this is the next ceiling. `MAX_TOKENS_BY_TYPE` bumped to 8000 / 8000 / 6000 (statement / proposal / cover_letter). Adaptive thinking only spends what it needs; prose word targets unchanged.
+
+Floor at 20 chars sits well below the smallest test fixture (36 chars) and well above empty / one-word output. Verified end-to-end via redraft against run 1: Epson Pano now produces a 1492-char proposal (was 0). All 6 opps now have non-empty proposals (1323–1492 char range). Cross-dossier variation healthy: 0.174 / 0.218 / 0.299.
+
+### 33-fix.7 — Drafter prose grounded in actual work samples + Rubric `hurting_image_ids` excluded from selection
+
+Caught in the post-33-fix.6 NANPA package audit. The proposal said "American West, a body of landscape work made between 2010 and the present across the slot canyons of northern Arizona, the high desert of southern Utah, and the rolling agricultural country of the Palouse" — describing ONE body — when the actual submitted set spanned multiple bodies (American West + Pacific waterfalls/tropics + a glass-pebble macro + an altered-reality frame). Worse: the sample selection included id=66 Dutch alley as one of the 12 frames, even though the Rubric explicitly named it as out-of-scope ("non-North-American urban frames... out-of-scope for the continental remit"). Three coupled bugs:
+
+1. **`selectWorkSamples` only knew `supportingIds`.** The Rubric Matcher emits `hurting_image_ids` per opportunity (frames it explicitly flagged as wrong-fit for THIS cohort) but the selector ignored that signal and backfilled even-spaced from the full remainder. Result: NANPA shipped Dutch alley + risk of Lisbon + Sintra in any opp where supporting_ids count < target. Fix: thread `hurting_image_ids` through `MatchRow` + `draftPackageForMatch`, exclude the hurting set from the backfill pool. The Rubric's harsh-truth signal is the product; work-sample selection now honors it on the same axis as included/filtered-out.
+
+2. **Per-image rationale fallback phrase was misleading on multi-body portfolios.** The SAMPLE_RATIONALE_SYSTEM prompt told the LLM to use "alternate from the same body — included for range" as the no-honest-reason fallback. id=66 Dutch alley shipped with that exact text in the prior run despite being from the Global Cityscapes body, not the same body as the NANPA-targeted American West frames. Fix: rewrite to "additional representative work from the artist's portfolio" + match the placeholder in `selectWorkSamples`. Honest on multi-body portfolios.
+
+3. **Drafter had no awareness of the actual submitted samples.** It only saw the AKB and StyleFingerprint, so it wrote about the artist's whole practice. The proposal/statement/cover-letter prose describing a body of work that the submitted images don't actually represent reads as sloppy in the dossier. Fix: render `workSamples` as a numbered per-image bullet list (id, filename, EXIF subject if any, rationale), pass it through `DraftCtx.workSampleSummary`, and inject it into all three prompt user-messages with explicit constraint that the prose MUST be consistent with the actual submitted images — name multiple bodies honestly when samples span them, do not collapse a multi-body submission into a falsely-coherent narrative about one body.
+
+Verified end-to-end via redraft against run 1. NANPA new shape:
+- proposal: "The twelve images submitted are drawn from two ongoing bodies of work, American West landscapes (2010 to present) and Pacific waterfalls and tropics (2012 to present), with a single glass-pebble macro and one altered-reality frame entered in the matching NANPA categories." Names both bodies, names the macro entry, names the altered-reality categorization choice (a harsh-truth move: don't dress up the altered-reality frame as Scapes).
+- statement: "That discipline is what links a slot-canyon beam in Antelope to a Tahoe shoreline at last light to a tide pool of polished glass pebbles on the California coast." Explicitly threads the submitted set.
+- samples: Dutch alley (id=66), Lisbon (id=11), Sintra (id=37) all removed; backfill pulled from the non-hurting remainder.
+- Cross-dossier variation slightly improved: 0.169 / 0.200 / 0.274.
+
 ### Acceptance for Note 33
 
 - All 189 smoke tests green after the cuts.
@@ -59,9 +87,11 @@ The README Credits paragraph ("fifteen years inside the visual-arts-submission e
 - The cap rule still triggers on test fixtures using Antelope Canyon / Delicate Arch / Palouse / Yosemite (universal photo canon retained).
 - Future test: a photographer running through onboarding whose `bodies_of_work` describe Maine coast work gets the cap-rule firing on Acadia / Penobscot / Mount Desert in their drafted statements, even though those names aren't in the universal canon — because `extractAkbLocations` pulls them at runtime.
 
-**Files:** `lib/agents/package-drafter.ts` (114 lines changed), `lib/agents/style-analyst.ts` (1 line), `README.md`, `SUMMARY.md`, `ARCHITECTURE.md`. Tests unchanged. Three commits: drafter de-bias; docs + style-analyst scope; this note.
+**Files:** `lib/agents/package-drafter.ts` (244 lines changed across all 33-fix.* commits), `lib/agents/style-analyst.ts` (1 line), `README.md`, `SUMMARY.md`, `ARCHITECTURE.md`. Tests unchanged.
 
-**Priority:** highest. Caught at submission-readiness audit. Without this fix, judges reading the source would see a one-user-shaped app, not a photographer-shaped product.
+**Commits:** drafter de-bias (33-fix.1–4); docs + style-analyst scope (33-fix.5); empty-output floor + budget bump (33-fix.6); workSamples-grounded prose + hurting-IDs exclusion (33-fix.7); this note.
+
+**Priority:** highest. Caught at submission-readiness audit. Without 33-fix.1–5, judges reading the source would see a one-user-shaped app, not a photographer-shaped product. Without 33-fix.6, the dossier silently shipped 0-byte materials. Without 33-fix.7, the dossier prose described bodies of work the submitted images didn't actually represent and shipped Rubric-flagged wrong-fit images as samples.
 
 ---
 
