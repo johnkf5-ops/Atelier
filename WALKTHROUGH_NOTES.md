@@ -562,6 +562,86 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 29 — `read` tool on mounted files returns text-only at session scale (95 resources). Restructure Rubric to use image content blocks instead of resource mounts (CRITICAL ARCHITECTURE)
+
+**Where:** `lib/agents/rubric-matcher.ts` + `app/api/runs/[id]/start-rubric/route.ts`. Diagnosed via per-bucket vision audit on run 2 after Note 28 fix landed.
+
+**Symptom:** Even after Note 28 fix (Sharp-normalize all uploads), live Rubric session still produces only text-only `"Output could not be decoded as text"` from `read` tool calls on mounted files. Run 2 audit: 0 vision-OK from `read`, 26 failures.
+
+**Diagnosis — session scale matters:**
+
+Per-tool audit of all tool_results in run 2:
+- All 15 `vision-binary` tool_results came from `web_fetch` / `web_search` (Anthropic-side image fetches return multimodal naturally)
+- All 26 `read`-tool tool_results on mounted files returned text-only
+
+But isolated probes WORK with the SAME files:
+- `scripts/probe-real-file.mjs` — 1 mounted file, fresh Rubric agent session → `read` returns multimodal binary
+- `scripts/probe-new-portfolio.mjs` — Note-28-uploaded portfolio file, 1 mounted file → vision succeeds, agent describes 750x1024 photograph
+- `scripts/probe-many-files.mjs` — 21 mounted files → vision still works
+
+The difference is SESSION SCALE. Live Rubric mounts 95 files (12 portfolio + 83 recipient cohort images) and uses a massive Rubric system prompt. At that scale, the `read` tool on mounted files silently switches to text-only mode. Note 28's Sharp normalization is necessary (file IS vision-readable in isolation) but does not address this Anthropic-side scale ceiling.
+
+**Conclusion:** mounting many files as resources + reading them through the `read` tool is not a viable production pattern. Need to bypass the `read`-tool path entirely.
+
+**Two architectural fix paths, both probe-validated:**
+
+### Option A — Per-opportunity sub-sessions
+
+Restructure Rubric into N sessions, one per opportunity. Each session mounts just that opportunity's 3-5 recipient images + the user's portfolio (~17 files). Well under the failure threshold (20+ works, 95 doesn't).
+
+**Pros:** keeps the `read`-tool flow that's already proven in probes; no agent prompt rewrite. Each session is small.
+**Cons:** N start-rubric calls + N polling loops on the orchestrator side. Cost scales: each session has its own setup + system-prompt overhead. 12 sessions ≈ 12× the per-session cost. Operational complexity (managing 12 concurrent sessions).
+
+### Option B — Image content blocks in user.message (RECOMMENDED)
+
+Move images out of `resources` and into `user.message.content` blocks. Each opportunity scoring fires a user.message with image content blocks for THAT opp's cohort + portfolio. Agent reads images naturally as multimodal context — no `read` tool involvement, no resource-mount scale ceiling.
+
+```typescript
+// Per opportunity:
+await client.beta.sessions.events.send(sessionId, {
+  events: [{
+    type: 'user.message',
+    content: [
+      ...recipientImages.map(fid => ({ type: 'image', source: { type: 'file', file_id: fid } })),
+      ...portfolioImages.map(fid => ({ type: 'image', source: { type: 'file', file_id: fid } })),
+      { type: 'text', text: `Score the artist's portfolio against ${opp.name}'s cohort recipients shown above. ...` },
+    ],
+  }],
+});
+```
+
+**Pros:** single session (cheap setup), images naturally multimodal (proven in `probe-vision.mjs` Path 2), no `read` tool failures. Vision works at any image count per message because it's the standard multimodal pattern, not the resource-mount pattern.
+**Cons:** total context size grows with number of images per message. Need to send opportunity-by-opportunity rather than all-at-once to keep each turn under context limits.
+
+**Recommendation: Option B.** It bypasses the bug, matches Anthropic's documented multimodal pattern, and is operationally simpler than 12 sub-sessions.
+
+### 29-fix.1 — Restructure `start-rubric` + Rubric agent flow
+
+1. `start-rubric` no longer mounts files as session resources. Files API uploads still happen (we need file_ids), but they're stored for use in user.message content blocks, not in `sessions.create({resources})`.
+2. Initial user.message at session start includes ARTIST_AKB + STYLE_FINGERPRINT + the LIST OF OPPORTUNITIES (names + URLs + recipient names). Tells the agent: "you will be sent each opportunity's images one at a time. Score each as you go."
+3. Per-opportunity loop on the orchestrator side: send a user.message with image content blocks (recipient images for THAT opp + key portfolio images), wait for `persist_match` custom_tool_use, advance to next opportunity.
+4. Remove the entire `read`-tool flow from the Rubric prompt. No more "/mnt/session/uploads/<file_id>" path references. Vision happens in the message context.
+
+### 29-fix.2 — Verification probe
+
+Extend `scripts/probe-vision.mjs` Path 2 with a multi-image variant that mimics the per-opportunity scoring shape (5 recipient images + 5 portfolio images + a scoring task), confirms agent describes images AND produces a structured score.
+
+### 29-fix.3 — Smoke test
+
+`tests/smoke/rubric-multimodal.test.ts` — asserts `start-rubric` does NOT pass `resources` to `sessions.create` (catches a future regression to the failing pattern). Asserts the per-opportunity user.message contains image content blocks with `type: 'image'` and `source.type: 'file'`. Mocks Anthropic at module boundary.
+
+### Acceptance for Note 29
+
+- Fresh Rubric run on prod produces 6+ included opportunities with scoring reasoning that references actual visible image content (palette, composition, subject specifics) — not just StyleFingerprint vocabulary.
+- DB audit: zero `read`-tool tool_results in `run_events`. All vision happens via the user.message multimodal pipeline.
+- Probe and smoke test pass.
+
+**Files:** `lib/agents/rubric-matcher.ts` (new per-opportunity scoring loop), `app/api/runs/[id]/start-rubric/route.ts` (drop resources, store file_ids for later use), the orchestrator that sends per-opportunity messages, `tests/smoke/rubric-multimodal.test.ts` (new). All probe scripts retained.
+
+**Priority:** highest. THIS is the actual unlock for vision-based scoring. Notes 27 and 28 were necessary preconditions but not sufficient. Until 29 ships, every run continues producing text-only blind scoring with the StyleFingerprint as the entire signal.
+
+---
+
 ## Note 28 — Portfolio files uploaded RAW from Vercel Blob fail Anthropic vision; recipient files (Sharp-normalized) succeed (THE actual unlock)
 
 **Where:** `app/api/runs/[id]/start-rubric/route.ts` portfolio upload path. Diagnosed via `scripts/probe-portfolio.mjs` after Note 27 mount fix landed.
