@@ -9,11 +9,29 @@ type Aggressiveness = 'conservative' | 'standard' | 'wide';
 
 const AGGRESSIVENESS: Record<
   Aggressiveness,
-  { label: string; count: number; sub: string }
+  { label: string; count: number; sub: string; time: string; cost: string }
 > = {
-  conservative: { label: 'Conservative', count: 15, sub: '~15 opportunities — tight slate' },
-  standard: { label: 'Standard', count: 25, sub: '~25 opportunities — recommended' },
-  wide: { label: 'Wide net', count: 40, sub: '~40 opportunities — longer tail to triage' },
+  conservative: {
+    label: 'Conservative',
+    count: 15,
+    sub: '~15 opportunities — tight slate',
+    time: '~20–30 min',
+    cost: '~$10–15 in API calls',
+  },
+  standard: {
+    label: 'Standard',
+    count: 25,
+    sub: '~25 opportunities — recommended',
+    time: '~30–45 min',
+    cost: '~$20–25 in API calls',
+  },
+  wide: {
+    label: 'Wide net',
+    count: 40,
+    sub: '~40 opportunities — longer tail to triage',
+    time: '~60–90 min',
+    cost: '~$40–60 in API calls',
+  },
 };
 
 export default function NewRunClient() {
@@ -57,7 +75,7 @@ export default function NewRunClient() {
                 key={k}
                 type="button"
                 onClick={() => setAggressiveness(k)}
-                className={`text-left rounded-lg border p-3 transition ${
+                className={`text-left rounded-lg border p-3 transition space-y-1.5 ${
                   selected
                     ? 'border-neutral-300 bg-neutral-100 text-neutral-900'
                     : 'border-neutral-800 bg-neutral-950 text-neutral-300 hover:border-neutral-700'
@@ -65,9 +83,17 @@ export default function NewRunClient() {
               >
                 <div className="text-sm font-medium">{opt.label}</div>
                 <div
-                  className={`text-xs mt-0.5 ${selected ? 'text-neutral-700' : 'text-neutral-500'}`}
+                  className={`text-xs ${selected ? 'text-neutral-700' : 'text-neutral-500'}`}
                 >
                   {opt.sub}
+                </div>
+                <div
+                  className={`text-xs pt-1 border-t ${
+                    selected ? 'border-neutral-300 text-neutral-700' : 'border-neutral-800 text-neutral-400'
+                  }`}
+                >
+                  <div>{opt.time}</div>
+                  <div>{opt.cost}</div>
                 </div>
               </button>
             );
@@ -75,7 +101,9 @@ export default function NewRunClient() {
         </div>
         <p className="text-xs text-neutral-500">
           Sets how wide a slate Atelier will assemble. Standard fits most artists; choose Wide net
-          if you have time to triage more options.
+          if you have time to triage more options. Estimates based on actual run timing — your run
+          may finish faster or slower depending on how many recipients each opportunity has and
+          how the model paces its work.
         </p>
       </div>
 
@@ -90,7 +118,7 @@ export default function NewRunClient() {
       </Button>
       {error && <p className="text-sm text-rose-400">{error}</p>}
       <p className="text-xs text-neutral-500">
-        A typical run takes 20–30 minutes. You can close this tab and come back.
+        Runs take 20–90 minutes depending on Aggressiveness. You can close this tab and come back.
       </p>
 
       {confirming && (
@@ -110,7 +138,10 @@ export default function NewRunClient() {
                 This is a single-tenant demo running on the builder&rsquo;s API key for the{' '}
                 <span className="text-neutral-100">Built with Opus 4.7</span> hackathon.
                 Each run costs roughly{' '}
-                <span className="text-neutral-100 font-medium">$3–5 in Anthropic API calls</span>.
+                <span className="text-neutral-100 font-medium">
+                  $10–60 in Anthropic API calls
+                </span>{' '}
+                depending on the Aggressiveness setting you chose.
               </p>
               <p>
                 Please don&rsquo;t start more than one run unless you&rsquo;re testing

@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'atelier:demo-banner-dismissed-v1';
+// WALKTHROUGH Note 18: bumped v1 → v2 so users who dismissed the original
+// (incorrect "$3-5 per run") banner see the corrected $10-60 cost claim.
+const STORAGE_KEY = 'atelier:demo-banner-dismissed-v2';
 const REPO_URL = 'https://github.com/johnkf5-ops/Atelier';
 
 /**
@@ -37,7 +39,9 @@ export default function DemoBanner() {
         <p className="leading-relaxed">
           <span className="font-medium text-amber-200">Demo</span>
           <span className="mx-2 text-amber-700">•</span>
-          Built with Opus 4.7 hackathon — running on the builder&rsquo;s portfolio + API key.{' '}
+          Built with Opus 4.7 hackathon — running on the builder&rsquo;s portfolio + API key.
+          Each run costs ~$10–60 in Anthropic API calls depending on Aggressiveness; please
+          don&rsquo;t trigger more than one unless you&rsquo;re testing something specific.{' '}
           <a
             href={REPO_URL}
             target="_blank"

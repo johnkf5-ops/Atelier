@@ -364,6 +364,18 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 18 — Aggressiveness time + cost estimates + Note 16 cost-claim correction
+
+The Note 17c Aggressiveness selector shipped without time/cost numbers, so users had no way to know what they were committing to. Worse, the Note 16 modal copy advertised "~$3–5 per run" — actual cost is $10–60 depending on the slate size, off by an order of magnitude.
+
+**Per-card estimates on `/runs/new`.** Each Aggressiveness card now renders a divider-separated time + cost block under its label and sub-line: Conservative `~20–30 min` / `~$10–15 in API calls`, Standard `~30–45 min` / `~$20–25`, Wide net `~60–90 min` / `~$40–60`. Below the three cards: a fine-print sentence explaining that estimates are based on actual run timing and may vary with recipient count and model pacing. The "A typical run takes 20–30 minutes" caption under the Start button updated to "Runs take 20–90 minutes depending on Aggressiveness" so it stops contradicting the per-card numbers.
+
+**Modal cost copy corrected.** `app/(dashboard)/runs/new/new-run-client.tsx` confirmation modal: `$3–5 in Anthropic API calls` → `$10–60 in Anthropic API calls depending on the Aggressiveness setting you chose`.
+
+**Demo banner cost copy + storage-key bump.** `app/_components/demo-banner.tsx` now reads "Each run costs ~$10–60 in Anthropic API calls depending on Aggressiveness; please don't trigger more than one unless you're testing something specific." `STORAGE_KEY` bumped from `atelier:demo-banner-dismissed-v1` → `v2` so users who already dismissed the prior (silent-on-cost) banner see the corrected version on next page load — the whole point of the correction is that users actually read it.
+
+`tsc --noEmit` clean, 78/78 smoke tests pass, `check:copy` clean.
+
 ### Notes 4 + 5 — interview identity schema (artist_name primacy + structured home_base + conditional citizenship)
 
 The interview was treating legal_name as the primary identity slot and asking citizenship + country in back-to-back questions, both reading as broken software to a non-academic artist. Note 4 + 5 work was partially landed (gap-detection ordering, DEFAULT_EQUALS suppression, citizenship suppression, interview prompt phrasing, drafter NAME_PRIMACY_CONSTRAINT) — but the AKB schema still had `artist_name: optional` / `legal_name: required`, and the PDF cover byline still printed `legal_name`. This batch ships the structural flip.
