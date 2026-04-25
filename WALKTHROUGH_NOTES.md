@@ -538,6 +538,58 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 15 — Dossier missing apply links + material explainers + soft opportunity cap
+
+Three distinct dossier UX gaps surfaced together:
+
+### 15a — No "Apply" links on opportunity cards (BUG, demo-blocking)
+
+**Where:** `/dossier/[runId]` Top Opportunities cards.
+
+**Symptom:** every opportunity has an authoritative URL stored in `opportunities.url` and fetched into the dossier component, but it's never rendered as a clickable link. Users can read the dossier reasoning + drafted package but cannot get from the dossier to the actual application page in one click. The whole product premise is "we tell you what to apply to" — without an apply link, users have to copy-paste the opportunity name into Google.
+
+**Fix:** add an "Apply →" button on every opportunity card. `target="_blank"`, `rel="noopener noreferrer"`. Visually prominent — same weight as the tier label. Filtered-out opportunities also get the link (so the user can read the institution's page if they want to verify the "wrong room" call themselves).
+
+**Acceptance:** every opportunity card on the dossier has a one-click "Apply" button linking to the real URL in a new tab. Same for filtered-outs.
+
+### 15b — No explainers on what each drafted material IS or how to use it (UX gap)
+
+**Where:** drafted package view per opportunity (artist statement, project proposal, CV, cover letter, work samples).
+
+**Symptom:** the page shows four blocks of generated text labeled "Artist Statement / Project Proposal / CV / Cover Letter" with no copy explaining what each one is for, where it gets pasted in the actual application, or how the user is meant to use it. A non-academic user (the prototypical artist) does not know that the artist statement goes in the "Statement of Practice" form field, that the CV goes as an attached PDF, that the cover letter goes in a separate field on most applications, etc.
+
+**Fix:** above each material block, render a short explainer (1–2 sentences) covering:
+- **Artist Statement**: "Used to describe your practice in your own voice. Most applications ask for 250–500 words. Paste into the 'Statement of Practice' or 'Artist Statement' field. This draft is grounded in your StyleFingerprint and AKB — edit to taste before submitting."
+- **Project Proposal**: "Used when the opportunity asks 'what would you do with this funding/residency.' Paste into the 'Project Description' or 'Proposal' field. Edit the dates/locations to match what you can actually commit to."
+- **CV**: "Used as your formal exhibition + publication record. Most applications either accept this as a paste OR ask for a PDF upload — use the Download .docx button below for that. Already formatted to the institution's expected style."
+- **Cover Letter**: "Used as the email body or letter-style intro. Most applications either include a 'cover letter' field or expect this as the body of your submission email. Lead with this."
+- **Work Samples**: "These are the portfolio images Atelier suggests submitting for THIS opportunity, with the per-image rationale. Most applications limit to 10–20 images — these are the ones that best fit this institution's working rubric."
+
+Plus a one-liner above the whole package: "These drafts are starting points. Edit before submitting — your voice matters. Atelier's job is to remove the writing wall, not write under your name."
+
+**Acceptance:** a non-technical artist opens a drafted package and immediately understands what each block is for, where to paste it, and that they're expected to edit before sending.
+
+### 15c — Hard-soft cap of 12–20 opportunities is invisible + low (consider raising)
+
+**Where:** `lib/agents/opportunity-scout.ts:126` — Scout's system prompt instructs "12–20 distinct opportunities total."
+
+**Symptom:** Scout has been returning ~12 every run because the prompt presents 12 as the floor of an acceptable range. For a 20-year-career artist with curatorial credentials and international representation, 12 opportunities is thin. Real working artists can manage 30–50 opportunities in a 6-month application window if the targeting is good.
+
+**Fix:**
+1. Bump the prompt range to "20–30 distinct opportunities total" (could go higher but Scout's web_search + persist budget caps practical throughput).
+2. Make the range USER-CONFIGURABLE via the `/runs/new` preflight panel — add a "Aggressiveness" selector (Conservative: 15 opps / Standard: 25 / Wide net: 40) that maps to a `target_opportunity_count` in `runs.config_json`. Scout's prompt reads it dynamically.
+3. The dossier UI already has Note 14's sort toggle, so increased volume doesn't drown the user — they can always sort by Best fit and ignore the long tail.
+
+**Acceptance:** default fresh run produces 20–30 opportunities. User can opt for fewer or more via the preflight panel. No hard code limit anywhere — the cap is the agent's prompt-level instruction, configurable by the user.
+
+---
+
+**Priority:** 15a is demo-blocking (no apply links is product malpractice for an opportunity-finder product). 15b is high — without explainers the dossier reads as unfinished. 15c is medium — the current 12 is workable for the demo but should ship before any real user uses the product.
+
+**Files:** `app/(dashboard)/dossier/[runId]/page.tsx` and child components for 15a + 15b. `lib/agents/opportunity-scout.ts` (prompt) + `app/(dashboard)/runs/new/page.tsx` + `lib/schemas/run-config.ts` (or wherever config lives) for 15c.
+
+---
+
 ## Note 13 — UI-language simplification mandate: drop internal scores + technical jargon from user-facing surfaces
 
 **Where:** dossier opportunity list (primary trigger — verified on `/dossier/2`), and across the app generally.
