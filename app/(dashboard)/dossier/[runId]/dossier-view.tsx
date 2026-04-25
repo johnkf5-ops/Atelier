@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { fitTier, humanizeDeadline, daysUntilDeadline, humanizeMoney } from '@/lib/ui/copy';
 
 export type WorkSample = {
   portfolio_image_id: number;
@@ -41,6 +42,25 @@ export type DossierFilteredOut = {
 };
 
 type Tab = 'statement' | 'proposal' | 'cv' | 'cover' | 'samples' | 'reasoning';
+type SortKey = 'fit' | 'deadline' | 'prize';
+
+const SORT_LABELS: Record<SortKey, string> = {
+  fit: 'Best fit',
+  deadline: 'Deadline',
+  prize: 'Prize amount',
+};
+
+function sortMatches(matches: DossierMatch[], key: SortKey): DossierMatch[] {
+  const sorted = [...matches];
+  if (key === 'fit') {
+    sorted.sort((a, b) => (b.composite_score ?? 0) - (a.composite_score ?? 0));
+  } else if (key === 'deadline') {
+    sorted.sort((a, b) => daysUntilDeadline(a.deadline) - daysUntilDeadline(b.deadline));
+  } else {
+    sorted.sort((a, b) => (b.amount_usd ?? 0) - (a.amount_usd ?? 0));
+  }
+  return sorted;
+}
 
 export default function DossierView({
   runId,
@@ -57,7 +77,10 @@ export default function DossierView({
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [tabByMatch, setTabByMatch] = useState<Record<number, Tab>>({});
+  const [whyOpen, setWhyOpen] = useState<Record<number, boolean>>({});
   const [filteredOpen, setFilteredOpen] = useState(false);
+  const [sortKey, setSortKey] = useState<SortKey>('fit');
+  const sorted = useMemo(() => sortMatches(matches, sortKey), [matches, sortKey]);
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 py-4">
@@ -86,14 +109,31 @@ export default function DossierView({
         </section>
       )}
 
-      {/* Deadline strip */}
-      {matches.length > 0 && <DeadlineStrip matches={matches} />}
-
       {/* Top-N matches */}
       <section className="space-y-4">
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h2 className="font-serif text-2xl">Top opportunities ({matches.length})</h2>
-          <div className="text-xs text-neutral-500">ordered by composite score</div>
+          {matches.length > 1 && (
+            <div className="flex items-center gap-2 text-xs text-neutral-400">
+              <span>Sort by:</span>
+              <div className="flex gap-1 rounded border border-neutral-800 overflow-hidden">
+                {(['fit', 'deadline', 'prize'] as const).map((k) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setSortKey(k)}
+                    className={`px-2 py-1 ${
+                      sortKey === k
+                        ? 'bg-neutral-200 text-neutral-900'
+                        : 'text-neutral-400 hover:text-neutral-200'
+                    }`}
+                  >
+                    {SORT_LABELS[k]}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
         {matches.length === 0 ? (
           <div className="rounded border border-neutral-800 bg-neutral-950 p-6 text-sm text-neutral-400">
@@ -101,8 +141,10 @@ export default function DossierView({
           </div>
         ) : (
           <div className="space-y-3">
-            {matches.map((m, i) => {
+            {sorted.map((m, i) => {
               const isOpen = expanded === m.id;
+              const tier = fitTier(m.composite_score ?? m.fit_score);
+              const whyExpanded = !!whyOpen[m.id];
               return (
                 <article
                   key={m.id}
@@ -126,18 +168,49 @@ export default function DossierView({
                         <h3 className="font-medium text-neutral-100">{m.name}</h3>
                       </div>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-400 mt-1">
-                        <span>
+                        <span className="capitalize">
                           <strong>{m.prestige_tier}</strong> {m.award_type}
                         </span>
-                        {m.deadline && <span>deadline: {m.deadline}</span>}
-                        {m.award_summary && <span className="truncate max-w-xs">{m.award_summary}</span>}
-                        {m.entry_fee_usd != null && m.entry_fee_usd > 0 && <span>fee: ${m.entry_fee_usd}</span>}
+                        {m.deadline && <span>{humanizeDeadline(m.deadline)}</span>}
+                        {m.amount_usd != null && m.amount_usd > 0 && (
+                          <span>prize {humanizeMoney(m.amount_usd)}</span>
+                        )}
+                        {m.entry_fee_usd != null && m.entry_fee_usd > 0 && (
+                          <span>fee {humanizeMoney(m.entry_fee_usd)}</span>
+                        )}
                       </div>
                     </div>
-                    <div className="flex-shrink-0 text-right">
-                      <ScoreBadge composite={m.composite_score ?? 0} fit={m.fit_score} />
+                    <div className="flex-shrink-0">
+                      <span
+                        className={`inline-block px-2 py-1 text-[11px] uppercase tracking-wide rounded border ${tier.className}`}
+                      >
+                        {tier.label}
+                      </span>
                     </div>
                   </button>
+
+                  {/* "Why this fit?" disclosure on the COLLAPSED card so users
+                      can read the Rubric reasoning without expanding into the
+                      full materials view. WALKTHROUGH Note 13. */}
+                  {!isOpen && (
+                    <div className="px-4 pb-3 -mt-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setWhyOpen((c) => ({ ...c, [m.id]: !whyExpanded }));
+                        }}
+                        className="text-xs text-neutral-500 hover:text-neutral-300"
+                      >
+                        {whyExpanded ? '− Why this fit?' : '+ Why this fit?'}
+                      </button>
+                      {whyExpanded && (
+                        <p className="mt-2 text-sm text-neutral-300 leading-relaxed border-l-2 border-neutral-800 pl-3">
+                          {m.reasoning}
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {isOpen && (
                     <div className="border-t border-neutral-800 px-4 py-4 space-y-4">
@@ -149,8 +222,12 @@ export default function DossierView({
                           { key: 'proposal', label: 'Proposal', disabled: !m.project_proposal },
                           { key: 'cv', label: 'CV', disabled: !m.cv_formatted },
                           { key: 'cover', label: 'Cover', disabled: !m.cover_letter },
-                          { key: 'samples', label: `Samples (${m.work_samples.length})`, disabled: m.work_samples.length === 0 },
-                          { key: 'reasoning', label: 'Why this match' },
+                          {
+                            key: 'samples',
+                            label: `Samples (${m.work_samples.length})`,
+                            disabled: m.work_samples.length === 0,
+                          },
+                          { key: 'reasoning', label: 'Why this fit' },
                         ]}
                       />
                       <MatchBody match={m} tab={tabByMatch[m.id] ?? 'statement'} runId={runId} />
@@ -163,7 +240,7 @@ export default function DossierView({
         )}
       </section>
 
-      {/* Filtered-out */}
+      {/* Filtered-out — reframed as "we considered these but they're not your room" */}
       {filteredOut.length > 0 && (
         <section className="space-y-3">
           <button
@@ -171,9 +248,11 @@ export default function DossierView({
             className="w-full text-left flex items-center justify-between rounded border border-neutral-800 bg-neutral-950 px-4 py-3 hover:bg-neutral-900"
           >
             <div>
-              <h2 className="font-serif text-lg">Filtered out ({filteredOut.length})</h2>
+              <h2 className="font-serif text-lg">
+                We considered these but they&apos;re not your room ({filteredOut.length})
+              </h2>
               <div className="text-xs text-neutral-500 mt-1">
-                Why you shouldn&apos;t spend an entry fee on these.
+                Why your entry fee is better spent elsewhere.
               </div>
             </div>
             <span className="text-sm text-neutral-400">{filteredOpen ? '−' : '+'}</span>
@@ -182,6 +261,7 @@ export default function DossierView({
             <div className="space-y-2 pl-2">
               {filteredOut.map((f, i) => (
                 <div key={i} className="text-sm text-neutral-300 border-l-2 border-neutral-800 pl-3 py-1">
+                  <span className="text-neutral-500 mr-2">{f.name}:</span>
                   {f.blurb}
                 </div>
               ))}
@@ -199,16 +279,6 @@ function Prose({ children }: { children: string }) {
       {children.split(/\n{2,}/).map((p, i) => (
         <p key={i}>{p}</p>
       ))}
-    </div>
-  );
-}
-
-function ScoreBadge({ composite, fit }: { composite: number; fit: number }) {
-  const compositeColor = composite >= 0.5 ? 'text-emerald-400' : composite >= 0.3 ? 'text-amber-400' : 'text-rose-400';
-  return (
-    <div className="flex flex-col items-end">
-      <span className={`font-mono text-lg ${compositeColor}`}>{composite.toFixed(2)}</span>
-      <span className="text-[10px] text-neutral-500 font-mono">fit {fit.toFixed(2)}</span>
     </div>
   );
 }
@@ -248,8 +318,10 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
   if (tab === 'reasoning') {
     return (
       <div className="space-y-2">
-        <h4 className="text-xs uppercase tracking-wide text-neutral-500">Rubric Matcher reasoning</h4>
-        <div className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">{match.reasoning}</div>
+        <h4 className="text-xs uppercase tracking-wide text-neutral-500">Why this fit</h4>
+        <div className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">
+          {match.reasoning}
+        </div>
       </div>
     );
   }
@@ -323,50 +395,5 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
         {text}
       </div>
     </div>
-  );
-}
-
-function DeadlineStrip({ matches }: { matches: DossierMatch[] }) {
-  const withDeadlines = matches.filter((m) => m.deadline).map((m) => ({
-    name: m.name,
-    date: new Date(m.deadline!),
-    url: m.url,
-  }));
-  if (withDeadlines.length === 0) return null;
-  const now = new Date();
-  const maxDate = new Date(now);
-  maxDate.setMonth(maxDate.getMonth() + 7);
-
-  const totalDays = (maxDate.getTime() - now.getTime()) / 86_400_000;
-
-  return (
-    <section className="space-y-2">
-      <h2 className="text-xs uppercase tracking-widest text-neutral-500">Deadline timeline</h2>
-      <div className="relative h-16 rounded border border-neutral-800 bg-neutral-950">
-        <div className="absolute inset-y-0 left-4 right-4">
-          {withDeadlines.map((d, i) => {
-            const days = (d.date.getTime() - now.getTime()) / 86_400_000;
-            const pct = Math.max(0, Math.min(100, (days / totalDays) * 100));
-            return (
-              <div
-                key={i}
-                className="absolute top-2 -translate-x-1/2 group"
-                style={{ left: `${pct}%` }}
-                title={`${d.name} — ${d.date.toISOString().slice(0, 10)}`}
-              >
-                <div className="w-2 h-2 rounded-full bg-emerald-400" />
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-full text-[10px] text-neutral-500 whitespace-nowrap opacity-0 group-hover:opacity-100 transition">
-                  {d.name.slice(0, 28)} · {d.date.toISOString().slice(0, 10)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-        <div className="absolute inset-x-4 bottom-1 flex justify-between text-[10px] text-neutral-600">
-          <span>today</span>
-          <span>+6 mo</span>
-        </div>
-      </div>
-    </section>
   );
 }
