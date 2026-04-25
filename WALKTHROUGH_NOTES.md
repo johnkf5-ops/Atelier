@@ -562,6 +562,77 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 22 — CV is mostly correct but inconsistent across opportunities + ILPOTY CV missing curatorial section + bigger architectural question
+
+**Where:** every drafted `cv_formatted` in `drafted_packages.cv_formatted`.
+
+**Honest baseline (this is much less broken than statements/proposals):** CVs are structurally correct — institutional reverse-chronological format, accurate content per AKB v19 (Mondoir Gallery solo 2025, John Knopf Gallery programs 2012-2017, Emmy nomination 2018, NatGeo first-cohort NFT 2023, TIME TIMEPieces 2022, FOTO founder, Mike Yamashita co-curation). Most CVs include the load-bearing CURATORIAL AND ORGANIZATIONAL section.
+
+**Real problems (in order of severity):**
+
+**22a — ILPOTY CV is missing the CURATORIAL AND ORGANIZATIONAL section entirely** (123 words vs 183-206 in other CVs). The model trimmed John's FOTO founder + curator credentials for ILPOTY because it decided ILPOTY is "just" a competition and curatorial work wasn't relevant. Wrong judgment — curatorial credentials strengthen ANY application. They are evidence of community standing and editorial judgment that panels read positively regardless of opportunity type.
+
+**22b — Section names drift across CVs.** "AWARDS AND HONORS" in some, "AWARDS" in others. Same content, inconsistent labels. Should pick one canonical label per section and use it everywhere.
+
+**22c — Minor formatting variations across CVs.** Ordering of REPRESENTATION vs CURATORIAL section differs. Em-dashes vs commas in publication entries differ. Section content is the same; presentation drifts.
+
+**22d — Em-dash usage in CVs is acceptable here**, unlike statements/proposals. CV em-dashes are INSTITUTIONAL FIELD SEPARATORS ("National Geographic — first-cohort NFT drop"), the convention NEA, MacDowell, and Aperture all use. The Note 20/21 zero-em-dash rule is for PROSE; CVs are different. The model should still apply the rule consistently — pick one separator style (em-dash OR comma) and use it everywhere across the dossier.
+
+**The bigger question (architectural, post-hackathon):** Should every opportunity get a slightly-tweaked CV, or should there be ONE master CV generated once per dossier? Most institutions expect a single PDF upload — they don't expect each application to have a custom-rewritten CV. Generating 10 slightly-different CVs is API tokens spent for no real benefit, AND introduces the consistency drift documented in 22b/22c. The honest model: one master CV per dossier, with optional per-opp TRIM instructions ("for IPA's 2,000-character limit, drop pre-2018 entries").
+
+**Fix — three parts:**
+
+### 22-fix.1 — ALWAYS include CURATORIAL AND ORGANIZATIONAL section (no trimming)
+
+Update the CV system prompt to explicitly require this section in every CV, regardless of opportunity type. Curatorial work strengthens every application; the model should never trim it. If `akb.curatorial_and_organizational` is non-empty, the section MUST appear in the rendered CV.
+
+### 22-fix.2 — Canonicalize section names + format
+
+Hardcode the section labels and order in the CV template:
+
+```
+NAME (top, large)
+b. YEAR | Lives and works in CITY, STATE, COUNTRY [single-line bio]
+
+EDUCATION
+
+SOLO EXHIBITIONS
+
+GROUP EXHIBITIONS (selected)
+
+PUBLICATIONS (selected)
+
+AWARDS AND HONORS
+
+COLLECTIONS
+
+REPRESENTATION
+
+CURATORIAL AND ORGANIZATIONAL
+```
+
+Always in this order. Always these labels. Skip a section ONLY if the corresponding AKB field is empty (no inventing labels). Within each section, use one consistent separator (recommendation: em-dash for venue/location separation since that's CV convention, comma for sub-attributes within a row).
+
+The DEFAULT_CV_SKILL inline fallback in `package-drafter.ts` already documents this format roughly — extend it to be more prescriptive about section names + ordering, and tighten the prompt to follow it without drift.
+
+### 22-fix.3 — (POST-HACKATHON) Collapse to one master CV per dossier
+
+Move CV generation OUT of the per-opportunity drafting loop. Generate ONE CV per run (in the orchestrator phase, after AKB is finalized). Store as `dossiers.master_cv` (new column). Each opportunity package references the master CV with optional per-opp NOTES (e.g., "abbreviated for IPA 2,000-char limit"). Saves ~9 messages.create calls per run × ~$0.50 each = ~$4.50/run cost reduction. AND eliminates the consistency-drift class of bugs by design.
+
+Don't ship 22-fix.3 for the hackathon — it requires schema changes and dossier UI restructuring. Ship 22-fix.1 + 22-fix.2 only. 22-fix.3 documented as post-submission scope.
+
+### Acceptance for Note 22 (hackathon scope = 22-fix.1 + 22-fix.2 only)
+
+- Every CV in a fresh run includes the CURATORIAL AND ORGANIZATIONAL section if `akb.curatorial_and_organizational` is non-empty. Verified via smoke test that asserts the section header is present.
+- Section names match the canonical list above across every CV in a run. Smoke test that asserts CV text contains the expected section labels in expected order.
+- No section drift (no "AWARDS" in one CV and "AWARDS AND HONORS" in another for the same dossier).
+
+**Files:** `lib/agents/package-drafter.ts` (CV system prompt + DEFAULT_CV_SKILL fallback), `tests/smoke/drafter-cv-shape.test.ts` (new).
+
+**Priority:** medium — much less broken than statements/proposals. Should ship with the Notes 20+21 batch since it's a small additional change to the same file. NOT a demo blocker, but worth fixing alongside.
+
+---
+
 ## Note 21 — Project proposals are submission letters, not project proposals — and the wrong shape for grant/fellowship/residency types
 
 **Where:** every drafted `project_proposal` in `drafted_packages.project_proposal`, surfaced on the dossier per opportunity.
