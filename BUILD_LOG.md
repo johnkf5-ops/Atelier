@@ -334,3 +334,15 @@ Smoke test `tests/smoke/copy.test.ts` locks the tier boundaries + date humanisat
 
 Layer-2 app-wide vocabulary sweep + Layer-3 CI grep guard left for future scope — out of bounds for the demo-blocker batch. The dossier (the surface a judge sees) is now clean.
 
+### Notes 4 + 5 — interview schema (artist_name primary + home_base structured + citizenship conditional)
+
+**Commit:** `4e53567`. Pushed.
+
+**Note 4 — `artist_name` primacy.** Schema adds `identity.artist_name` (optional) + `identity.legal_name_matches_artist_name` (boolean, default true). New `migrateArtistName()` in `lib/akb/persistence.ts` runs on every load — pure function that fills `artist_name` from `legal_name` when missing and sets the marker `true`, so every existing AKB keeps working without a DB write. `/review` gets a new "Artist name" field at the top of Identity with a "My legal name matches my artist name" checkbox; unchecking reveals the legal_name field. Drafter gets a new `NAME_PRIMACY_CONSTRAINT` prepended to every public-facing prompt (statement, proposal, cover) — bylines + signatures MUST use `identity.artist_name`; `legal_name` is admin/contract only.
+
+**Note 5 — home_base structured + citizenship conditional.** Interview `SYSTEM_PROMPT` now includes exact question-shape instructions: `identity.home_base` is asked ONCE as *"Where do you live? Please give city, state or region (if applicable), and country in one reply"*; `identity.citizenship` only fires when `home_base.country` is empty OR the user explicitly opts out. New `DEFAULT_EQUALS` table in `gaps.ts` plus a `citizenshipSuppressed()` rule kill the redundancy ("What's your legal name?" right after "What's your artist name?" or "What's your citizenship?" right after "Where do you live?"). When the user *does* differ, the interview re-asks correctly.
+
+Smoke test `tests/smoke/interview-schema.test.ts` covers gap ordering, suppression logic, and the migration round-trip. 75/75 tests pass; `tsc` + `build` clean.
+
+**Polish batch closeout.** Notes 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14 + 4, 5 all shipped. Ready for §5.2 demo recording + §5.3 submission artifacts.
+
