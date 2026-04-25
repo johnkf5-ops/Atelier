@@ -209,8 +209,6 @@ foto/
 ├── tests/smoke/                      Integration smoke tests
 ├── fixtures/                         Seed fixtures (photos gitignored)
 ├── instrumentation.ts                Runs migrations on boot
-├── ART_DIRECTOR_SPEC.md              Original product spec
-├── ATELIER_BUILD_PLAN.md             Phase-by-phase build plan
 ├── BUILD_LOG.md                      Narrative log of shipped work
 └── WALKTHROUGH_NOTES.md              Production walkthrough notes (open)
 ```
@@ -218,10 +216,8 @@ foto/
 ## Documentation
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — detailed architecture: run lifecycle, Managed Agent session shape, AKB merge semantics, retry posture
-- [`SUMMARY.md`](./SUMMARY.md) — hackathon writeup (180-word version + extended)
+- [`SUMMARY.md`](./SUMMARY.md) — hackathon writeup
 - [`BUILD_LOG.md`](./BUILD_LOG.md) — narrative log of shipped work, commit-by-commit
-- [`ART_DIRECTOR_SPEC.md`](./ART_DIRECTOR_SPEC.md) — original product spec
-- [`ATELIER_BUILD_PLAN.md`](./ATELIER_BUILD_PLAN.md) — full phase-ordered build plan
 - [`skills/README.md`](./skills/README.md) — skill catalog: what each of the 21 skill files codifies
 - [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md) — running notes from production walkthroughs
 

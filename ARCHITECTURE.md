@@ -579,7 +579,7 @@ Other notes that landed as structural decisions but were not specifically called
 
 ## 11. Path B (post-hackathon multi-tenant) hooks
 
-Per `ATELIER_BUILD_PLAN.md` §"Path B pre-wired hooks" and the locked architecture in `project_atelier.md`. Path A ships single-tenant; Path B is the multi-tenant deploy. The architecture is pre-wired so Path B is a small surface change.
+Path A ships single-tenant; Path B is the multi-tenant deploy. The architecture is pre-wired so Path B is a small surface change.
 
 **Already wired:**
 
