@@ -138,6 +138,26 @@ const TAILORING_BY_TYPE: Record<OppType, string> = {
 };
 
 /**
+ * WALKTHROUGH Note 32 (32-fix.1): per-opportunity-type EMPHASIS table.
+ *
+ * Different from TAILORING_BY_TYPE (which gives general framing): this
+ * table tells the model SPECIFICALLY what to LEAD WITH and what to SKIP
+ * in the body. Without this, the model defaults to a canonical body
+ * (location reel + gear list + same closing line) across every opp,
+ * differentiating only at the opening sentence — the audited "one
+ * statement reshuffled" symptom.
+ *
+ * Injected into the artist_statement user message after TAILORING_BY_TYPE.
+ */
+export const EMPHASIS_BY_OPP_TYPE: Record<OppType, string> = {
+  'state-fellowship': `EMPHASIS for state-fellowship: LEAD WITH the artist's specific commitment to one place (a single river, a single canyon, a single county) drawn from akb.home_base + akb.bodies_of_work + akb.intent.aspirations. SKIP international-ambition framing, SKIP gear/technique listing, SKIP catalogue-of-trips locations. The body should make a panel say "this artist will keep working in our state if we fund them."`,
+  'landscape-prize': `EMPHASIS for landscape-prize: LEAD WITH the body of work as a project (subject + duration + return-visit cadence) drawn from akb.bodies_of_work. Mention 1-2 representative places, NOT the full canonical location list. SKIP biographical career markers (those go in the bio), SKIP closing lines about "the planet is a beautiful place" — find a close specific to this body of work.`,
+  'photo-book': `EMPHASIS for photo-book: LEAD WITH monograph readiness — working title (if in akb.intent.aspirations or akb.bodies_of_work.title), approximate image count, sequencing logic, book-object decisions. SKIP the full gear/technique list entirely (irrelevant to a book proposal). SKIP locations that aren't part of the book's argument. Aspirations belong here when load-bearing for the monograph.`,
+  'museum-acquisition': `EMPHASIS for museum-acquisition: LEAD WITH the conceptual through-line in one sentence (the argument the body of work makes). SKIP travelogue location lists, SKIP gear specs. Curators fund the project, not the photographs — articulate the project's intellectual structure.`,
+  'general-prize': `EMPHASIS for general-prize: LEAD WITH the formal discipline + working philosophy (one quotable principle from the artist's practice). Pick 2-3 representative places that map to THIS prize's category, not the full canonical reel. SKIP gear/technique listing unless the prize is technique-specific.`,
+};
+
+/**
  * WALKTHROUGH Note 21: sibling to classifyOpportunityType, but mapped to the
  * proposal templates from skills/project-proposal-real-examples.md. Distinct
  * from the artist-statement classifier — e.g. Aperture Portfolio Prize is a
@@ -240,6 +260,11 @@ const PROPOSAL_VOICE_CONSTRAINTS = `HARD VOICE CONSTRAINTS — every constraint 
 8. WHY NOW answered with a specific reason — closing window, confirmed venue, body of work at the point of needing publication, site that will not be accessible later. Not generic urgency.
 9. WHY THIS FUNDER addressed in at least one clause when the funder is named (why MacDowell rather than Yaddo, why NYSCA rather than NEA). Panels notice when the application reads addressed-to-them.
 10. WRITE TO THE CAP. If the form allows 750 words, write 700. Do not run under by 40%. Brevity is a virtue but only after the required content is in place.
+11. WALKTHROUGH Note 32 — CANONICAL-REEL CAPS (same audit applies to proposals as to statements):
+   - Maximum 3 specific location names in any single sentence. Maximum 5 across the proposal body.
+   - Maximum 2 pieces of gear / technique in any single sentence. Method only when it justifies the project, never as a separate paragraph.
+   - The default close "the planet is a beautiful place" (or any near-paraphrase) is BANNED — find a close specific to THIS proposal's deliverables, timeline, or stake.
+   - Same-dossier repetition: the proposal body should not echo the proposal you would write for a different proposal type.
 
 PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if any check fails):
 - Em-dash count is exactly zero.
@@ -247,7 +272,8 @@ PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if 
 - Method/gear only present if it justifies the project, not as a separate section.
 - Deliverables are counted (number of works, edition size, page count, etc.).
 - Timeline in months, not "phases."
-- No banned phrase from list 5 appears.`;
+- No banned phrase from list 5 appears.
+- No sentence contains 4+ location names. No sentence contains 3+ gear items. The "planet is a beautiful place" close is absent.`;
 
 type DraftCtx = {
   akb: ArtistKnowledgeBase;
@@ -355,6 +381,11 @@ const STATEMENT_VOICE_CONSTRAINTS = `HARD VOICE CONSTRAINTS — every constraint
 9. NO PUBLICATION CREDITS inside the statement. National Geographic, TIME, etc. belong in a bio paragraph. They are not part of the statement of intent.
 10. NO ABSTRACT VIRTUE STACKING (no "reverence, rigor, commitment" trios). Replace with one concrete behavior that demonstrates the virtue.
 11. LENGTH: 150-300 words. The panel reads dozens of statements per session; brevity is generosity. If the prompt caps at 500, write 280.
+12. WALKTHROUGH Note 32 — CANONICAL-REEL CAPS. The audited symptom: every statement repeats the same locations + gear + closing line. Hard caps:
+   - Maximum 3 specific location names in any single sentence. Maximum 5 across the whole statement. The full canonical location list is in the AKB; SELECT 2-3 most relevant for THIS opportunity, do not enumerate.
+   - Maximum 2 pieces of gear / technique in any single sentence. The full technique inventory belongs in the CV. The statement justifies technique only when it serves THIS opportunity's evaluation criteria.
+   - The default close "the planet is a beautiful place" (or any near-paraphrase) is BANNED — it appears in too many statements as a fallback. Find a close specific to THIS opportunity's body of work, type, or stake.
+   - Same-dossier closing-line repetition: the close should NOT echo the close you would write for a different opportunity type. State-fellowship closes ground in a place; landscape-prize closes ground in the body of work; book-grant closes ground in the monograph.
 
 PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if any check fails):
 - Em-dash count is exactly zero.
@@ -363,7 +394,8 @@ PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if 
 - Lineage names total: 0, 1, or 2 — never 3+.
 - One sentence is 5-12 words, present-tense, declarative.
 - No banned phrase from constraint #4 appears.
-- Word count is 150-300.`;
+- Word count is 150-300.
+- No sentence contains 4+ location names. No sentence contains 3+ gear items. The "planet is a beautiful place" close is absent.`;
 
 // WALKTHROUGH Note 23: cover-letter-specific structural rules layered on
 // top of STATEMENT_VOICE_CONSTRAINTS. Cover letters are personal corre-
@@ -392,13 +424,19 @@ const COVER_LETTER_VOICE_CONSTRAINTS = `COVER LETTER STRUCTURAL RULES (in additi
 
 10. INHERITED BANS still apply: "sits in the lineage of", "commercial-gallery register", "aesthetic signature", "the medium has been preparing itself", "quiet authority", "emotional weight", and the Note 20 banned word list (vision, journey, passion, explore, capture, story-when-generic).
 
+11. WALKTHROUGH Note 32 — CANONICAL-REEL CAPS (same audit applies to cover letters as to statements):
+   - Maximum 3 specific location names in any single sentence. Maximum 5 across the body.
+   - Maximum 2 pieces of gear / technique in any single sentence (and prefer none — see rule 8).
+   - The default close "the planet is a beautiful place" (or any near-paraphrase) is BANNED — sign off with "Thank you for your consideration." or a specific opp-relevant close, not a generic planet/world/place line.
+
 PRE-SUBMIT SELF-CHECK (silently revise if any fails):
 - Salutation includes "Dear" and ends with comma.
 - Body uses first person throughout. Zero instances of "Knopf" in any body sentence (signature only).
 - No sentence names two or more photographers as influences.
 - One sentence specifically references this opportunity by name + a specific reason for this cycle.
 - Word count 200-350 (signature line excluded from the count).
-- Closes with a sign-off ("Thank you for your consideration." or similar) followed by a signature line.`;
+- Closes with a sign-off ("Thank you for your consideration." or similar) followed by a signature line.
+- No sentence contains 4+ location names. No sentence contains 3+ gear items. The "planet is a beautiful place" close is absent.`;
 
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
@@ -417,13 +455,15 @@ OPPORTUNITY_TYPE: ${ctx.oppType}
 
 ${TAILORING_BY_TYPE[ctx.oppType]}
 
+${EMPHASIS_BY_OPP_TYPE[ctx.oppType]}
+
 STYLE_FINGERPRINT (ground truth for visual claims):
 ${JSON.stringify(ctx.fingerprint, null, 2)}
 
 ARTIST_AKB (ground truth for biographical + career claims):
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the artist statement now. Describe the work as the fingerprint says it IS. This statement MUST differ meaningfully from a statement written for a different opportunity type — if you find yourself writing the same opening, structure, or closing as you would for any other opportunity, restructure.`,
+Write the artist statement now. Describe the work as the fingerprint says it IS. This statement MUST differ meaningfully from a statement written for a different opportunity type — if you find yourself writing the same opening, structure, OR BODY (locations, gear, closing line) as you would for any other opportunity, restructure. The opening + the BODY + the close all need to be opp-specific, not just the opening.`,
   }),
   project_proposal: (ctx) => ({
     system:
@@ -544,6 +584,12 @@ const STATEMENT_BANNED_PHRASES = [
   'commercial-gallery register',
   'meditations on',
   'informed by',
+  // WALKTHROUGH Note 32: default closing line that appeared in 6 of 6
+  // statements in the audited demo run. Ban the phrase + common variants.
+  'the planet is a beautiful place',
+  'the world is a beautiful place',
+  'the earth is a beautiful place',
+  'beautiful place worth',
 ];
 const STATEMENT_BANNED_WORDS = [
   'visionary',
@@ -659,6 +705,212 @@ export function checkFactGrounding(
   return { ok: issues.length === 0, issues };
 }
 
+/**
+ * WALKTHROUGH Note 32 (32-fix.2): per-sentence canonical-reel cap helpers.
+ * Counted at LINT time so the existing voice-check revision pass picks
+ * up overly-long location enumerations and gear stacks.
+ *
+ * Heuristics (deliberately loose — over-flagging triggers a free retry,
+ * under-flagging just keeps prior behavior):
+ *   - Location count per sentence: count proper-noun phrases that match
+ *     the canonical landscape-photo location list (Antelope Canyon,
+ *     Delicate Arch, Palouse, Hawaii, Amsterdam, Lisbon, Dubai, Yosemite,
+ *     Sierra Nevada, etc.) AND any other Capitalized proper-noun phrase
+ *     when the sentence already contains 2+ commas (typical "I have
+ *     photographed in X, Y, Z, A, B" pattern).
+ *   - Gear count per sentence: matches against a known-gear lexicon
+ *     (Hasselblad, Phase One, Canon, Nikon, Fuji Flex, ND filter, Zone
+ *     System, large-format film, drum scan, etc.).
+ */
+const CANONICAL_LOCATION_LEXICON = [
+  // Common landscape-photo locations from John's audited canonical reel
+  // plus other heavy hitters. Match case-sensitive to avoid false positives.
+  // One canonical form per location — no "Palouse" + "the Palouse" double-count.
+  'Antelope Canyon',
+  'Delicate Arch',
+  'Palouse',
+  'Hawaii',
+  'Amsterdam',
+  'Lisbon',
+  'Dubai',
+  'Yosemite',
+  'Sierra Nevada',
+  'Death Valley',
+  'Arches',
+  'Zion',
+  'Bryce',
+  'Patagonia',
+  'Iceland',
+  'Norway',
+  'Faroe',
+  'Tuscany',
+  'Banff',
+  'Lake Powell',
+  'Grand Canyon',
+  'Half Dome',
+];
+const GEAR_LEXICON = [
+  'Hasselblad',
+  'Phase One',
+  'Canon',
+  'Nikon',
+  'Sony Alpha',
+  'Fuji Flex',
+  'Fuji film',
+  'Fujifilm',
+  'large-format film',
+  'large format film',
+  'Zone System',
+  'graduated ND',
+  'ND filter',
+  'ND grad',
+  'tilt-shift',
+  'drum scan',
+  'archival pigment',
+  'cibachrome',
+  '4x5',
+  '8x10',
+  'Linhof',
+  'Schneider',
+  'IQ4',
+];
+
+function splitIntoSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+export function countLocationsInSentence(sentence: string): number {
+  let count = 0;
+  for (const loc of CANONICAL_LOCATION_LEXICON) {
+    if (sentence.includes(loc)) count++;
+  }
+  return count;
+}
+
+export function countGearInSentence(sentence: string): number {
+  let count = 0;
+  for (const gear of GEAR_LEXICON) {
+    const re = new RegExp(`\\b${gear.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (re.test(sentence)) count++;
+  }
+  return count;
+}
+
+export function checkCanonicalReelCaps(text: string): string[] {
+  const issues: string[] = [];
+  for (const s of splitIntoSentences(text)) {
+    const locs = countLocationsInSentence(s);
+    if (locs > 3) {
+      issues.push(
+        `sentence has ${locs} location names ("${s.slice(0, 80)}…") — cap is 3 per sentence. Pick the 2-3 most relevant for THIS opportunity.`,
+      );
+    }
+    const gear = countGearInSentence(s);
+    if (gear > 2) {
+      issues.push(
+        `sentence has ${gear} gear/technique items ("${s.slice(0, 80)}…") — cap is 2 per sentence. Technique justifies a project; it is not a list.`,
+      );
+    }
+  }
+  return issues;
+}
+
+/**
+ * WALKTHROUGH Note 32 (32-fix.3): cross-dossier content-variation check.
+ *
+ * Computes pairwise Jaccard token-bag similarity for a set of same-material
+ * drafts (e.g. all 6 artist statements in a dossier). The audited symptom:
+ * statements that vary STRUCTURE but repeat BODY CONTENT (same canonical
+ * locations, gear list, closing line) read as "one statement reshuffled."
+ * Pair similarity > 0.50 is suspicious; > 0.75 is a re-draft candidate.
+ *
+ * Pure deterministic — runs in the orchestrator after all drafts complete.
+ * Returns a list of issue strings (each names the offending pair + their
+ * similarity score). Empty array means cross-dossier variation is healthy.
+ *
+ * Tokenization: lowercase, strip non-alphanumeric, drop short stopwords.
+ * Comparison: Jaccard = |A ∩ B| / |A ∪ B|.
+ */
+const CONTENT_VARIATION_STOPWORDS = new Set([
+  'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'over', 'this', 'that',
+  'these', 'those', 'their', 'our', 'are', 'was', 'were', 'has', 'have', 'had',
+  'will', 'would', 'could', 'should', 'can', 'may', 'might', 'not', 'but',
+  'about', 'than', 'then', 'when', 'where', 'who', 'what', 'which', 'why',
+  'how', 'all', 'any', 'some', 'one', 'two', 'they', 'them', 'its', 'his',
+  'her', 'him', 'she', 'you', 'your', 'yours', 'mine', 'ours', 'his', 'hers',
+]);
+
+function tokenize(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const raw of text.toLowerCase().split(/[^a-z0-9]+/)) {
+    if (raw.length < 4) continue; // drop short stopwords / numbers
+    if (CONTENT_VARIATION_STOPWORDS.has(raw)) continue;
+    tokens.add(raw);
+  }
+  return tokens;
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  let intersection = 0;
+  for (const t of a) if (b.has(t)) intersection++;
+  const union = a.size + b.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export type ContentVariationResult = {
+  ok: boolean;
+  averageSimilarity: number;
+  highPairs: Array<{ i: number; j: number; similarity: number }>;
+  redraftCandidates: Array<{ i: number; j: number; similarity: number }>;
+  issues: string[];
+};
+
+export function checkContentVariation(
+  texts: string[],
+  thresholds: { warn?: number; redraft?: number } = {},
+): ContentVariationResult {
+  const warn = thresholds.warn ?? 0.5;
+  const redraft = thresholds.redraft ?? 0.75;
+  const tokenSets = texts.map(tokenize);
+  const pairs: Array<{ i: number; j: number; similarity: number }> = [];
+  let total = 0;
+  let pairCount = 0;
+  for (let i = 0; i < tokenSets.length; i++) {
+    for (let j = i + 1; j < tokenSets.length; j++) {
+      const sim = jaccardSimilarity(tokenSets[i], tokenSets[j]);
+      pairs.push({ i, j, similarity: sim });
+      total += sim;
+      pairCount++;
+    }
+  }
+  const averageSimilarity = pairCount === 0 ? 0 : total / pairCount;
+  const highPairs = pairs.filter((p) => p.similarity > warn);
+  const redraftCandidates = pairs.filter((p) => p.similarity > redraft);
+
+  const issues: string[] = [];
+  if (averageSimilarity > warn) {
+    issues.push(
+      `cross-dossier average pairwise Jaccard similarity is ${averageSimilarity.toFixed(3)} (>${warn}). The drafts read as one document reshuffled — body content is too uniform across the set.`,
+    );
+  }
+  for (const p of redraftCandidates) {
+    issues.push(
+      `drafts ${p.i} and ${p.j} have similarity ${p.similarity.toFixed(3)} (>${redraft}). Re-draft candidate: the per-opp emphasis didn't differentiate the body enough.`,
+    );
+  }
+  return {
+    ok: issues.length === 0,
+    averageSimilarity,
+    highPairs,
+    redraftCandidates,
+    issues,
+  };
+}
+
 export function checkStatementVoice(text: string): {
   ok: boolean;
   issues: string[];
@@ -682,6 +934,8 @@ export function checkStatementVoice(text: string): {
   if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
     issues.push('statement does not end with terminal punctuation — likely truncated mid-sentence; check max_tokens budget');
   }
+  // WALKTHROUGH Note 32: per-sentence canonical-reel caps.
+  issues.push(...checkCanonicalReelCaps(text));
   return { ok: issues.length === 0, issues };
 }
 
@@ -777,6 +1031,9 @@ export function checkProposalVoice(text: string): {
   if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
     issues.push('proposal does not end with terminal punctuation — likely truncated; check max_tokens budget');
   }
+  // WALKTHROUGH Note 32: per-sentence canonical-reel caps (same audit
+  // applies to proposals as to statements per 32-fix.4).
+  issues.push(...checkCanonicalReelCaps(text));
   return { ok: issues.length === 0, issues };
 }
 
@@ -917,6 +1174,10 @@ export function checkCoverLetterVoice(
   if (body.length > 0 && !/[.!?"'\)\]]\s*$/.test(body)) {
     issues.push('cover letter body does not end with terminal punctuation before the signature — likely truncated mid-sentence; check max_tokens budget');
   }
+
+  // WALKTHROUGH Note 32: per-sentence canonical-reel caps (32-fix.4 — same
+  // audit applies to cover letters). Run on body, not signature.
+  issues.push(...checkCanonicalReelCaps(body));
 
   return { ok: issues.length === 0, issues };
 }
@@ -1439,6 +1700,64 @@ export async function draftPackages(
       `[package-drafter] ${failures.length}/${settled.length} matches failed`,
       failures,
     );
+  }
+
+  // WALKTHROUGH Note 32 (32-fix.3): cross-dossier content-variation audit.
+  // After all per-match drafts complete, load every successfully-drafted
+  // statement / proposal / cover-letter as three same-material sets and
+  // run pairwise Jaccard similarity. Log warnings for high pair similarity;
+  // a warning here means the per-opp emphasis tables aren't differentiating
+  // the body content enough across the dossier and the fix is to enrich
+  // EMPHASIS_BY_OPP_TYPE / PROPOSAL_TAILORING / per-letter cues, not to
+  // retry the drafts. Persist to run_events so the dossier review surface
+  // can flag low-variation runs.
+  const draftedRows = (
+    await db.execute({
+      sql: `SELECT artist_statement, project_proposal, cover_letter
+            FROM drafted_packages dp
+            JOIN run_matches rm ON rm.id = dp.run_match_id
+            WHERE rm.run_id = ? AND rm.included = 1`,
+      args: [runId],
+    })
+  ).rows as unknown as Array<{
+    artist_statement: string | null;
+    project_proposal: string | null;
+    cover_letter: string | null;
+  }>;
+  const statements = draftedRows.map((r) => r.artist_statement ?? '').filter((t) => t.length > 50);
+  const proposals = draftedRows.map((r) => r.project_proposal ?? '').filter((t) => t.length > 50);
+  const coverLetters = draftedRows.map((r) => r.cover_letter ?? '').filter((t) => t.length > 50);
+  const variationReports = {
+    statements: checkContentVariation(statements),
+    proposals: checkContentVariation(proposals),
+    cover_letters: checkContentVariation(coverLetters),
+  };
+  for (const [material, report] of Object.entries(variationReports)) {
+    if (!report.ok) {
+      console.warn(
+        `[package-drafter] Note 32 cross-dossier variation warning (${material}): avg=${report.averageSimilarity.toFixed(3)}, ${report.issues.length} issue(s)`,
+      );
+      for (const issue of report.issues) console.warn(`  - ${issue}`);
+    } else {
+      console.log(
+        `[package-drafter] Note 32 cross-dossier variation OK (${material}): avg=${report.averageSimilarity.toFixed(3)} across ${
+          material === 'statements' ? statements.length : material === 'proposals' ? proposals.length : coverLetters.length
+        } drafts`,
+      );
+    }
+  }
+  if (Object.values(variationReports).some((r) => !r.ok)) {
+    await db.execute({
+      sql: `INSERT INTO run_events (run_id, agent, kind, payload_json) VALUES (?, 'package-drafter', 'dossier_content_repetition_warning', ?)`,
+      args: [
+        runId,
+        JSON.stringify({
+          statements: { avg: variationReports.statements.averageSimilarity, issues: variationReports.statements.issues },
+          proposals: { avg: variationReports.proposals.averageSimilarity, issues: variationReports.proposals.issues },
+          cover_letters: { avg: variationReports.cover_letters.averageSimilarity, issues: variationReports.cover_letters.issues },
+        }),
+      ],
+    });
   }
 
   await db.execute({
