@@ -537,3 +537,65 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 **Priority:** medium. Not blocking the run, but makes the live-run UX feel broken (looks like everything happens at once) and undermines the "I can watch the agent work" demo moment.
 
 ---
+
+## Note 13 — UI-language simplification mandate: drop internal scores + technical jargon from user-facing surfaces
+
+**Where:** dossier opportunity list (primary trigger — verified on `/dossier/2`), and across the app generally.
+
+**Symptom on dossier specifically:** the "Top opportunities" panel renders raw `composite_score` (0.36) and `fit` (0.78) numbers next to each opportunity, plus the heading reads "ordered by composite score." Most users do not know what composite score means. The numerical precision suggests false rigor (why 0.36 not 0.40?) and adds cognitive load without informational value. Users want to know: "Apply to these, and here's why" — the rank order alone communicates "this one first."
+
+**Broader pattern:** the UI throughout the app leaks internal vocabulary that means nothing to a working visual artist. Confirmed offenders so far:
+- "composite score" / "fit score" / numerical scores in user-facing surfaces
+- "ingest" / "ingested" (vs "imported" or "added")
+- "AKB version" / "v15" (vs "Knowledge Base — last updated 2 hours ago")
+- "akb_patch" / "manual override" / "source provenance" (any field surfacing the merge semantics)
+- "Rubric Matcher" / "Style Analyst" / "Knowledge Extractor" as agent names visible to user (internal architecture vocabulary; user-facing should describe what they DO, not their codenames)
+- "fit_score", "composite_score", "filtered_out_blurb" — DB column names leaking into UI
+- Any DB id, version number, or path that has no user meaning
+
+**Why this matters for the demo + the product:** Atelier's promise is being a TRUSTED art director for a working artist. An art director doesn't say "your composite_score for this grant is 0.36." They say "this is your strongest fit — your landscape work clearly matches what they've been awarding." The product breaks character every time internal vocabulary surfaces.
+
+**Fix (real, not patch — two layers):**
+
+### Layer 1 — Dossier opportunity list (immediate, demo-critical)
+
+1. **Remove `composite_score` and `fit_score` numbers from the dossier card view.** Keep both in the DB for sorting + debugging.
+2. **Replace with a short qualitative tier label.** Map `composite_score` (or `fit_score`) ranges to natural-language tiers. Suggested mapping:
+   - ≥ 0.65 → "Strong fit"
+   - 0.45 – 0.65 → "Solid fit"
+   - 0.25 – 0.45 (still included) → "Worth applying"
+   - Filtered-out tier (separate section) → "Wrong room — see why"
+   The tier label can be color-coded (existing yellow/red palette is fine, but the meaning shifts from "this number" to "this category").
+3. **Add a "Why this fit?" disclosure per opportunity** that expands the Rubric's `reasoning` paragraph. The reasoning is the gold — surface it directly. Default collapsed; one click to read.
+4. **Replace "ordered by composite score" caption** with "Ranked by best fit for your work" or similar.
+5. **For filtered-out opportunities:** show them in a separate "We considered these but they're not your room" section with the Rubric's `filtered_out_blurb` as the explanation — this is where Atelier earns trust by explaining the no, not just listing the yes.
+
+### Layer 2 — App-wide vocabulary sweep (right after Layer 1)
+
+1. **Build a `lib/ui/copy.ts` constants file** that holds every user-facing string. No more inline strings in components. Centralizing makes the next sweep trivial.
+2. **Audit every component under `app/` and `components/` for internal vocabulary.** Specifically grep for: `score`, `composite`, `fit`, `AKB`, `ingest`, `extract`, `patch`, `merge`, `provenance`, `Rubric`, `Scout`, `Style Analyst`, `Knowledge Extractor`, `Drafter`, `_id`, `version`, `null`, `undefined`. Each hit gets a translation:
+   - "Style Analyst" → "Atelier (the eye)" or just "the analysis"
+   - "Knowledge Extractor / Rubric Matcher / Scout" → describe what's happening, not the agent name ("we're searching for opportunities", "we're matching your work to current open calls", "we're drafting your application materials")
+   - "AKB" → "Knowledge Base" (already largely fixed in Note 6 per coder report; verify completeness)
+   - "ingest" → "import" / "add"
+   - "version" → "last updated [time]"
+3. **Add a CI grep guard** that fails the build if any of the banned internal terms appears in `app/**` or `components/**` outside the new `lib/ui/copy.ts` constants file. Permanent.
+
+### Layer 3 — Numerical precision discipline
+
+For ANY number we DO show users (deadline, prize, fee), audit precision:
+- Money: round to nearest dollar; never show `$1370` for prize when source data probably says "$1,000-$2,000 range" — show range when known, round number when not.
+- Dates: human-friendly ("June 30, 2026" or "in 8 weeks") instead of `2026-06-30`.
+- Anything else: if the precision feels false, drop it.
+
+**Acceptance:**
+- Open `/dossier/2` (or any dossier). The top opportunities list shows tier labels (e.g., "Strong fit"), not numerical scores. Each opportunity has a "Why this fit?" disclosure that expands the Rubric reasoning.
+- Filtered-out opportunities live in a clearly-labeled separate section with the filtered_out_blurb as explanation.
+- Grep across `app/` + `components/` finds zero hits for "composite_score", "fit_score", "AKB", "ingest" (etc.) outside `lib/ui/copy.ts`.
+- A non-technical user can read the dossier and understand which opportunities to apply to and why, without ever encountering a number that needs context.
+
+**File(s):** dossier components (`app/(dashboard)/dossier/[runId]/page.tsx` or similar), new `lib/ui/copy.ts`, all components under `app/` and `components/` for the sweep, new CI grep check.
+
+**Priority:** high — this is what makes the demo feel like a polished product vs. an internal tool. Should ship before §5.2 demo recording.
+
+---
