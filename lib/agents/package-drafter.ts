@@ -288,6 +288,12 @@ type DraftCtx = {
   oppType: OppType;
   proposalType: ProposalType; // WALKTHROUGH Note 21 — proposal template route
   oppRequirementsText: string;
+  // WALKTHROUGH Note 33-fix.7 — the specific work samples being submitted to
+  // THIS opportunity (rendered as a per-image bullet list). Prevents the
+  // Drafter from writing about the artist's whole practice when the actual
+  // submission is a curated subset (e.g. NANPA proposal described "American
+  // West" but the submitted set included Hawaiian + bamboo + Tahoe frames).
+  workSampleSummary: string;
 };
 
 // Hard constraint applied to every per-material prompt (except CV, which is factual).
@@ -463,7 +469,10 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB (ground truth for biographical + career claims):
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the artist statement now. Describe the work as the fingerprint says it IS. This statement MUST differ meaningfully from a statement written for a different opportunity type — if you find yourself writing the same opening, structure, OR BODY (locations, gear, closing line) as you would for any other opportunity, restructure. The opening + the BODY + the close all need to be opp-specific, not just the opening.`,
+WORK_SAMPLES being submitted alongside this statement (the panel will see THESE specific images, in this order):
+${ctx.workSampleSummary}
+
+Write the artist statement now. Describe the work as the fingerprint says it IS. The statement MUST be consistent with the WORK_SAMPLES above — if the samples are predominantly desert + canyon, do not write about Pacific tropics; if the samples include both, name both honestly. Do NOT describe places, subjects, or bodies of work that are NOT represented in the submitted samples. This statement MUST also differ meaningfully from a statement written for a different opportunity type — if you find yourself writing the same opening, structure, OR BODY (locations, gear, closing line) as you would for any other opportunity, restructure. The opening + the BODY + the close all need to be opp-specific, not just the opening.`,
   }),
   project_proposal: (ctx) => ({
     system:
@@ -495,7 +504,10 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the project proposal now. Match the structural shape of the matching template above — a competition portfolio statement is NOT a residency project description is NOT a state arts council fellowship narrative. This proposal MUST differ meaningfully from a proposal written for a different opportunity type. End with a complete sentence — do not truncate mid-thought.`,
+WORK_SAMPLES being submitted alongside this proposal (the panel will see THESE specific images, in this order):
+${ctx.workSampleSummary}
+
+Write the project proposal now. Match the structural shape of the matching template above — a competition portfolio statement is NOT a residency project description is NOT a state arts council fellowship narrative. The proposal MUST be consistent with the WORK_SAMPLES above — describe the body of work that the submitted images actually represent, NOT a different body of work from the AKB. If the samples span multiple bodies of work (e.g. desert + tropical + alpine), name them honestly as a multi-body submission rather than collapsing them into one falsely-coherent narrative. This proposal MUST differ meaningfully from a proposal written for a different opportunity type. End with a complete sentence — do not truncate mid-thought.`,
   }),
   // WALKTHROUGH Note 22-fix.3: cv entry removed. Master CV is generated
   // once per run by generateMasterCv() and persisted on dossiers.master_cv.
@@ -524,7 +536,10 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the cover letter now. First-person throughout. Open with "Dear [name]," or "Dear Selection Committee,". Pick 1-3 career markers MOST RELEVANT to THIS specific opportunity (do not paste the full reel). Include one sentence naming a specific reason for THIS opportunity at THIS time. Sign with the artist's name (${ctx.akb.identity.artist_name || 'the artist'}).`,
+WORK_SAMPLES being submitted alongside this cover letter (the panel will see THESE specific images, in this order):
+${ctx.workSampleSummary}
+
+Write the cover letter now. First-person throughout. Open with "Dear [name]," or "Dear Selection Committee,". Pick 1-3 career markers MOST RELEVANT to THIS specific opportunity (do not paste the full reel). Include one sentence naming a specific reason for THIS opportunity at THIS time. Any reference to the submitted work itself MUST match the WORK_SAMPLES above — do not describe a body of work the samples don't represent. Sign with the artist's name (${ctx.akb.identity.artist_name || 'the artist'}).`,
   }),
 };
 
@@ -1442,10 +1457,21 @@ type PortfolioImage = {
 
 export function selectWorkSamples(
   supportingIds: number[],
+  hurtingIds: number[],
   portfolio: PortfolioImage[],
   target: number,
 ): WorkSample[] {
   const byId = new Map(portfolio.map((p) => [p.id, p]));
+  // WALKTHROUGH Note 33-fix.7 — the Rubric Matcher emits hurting_image_ids
+  // for every opportunity (the portfolio frames it explicitly flagged as
+  // wrong-fit for THIS cohort). Prior selectWorkSamples ignored that signal
+  // and backfilled even-spaced from the full remainder, which let
+  // out-of-scope frames (e.g. id=66 Dutch alley flagged as outside NANPA's
+  // continental remit) ship as samples. Real fix: hurtingIds is a hard
+  // exclusion. The Rubric's harsh-truth signal is the product; we honor
+  // it on the work-sample axis the same way we honor it on the
+  // included/filtered-out axis.
+  const hurtingSet = new Set(hurtingIds);
 
   // Priority 1: Rubric-supplied supporting IDs (curated for this opportunity's aesthetic).
   const supportingChosen = supportingIds
@@ -1463,9 +1489,10 @@ export function selectWorkSamples(
     }));
   }
 
-  // Priority 2: backfill with even-spaced sample from remainder.
+  // Priority 2: backfill with even-spaced sample from remainder, EXCLUDING
+  // both already-chosen supporting IDs AND Rubric-flagged hurting IDs.
   const usedIds = new Set(supportingChosen.map((p) => p.id));
-  const remaining = portfolio.filter((p) => !usedIds.has(p.id));
+  const remaining = portfolio.filter((p) => !usedIds.has(p.id) && !hurtingSet.has(p.id));
   const backfillCount = target - supportingChosen.length;
   const step = remaining.length > 0 ? remaining.length / backfillCount : 0;
   const backfill = Array.from({ length: backfillCount }, (_, i) => remaining[Math.floor(i * step)]).filter(
@@ -1483,7 +1510,7 @@ export function selectWorkSamples(
       portfolio_image_id: p.id,
       thumb_url: p.thumb_url,
       filename: p.filename,
-      rationale: "representative of the artist's broader range",
+      rationale: "additional representative work from the artist's broader portfolio",
     })),
   ];
 }
@@ -1507,11 +1534,11 @@ VOICE:
 - Reference what THIS opportunity values (from the Rubric reasoning) and what's actually visible in the image (from filename or EXIF subject hints).
 - No marketing language. No "stunning", "haunting", "powerful", "showcases", "demonstrates". Verb-first concrete claims.
 - Each rationale must be DISTINCT — no two sentences should read the same.
-- If you have no honest reason for a given image, write "alternate from the same body — included for range" rather than padding.
+- If you have no honest reason for a given image, write "additional representative work from the artist's portfolio" rather than padding. Do NOT claim the image is "from the same body" unless the AKB / Rubric reasoning explicitly supports that — many portfolios span multiple bodies and this rationale will be visible in the dossier alongside the image, where mismatch reads as sloppy.
 
 WALKTHROUGH Note 25 — NO LINEAGE NAME-DROPS in rationales. A per-image rationale is a brief observational note about THIS image's specific qualities and how those qualities map to the cohort's aesthetic signature — not a curator-essay sentence about lineage. Banned: any rationale that names a photographer (Adams, Lik, Rowell, Shore, Eggleston, Sugimoto, Frye, Butcher, Luong, Plant, Wall, Ratcliff, Dobrowner, Burtynsky, Crewdson, Weston, Porter, Misrach, etc.) as evidence the image fits. Describe the image's PROPERTIES (palette, crop, subject, composition, condition) and how they match the cohort, not a tradition or photographer.
 
-WALKTHROUGH Note 24 — DO NOT INVENT FACTS. Do not claim the image was published in, shown at, awarded by, or acquired by any institution unless that fact is supplied to you. Stick to observable visual properties + Rubric-cited fit. If you cannot honestly justify an image, use the "alternate from the same body" fallback above.
+WALKTHROUGH Note 24 — DO NOT INVENT FACTS. Do not claim the image was published in, shown at, awarded by, or acquired by any institution unless that fact is supplied to you. Stick to observable visual properties + Rubric-cited fit. If you cannot honestly justify an image, use the "additional representative work" fallback above.
 
 OUTPUT STRICTLY JSON in this shape, no markdown fence, no preamble:
 { "rationales": [ { "image_id": 1, "rationale": "..." }, { "image_id": 6, "rationale": "..." } ] }
@@ -1603,6 +1630,7 @@ export type MatchRow = {
   composite_score: number | null;
   reasoning: string;
   supporting_image_ids: string | null;
+  hurting_image_ids: string | null;
   raw_json: string;
 };
 
@@ -1615,6 +1643,7 @@ export async function draftPackageForMatch(
   const db = getDb();
   const opp: Opportunity = JSON.parse(row.raw_json);
   const supportingIds: number[] = row.supporting_image_ids ? JSON.parse(row.supporting_image_ids) : [];
+  const hurtingIds: number[] = row.hurting_image_ids ? JSON.parse(row.hurting_image_ids) : [];
 
   // Fetch opportunity requirements page (best effort; timeout short, fall back to generic template).
   let oppRequirementsText = '';
@@ -1634,7 +1663,7 @@ export async function draftPackageForMatch(
     /* generic template path */
   }
 
-  const workSamples = selectWorkSamples(supportingIds, portfolio, 12);
+  const workSamples = selectWorkSamples(supportingIds, hurtingIds, portfolio, 12);
 
   // WALKTHROUGH Note 19b: replace the placeholder rationale strings with
   // per-image-per-opportunity reasoning grounded in this match's Rubric
@@ -1657,6 +1686,28 @@ export async function draftPackageForMatch(
     const r = rationaleMap.get(ws.portfolio_image_id);
     if (r) ws.rationale = r;
   }
+
+  // WALKTHROUGH Note 33-fix.7 — render workSamples as a per-image bullet
+  // list for the Drafter prompts. Each line names the image (id + filename
+  // + EXIF subject if any) and its rationale. The Drafter uses this to keep
+  // statement / proposal / cover-letter prose consistent with the submitted
+  // image set instead of describing the artist's whole practice.
+  const workSampleSummary = workSamples
+    .map((ws, i) => {
+      const p = portfolio.find((q) => q.id === ws.portfolio_image_id);
+      let exifSubject: string | null = null;
+      if (p?.exif_json) {
+        try {
+          const exif = JSON.parse(p.exif_json) as { subject?: string; ImageDescription?: string };
+          exifSubject = exif.subject ?? exif.ImageDescription ?? null;
+        } catch {
+          /* malformed exif — skip */
+        }
+      }
+      const subjectFragment = exifSubject ? ` — ${exifSubject}` : '';
+      return `  ${i + 1}. id=${ws.portfolio_image_id} (${ws.filename}${subjectFragment}): ${ws.rationale}`;
+    })
+    .join('\n');
 
   const [voiceSkill, proposalSkill, examplesSkill, proposalExamplesSkill] = await Promise.all([
     readSkill('artist-statement-voice.md', DEFAULT_VOICE_SKILL),
@@ -1691,6 +1742,7 @@ export async function draftPackageForMatch(
     oppType,
     proposalType,
     oppRequirementsText,
+    workSampleSummary,
   };
 
   const artist_statement = await draftStatementWithVoiceCheck(ctx);
@@ -1752,7 +1804,7 @@ export async function draftPackages(
   const matchRows = (
     await db.execute({
       sql: `SELECT rm.id, rm.opportunity_id, rm.fit_score, rm.composite_score, rm.reasoning,
-                   rm.supporting_image_ids, o.raw_json
+                   rm.supporting_image_ids, rm.hurting_image_ids, o.raw_json
             FROM run_matches rm
             JOIN opportunities o ON o.id = rm.opportunity_id
             WHERE rm.run_id = ? AND rm.included = 1
