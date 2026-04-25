@@ -1,0 +1,13 @@
+import { createClient } from '@libsql/client';
+import { readFileSync } from 'fs';
+const env = readFileSync('.env.local', 'utf-8');
+const parsed = Object.fromEntries(env.split('\n').filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i+1).replace(/^"(.*)"$/, '$1')]; }));
+const db = createClient({ url: parsed.TURSO_DATABASE_URL, authToken: parsed.TURSO_AUTH_TOKEN });
+const r = (await db.execute({ sql: `SELECT version, json FROM akb_versions ORDER BY id DESC LIMIT 1`, args: [] })).rows[0];
+const data = JSON.parse(r.json);
+console.log(`AKB v${r.version}`);
+console.log('practice.primary_medium:', data.practice?.primary_medium);
+console.log('practice.materials_and_methods:', JSON.stringify(data.practice?.materials_and_methods));
+console.log('practice.process_description:', data.practice?.process_description);
+console.log('practice.secondary_media:', JSON.stringify(data.practice?.secondary_media));
+console.log('source_provenance.practice:', data.source_provenance?.['practice.materials_and_methods']);

@@ -80,6 +80,22 @@ export const ArtistKnowledgeBase = z.object({
     }),
   ),
   career_stage: z.enum(['emerging', 'mid-career', 'established', 'late-career']),
+  // Curatorial, organizational, founding, editorial credits — distinct from the
+  // artist's own exhibitions/publications. Captures roles like "founder of X",
+  // "curated Y for Z", "organized N events at A". Optional — older AKBs that
+  // pre-date this field still parse cleanly.
+  curatorial_and_organizational: z
+    .array(
+      z.object({
+        role: z.string(), // e.g. "Founder", "Curator", "Co-curator", "Organizer", "Editor"
+        organization: z.string(), // e.g. "FOTO", "National Geographic", "HUG"
+        project_or_publication: z.string().optional(), // e.g. "Art Basel 2024 booth", "HUG Photography Annual 2023"
+        year: z.number().optional(),
+        year_end: z.number().optional(), // for ongoing roles, omit
+        notes: z.string().optional(),
+      }),
+    )
+    .optional(),
   intent: z.object({
     statement: z.string(),
     influences: z.array(z.string()),

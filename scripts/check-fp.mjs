@@ -1,0 +1,16 @@
+import { createClient } from '@libsql/client';
+import { readFileSync } from 'fs';
+const env = readFileSync('.env.local', 'utf-8');
+const parsed = Object.fromEntries(env.split('\n').filter(l => l.includes('=')).map(l => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i+1).replace(/^"(.*)"$/, '$1')]; }));
+const db = createClient({ url: parsed.TURSO_DATABASE_URL, authToken: parsed.TURSO_AUTH_TOKEN });
+const r = (await db.execute({ sql: `SELECT id, version, length(json) as size, json FROM style_fingerprints ORDER BY id DESC LIMIT 1`, args: [] })).rows[0];
+console.log(`fingerprint v${r.version}, ${r.size} bytes`);
+const fp = JSON.parse(r.json);
+console.log('\ntop-level keys:', Object.keys(fp));
+console.log('\n--- career_positioning_read FULL TEXT ---');
+console.log(fp.career_positioning_read ?? '(missing)');
+console.log('\n--- last 200 chars ---');
+const txt = fp.career_positioning_read ?? '';
+console.log('...' + txt.slice(-200));
+console.log(`\nlength: ${txt.length} chars`);
+console.log(`ends with period? ${txt.trim().endsWith('.') || txt.trim().endsWith('!') || txt.trim().endsWith('?')}`);
