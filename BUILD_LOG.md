@@ -346,3 +346,21 @@ Smoke test `tests/smoke/interview-schema.test.ts` covers gap ordering, suppressi
 
 **Polish batch closeout.** Notes 1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13, 14 + 4, 5 all shipped. Ready for §5.2 demo recording + §5.3 submission artifacts.
 
+### Note 15 — design system pass across every user-facing surface
+
+**Commit:** `7381ec6`. Pushed.
+
+Replaces the dossier-only polish bandaid with one coherent system applied to every page a judge touches. Eight surfaces upgraded; one shared primitives module; CI grep guard.
+
+**Foundation.** `lib/ui/design-system.md` documents type pairing, color tokens, spacing rhythm, primitives, forbidden vocabulary. `app/globals.css` declares the color ramp (WCAG-AA contrast on body), `prose-narrow` measure, print-mode whitelist, skeleton shimmer keyframe. `app/layout.tsx` wires Crimson Pro (display + drafted-doc body) and Inter (UI chrome) via `next/font/google` + sticky-translucent header with refined nav chrome (Portfolio / Knowledge Base / Review / Runs / Settings).
+
+**Primitives.** `app/_components/ui.tsx` ships `<Button>` (4 variants), `<LinkButton>`, `<Card>`, `<Badge>` (5 semantic variants), `<Skeleton>`, `<EmptyState>`, `<Prose>` (drafted-doc container with serif + measure + leading), `<PageHeader>` (eyebrow + title + subtitle + action). Every page composes these — no inline border/padding combos that drift.
+
+**Per-surface pass.** `/` landing hero with serif display + 3-step value prop. `/upload`, `/interview`, `/review` get `<PageHeader>` with eyebrow "Step N". `/runs` uses `<Badge>` variants + `<EmptyState>` for first-time users + primary "New run" CTA. `/runs/new` Card-based preflight with semantic ready/not-ready coloring. `/runs/[id]` status copy reframed (no agent names visible — *"Searching for opportunities…"* / *"Scoring each opportunity against your portfolio…"*). `/settings` Card + Badge polish.
+
+**Dossier extra polish.** Cover hero: artist name big in Crimson display, portfolio thumbnail strip across, formatted run date, no chrome. Drafted-doc view: warm off-white "paper" surface (`bg-[#f7f5f1]`), generous serif body (`text-[15px] leading-[1.7]`), ~40rem measure — mimics the visual weight of a real printed institutional packet so the demo can linger on this page without it feeling like a textarea. Word-count chip on every draft. Print mode dropping chrome via `.no-print`.
+
+**Vocabulary sweep (Note 13 Layer 2 + 3 finally landed).** `scripts/check-copy.mjs` greps `app/**` + `components/**` for `composite_score / fit_score / AKB / Rubric Matcher / Style Analyst / Knowledge Extractor / Opportunity Scout / Package Drafter / ingest` outside `lib/ui/copy.ts`. Heuristic skips identifier substrings, type fields, enum string literals, single-token quoted strings, SQL backticks; server-only paths (`app/api/**`, `lib/**`) exempt. `pnpm check:copy` runs the guard — verified to fire on injected violations and pass on the swept codebase. User-visible terms fixed: *"Run Style Analyst" → "Analyse my work"*, *"Confirm and ingest" → "Confirm and import"*, every run-status string reframed.
+
+Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
+
