@@ -27,7 +27,9 @@ export type PdfMatch = {
   reasoning: string;
   artist_statement: string | null;
   project_proposal: string | null;
-  cv_formatted: string | null;
+  // WALKTHROUGH Note 22-fix.3: cv_formatted dropped — master CV lives at the
+  // dossier level (see DossierDocument.masterCv prop) and renders once in
+  // the appendix, not duplicated on every per-opp page.
   cover_letter: string | null;
 };
 
@@ -38,6 +40,9 @@ export function DossierDocument(props: {
   ranking: string;
   matches: PdfMatch[];
   filteredOut: PdfFiltered[];
+  // WALKTHROUGH Note 22-fix.3: master CV rendered once in the appendix.
+  // Null when the run pre-dates the master_cv migration.
+  masterCv: string | null;
   // WALKTHROUGH Note 4: PDF cover byline uses artist_name (the public-facing
   // identity), never legal_name. legal_name belongs in tax/contract blocks
   // only — the dossier cover is the public packet.
@@ -115,19 +120,22 @@ export function DossierDocument(props: {
               ))}
             </>
           )}
-          {m.cv_formatted && (
-            <>
-              <View style={styles.hr} />
-              <Text style={styles.h3}>CV</Text>
-              {paragraphs(m.cv_formatted).map((p, j) => (
-                <Text key={j} style={styles.materialBlock}>
-                  {p}
-                </Text>
-              ))}
-            </>
-          )}
         </Page>
       ))}
+
+      {/* WALKTHROUGH Note 22-fix.3: master CV appendix — one canonical CV
+          for the whole dossier, instead of duplicating it on every per-opp
+          page. */}
+      {props.masterCv && (
+        <Page size="LETTER" style={styles.page}>
+          <Text style={styles.h2}>Curriculum Vitae</Text>
+          {paragraphs(props.masterCv).map((p, i) => (
+            <Text key={i} style={styles.materialBlock}>
+              {p}
+            </Text>
+          ))}
+        </Page>
+      )}
 
       {/* Filtered-out page */}
       {props.filteredOut.length > 0 && (

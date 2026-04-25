@@ -3,6 +3,7 @@ import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
 import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { getDb } from '@/lib/db/client';
 import { getLogoUrl } from '@/lib/logos';
+import { generateMasterCv } from '@/lib/agents/package-drafter';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 import type { Opportunity } from '@/lib/schemas/opportunity';
@@ -207,9 +208,14 @@ export async function orchestrateDossier(runId: number): Promise<void> {
   const llmLimit = pLimit(5);
   const fetchLimit = pLimit(5);
 
-  const [coverNarrative, rankingNarrative] = await Promise.all([
+  // WALKTHROUGH Note 22-fix.3: master CV generated ONCE per run, in
+  // parallel with cover + ranking narratives. Persisted on dossiers.master_cv
+  // (single source of truth). Eliminates the per-opp CV consistency-drift
+  // and saves ~9 messages.create calls per run vs the old per-opp flow.
+  const [coverNarrative, rankingNarrative, masterCv] = await Promise.all([
     generateCoverNarrative(akb, fingerprint),
     generateRankingNarrative(topIncluded),
+    generateMasterCv(akb, fingerprint),
   ]);
 
   // Filtered-out blurbs (capped concurrency)
@@ -243,10 +249,11 @@ export async function orchestrateDossier(runId: number): Promise<void> {
   );
 
   await db.execute({
-    sql: `INSERT INTO dossiers (run_id, cover_narrative, ranking_narrative) VALUES (?, ?, ?)
+    sql: `INSERT INTO dossiers (run_id, cover_narrative, ranking_narrative, master_cv) VALUES (?, ?, ?, ?)
           ON CONFLICT(run_id) DO UPDATE SET
             cover_narrative = excluded.cover_narrative,
-            ranking_narrative = excluded.ranking_narrative`,
-    args: [runId, coverNarrative, rankingNarrative],
+            ranking_narrative = excluded.ranking_narrative,
+            master_cv = excluded.master_cv`,
+    args: [runId, coverNarrative, rankingNarrative, masterCv],
   });
 }

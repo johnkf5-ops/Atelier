@@ -13,10 +13,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
 
   const dossierRow = (
     await db.execute({
-      sql: `SELECT cover_narrative, ranking_narrative FROM dossiers WHERE run_id = ?`,
+      sql: `SELECT cover_narrative, ranking_narrative, master_cv FROM dossiers WHERE run_id = ?`,
       args: [runIdNum],
     })
-  ).rows[0] as unknown as { cover_narrative: string; ranking_narrative: string } | undefined;
+  ).rows[0] as unknown as
+    | { cover_narrative: string; ranking_narrative: string; master_cv: string | null }
+    | undefined;
   if (!dossierRow) {
     return Response.json({ error: 'dossier not yet finalized' }, { status: 404 });
   }
@@ -31,9 +33,13 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
 
   const includedRows = (
     await db.execute({
+      // WALKTHROUGH Note 22-fix.3: cv_formatted dropped from per-match
+      // projection. Master CV is on the dossier row. cv_formatted column
+      // (now a 1-sentence trim note) is unused by the PDF layout; we keep
+      // the column for the dossier UI but don't render it in the PDF.
       sql: `SELECT rm.fit_score, rm.composite_score, rm.reasoning,
                    o.name, o.url, o.deadline, o.award_summary, o.raw_json,
-                   dp.artist_statement, dp.project_proposal, dp.cv_formatted, dp.cover_letter
+                   dp.artist_statement, dp.project_proposal, dp.cover_letter
             FROM run_matches rm
             JOIN opportunities o ON o.id = rm.opportunity_id
             LEFT JOIN drafted_packages dp ON dp.run_match_id = rm.id
@@ -53,7 +59,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     raw_json: string;
     artist_statement: string | null;
     project_proposal: string | null;
-    cv_formatted: string | null;
     cover_letter: string | null;
   }>;
 
@@ -70,7 +75,6 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
       reasoning: m.reasoning,
       artist_statement: m.artist_statement,
       project_proposal: m.project_proposal,
-      cv_formatted: m.cv_formatted,
       cover_letter: m.cover_letter,
     };
   });
@@ -91,6 +95,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
     <DossierDocument
       cover={dossierRow.cover_narrative}
       ranking={dossierRow.ranking_narrative}
+      masterCv={dossierRow.master_cv}
       matches={matches}
       filteredOut={filteredOut}
       artistName={akb.identity.artist_name || akb.identity.legal_name || 'Artist'}

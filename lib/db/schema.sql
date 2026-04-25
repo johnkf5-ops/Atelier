@@ -177,14 +177,23 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_drafted_packages_match_unique
   ON drafted_packages(run_match_id);
 
 -- Final dossier (one per run)
+-- WALKTHROUGH Note 22-fix.3: master_cv added — one canonical CV per run,
+-- generated once after AKB is finalized (in the orchestrator) instead of
+-- N copies in the per-opp Drafter loop. Eliminates the consistency-drift
+-- class of bugs by design and saves ~9 messages.create calls per run.
 CREATE TABLE IF NOT EXISTS dossiers (
   id INTEGER PRIMARY KEY,
   run_id INTEGER NOT NULL UNIQUE REFERENCES runs(id),
   cover_narrative TEXT NOT NULL,
   ranking_narrative TEXT NOT NULL,
+  master_cv TEXT,
   pdf_path TEXT,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
+-- Idempotent migration for existing prod tables that pre-date master_cv.
+-- migrations.ts swallows "duplicate column name" so this is a no-op on
+-- fresh installs (CREATE TABLE above already includes the column).
+ALTER TABLE dossiers ADD COLUMN master_cv TEXT;
 
 -- Join table: which opportunities did Scout discover for which run?
 -- Populated by persist_opportunity. Opportunities are cross-run in the

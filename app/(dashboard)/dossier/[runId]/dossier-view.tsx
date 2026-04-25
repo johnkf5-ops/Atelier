@@ -29,6 +29,9 @@ export type DossierMatch = {
   hurting_image_ids: number[];
   artist_statement: string | null;
   project_proposal: string | null;
+  // WALKTHROUGH Note 22-fix.3: cv_formatted is repurposed as a per-opp
+  // TRIM NOTE (1 sentence, deterministic from oppRequirementsText). The
+  // full master CV lives at the dossier level, not per match.
   cv_formatted: string | null;
   cover_letter: string | null;
   work_samples: WorkSample[];
@@ -42,7 +45,10 @@ export type DossierFilteredOut = {
   fit_score: number;
 };
 
-type Tab = 'statement' | 'proposal' | 'cv' | 'cover' | 'samples' | 'reasoning';
+// WALKTHROUGH Note 22-fix.3: 'cv' tab removed — CV is now rendered ONCE
+// per dossier in a dedicated section (see MasterCvSection), not duplicated
+// across every opportunity card.
+type Tab = 'statement' | 'proposal' | 'cover' | 'samples' | 'reasoning';
 type SortKey = 'fit' | 'deadline' | 'prize';
 
 const SORT_LABELS: Record<SortKey, string> = {
@@ -67,6 +73,7 @@ export default function DossierView({
   runId,
   cover,
   ranking,
+  masterCv,
   matches,
   filteredOut,
   artistName,
@@ -76,6 +83,7 @@ export default function DossierView({
   runId: number;
   cover: string;
   ranking: string;
+  masterCv: string | null;
   matches: DossierMatch[];
   filteredOut: DossierFilteredOut[];
   artistName: string;
@@ -158,6 +166,10 @@ export default function DossierView({
           <Prose>{ranking}</Prose>
         </section>
       )}
+
+      {/* WALKTHROUGH Note 22-fix.3: master CV — one canonical CV per dossier,
+          rendered ONCE here and referenced from every per-opp package. */}
+      {masterCv && <MasterCvSection runId={runId} masterCv={masterCv} />}
 
       {/* Top-N matches */}
       <section className="space-y-4">
@@ -291,13 +303,19 @@ export default function DossierView({
                         matters. Atelier&rsquo;s job is to remove the writing wall, not write
                         under your name.
                       </p>
+                      {m.cv_formatted && (
+                        <p className="text-xs text-amber-200/90 leading-relaxed bg-amber-500/10 border border-amber-500/30 rounded px-3 py-2">
+                          <span className="font-medium">CV trim note:</span> {m.cv_formatted}{' '}
+                          The full master CV is in the &ldquo;Your CV&rdquo; section above the
+                          opportunity list — trim it to fit this submission.
+                        </p>
+                      )}
                       <Tabs
                         value={tabByMatch[m.id] ?? 'statement'}
                         onChange={(t) => setTabByMatch((c) => ({ ...c, [m.id]: t }))}
                         tabs={[
                           { key: 'statement', label: 'Statement', disabled: !m.artist_statement },
                           { key: 'proposal', label: 'Proposal', disabled: !m.project_proposal },
-                          { key: 'cv', label: 'CV', disabled: !m.cv_formatted },
                           { key: 'cover', label: 'Cover', disabled: !m.cover_letter },
                           {
                             key: 'samples',
@@ -360,6 +378,48 @@ export default function DossierView({
         </section>
       )}
     </div>
+  );
+}
+
+/**
+ * WALKTHROUGH Note 22-fix.3: master CV rendered ONCE per dossier above the
+ * opportunity list. Each per-opp card may surface a TRIM NOTE (in cv_formatted)
+ * pointing back here when that opp has a stated CV cap (single-page PDF,
+ * 2,000-character limit, etc.). Mirrors how artists actually use CVs in the
+ * real world: one PDF uploaded to every application, not 10 custom rewrites.
+ */
+function MasterCvSection({ runId, masterCv }: { runId: number; masterCv: string }) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-baseline justify-between gap-3">
+        <h2 className="font-serif text-2xl">Your CV</h2>
+        <div className="flex items-center gap-2 no-print">
+          <button
+            type="button"
+            onClick={() => navigator.clipboard.writeText(masterCv)}
+            className="rounded border border-neutral-700 px-3 py-1 text-xs hover:bg-neutral-800"
+          >
+            Copy
+          </button>
+          <a
+            href={`/api/dossier/${runId}/cv/docx`}
+            className="rounded border border-neutral-700 px-3 py-1 text-xs hover:bg-neutral-800"
+          >
+            Download .docx
+          </a>
+        </div>
+      </div>
+      <p className="text-xs text-neutral-400 leading-relaxed bg-neutral-900/60 border border-neutral-800 rounded px-3 py-2">
+        One canonical CV used across every application below. If a specific opportunity has a
+        word, character, or page cap, you&rsquo;ll see a trim note inside that opportunity&rsquo;s
+        package — apply it before submitting.
+      </p>
+      <div className="rounded border border-neutral-800 bg-[#f7f5f1] text-neutral-900 px-10 py-12 print:p-0 print:border-0">
+        <article className="font-serif text-[15px] leading-[1.7] whitespace-pre-wrap mx-auto max-w-[40rem]">
+          {masterCv}
+        </article>
+      </div>
+    </section>
   );
 }
 
@@ -459,11 +519,9 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
       ? match.artist_statement
       : tab === 'proposal'
         ? match.project_proposal
-        : tab === 'cv'
-          ? match.cv_formatted
-          : tab === 'cover'
-            ? match.cover_letter
-            : null;
+        : tab === 'cover'
+          ? match.cover_letter
+          : null;
 
   if (!text) {
     return <div className="text-sm text-neutral-500 italic">Not drafted for this match.</div>;
@@ -474,9 +532,7 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
       ? 'artist_statement'
       : tab === 'proposal'
         ? 'project_proposal'
-        : tab === 'cv'
-          ? 'cv_formatted'
-          : 'cover_letter';
+        : 'cover_letter';
 
   const explainer =
     tab === 'statement' ? (
@@ -490,12 +546,6 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
         Used when an opportunity asks <em>what would you do with this funding or residency.</em>{' '}
         Paste into the &ldquo;Project Description&rdquo; or &ldquo;Proposal&rdquo; field. Edit
         the dates and locations to match what you can actually commit to.
-      </>
-    ) : tab === 'cv' ? (
-      <>
-        Your formal exhibition + publication record. Most applications either accept a paste{' '}
-        <em>or</em> ask for a PDF upload — use the Download .docx button below for that.
-        Already formatted to the institution&rsquo;s expected style.
       </>
     ) : (
       <>

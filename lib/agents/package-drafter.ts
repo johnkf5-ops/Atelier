@@ -29,18 +29,47 @@ const DEFAULT_PROPOSAL_SKILL = `Generic project proposal structure (use when opp
 6. WHY NOW / WHY YOU — single sentence each, not a sales pitch
 Total 400-600 words unless the opportunity specifies a length.`;
 
-const DEFAULT_CV_SKILL = `Generic chronological CV format (use when no institution-specific format known):
-NAME (top, large)
-b. YEAR, BIRTHPLACE | Lives and works in CITY
-EDUCATION (most recent first; degree, institution, year)
-SOLO EXHIBITIONS (year, title, venue, city)
-GROUP EXHIBITIONS (most recent 8-12; same format; "(curated by NAME)" if notable)
-PUBLICATIONS (most recent first; publication, title, year, page if known)
-AWARDS AND HONORS (year, name)
-COLLECTIONS (institution name only — no descriptions)
-REPRESENTATION (gallery, city, since year)
+// WALKTHROUGH Note 22-fix.2: canonical CV format. ALWAYS these labels in
+// THIS order. Skip a section ONLY if the corresponding AKB field is empty
+// (no inventing labels). Within each section, em-dash for venue/location
+// separation (CV convention NEA / MacDowell / Aperture all use), comma for
+// sub-attributes within a row. Em-dashes are acceptable HERE (institutional
+// field separators) — Note 20/21's zero-em-dash rule is for prose.
+const DEFAULT_CV_SKILL = `Canonical CV format (one master CV per artist; do not vary across opportunities):
 
-Length: 2 pages max. Skip empty sections.`;
+NAME (top, large)
+b. YEAR | Lives and works in CITY, STATE, COUNTRY [single-line bio]
+
+EDUCATION
+  Most recent first. Format: degree, institution, year.
+
+SOLO EXHIBITIONS
+  Most recent first. Format: year — title, venue, city.
+
+GROUP EXHIBITIONS (selected)
+  Most recent 8–12. Same format. "(curated by NAME)" only if notable.
+
+PUBLICATIONS (selected)
+  Most recent first. Format: publication, title, year (page or URL if relevant).
+
+AWARDS AND HONORS
+  Most recent first. Format: year — name (granting body, if not in name).
+
+COLLECTIONS
+  Institution name only. No descriptions.
+
+REPRESENTATION
+  Format: gallery, city, since year.
+
+CURATORIAL AND ORGANIZATIONAL
+  ALWAYS include if AKB has the field non-empty (WALKTHROUGH Note 22-fix.1 —
+  curatorial credentials strengthen ANY application; never trim them based
+  on opportunity type). Format: year — role, organization (project name if relevant).
+
+Length: 2 pages max. Skip a section heading ONLY when its AKB field is empty.
+Use these section labels EXACTLY (no "AWARDS" instead of "AWARDS AND HONORS",
+no "ORGANIZATIONAL WORK" instead of "CURATORIAL AND ORGANIZATIONAL"). Use
+em-dash as the field separator inside entries; comma for sub-attributes.`;
 
 async function readSkill(filename: string, fallback: string): Promise<string> {
   try {
@@ -50,7 +79,13 @@ async function readSkill(filename: string, fallback: string): Promise<string> {
   }
 }
 
-export type MaterialType = 'artist_statement' | 'project_proposal' | 'cv' | 'cover_letter';
+// WALKTHROUGH Note 22-fix.3: 'cv' removed. CV is now generated ONCE per run
+// at the dossier level (orchestrator → dossiers.master_cv) instead of N
+// per-opp copies. The drafted_packages.cv_formatted column is repurposed
+// to hold a per-opp trim NOTE (not a full CV) when the opportunity has a
+// stated CV cap (Aperture's "single-page PDF", IPA's "2,000 character"
+// limit, etc.). Trim notes are deterministic regex-based — no LLM call.
+export type MaterialType = 'artist_statement' | 'project_proposal' | 'cover_letter';
 
 /**
  * WALKTHROUGH Note 20: opportunity-type classifier used to load
@@ -220,7 +255,8 @@ type DraftCtx = {
   fingerprint: StyleFingerprint; // required — constrains all visual claims
   voiceSkill: string;
   proposalSkill: string;
-  cvSkill: string;
+  // cvSkill removed from per-opp ctx (Note 22-fix.3) — CV is now generated
+  // once per run via generateMasterCv() called from the orchestrator.
   examplesSkill: string; // WALKTHROUGH Note 20 — real-statement few-shot
   proposalExamplesSkill: string; // WALKTHROUGH Note 21 — real-proposal few-shot
   oppType: OppType;
@@ -353,17 +389,8 @@ ${JSON.stringify(ctx.akb, null, 2)}
 
 Write the project proposal now. Match the structural shape of the matching template above — a competition portfolio statement is NOT a residency project description is NOT a state arts council fellowship narrative. This proposal MUST differ meaningfully from a proposal written for a different opportunity type. End with a complete sentence — do not truncate mid-thought.`,
   }),
-  cv: (ctx) => ({
-    system:
-      ctx.cvSkill +
-      "\n\n---\n\nYou are formatting a CV for a specific institution's application. Use the institution-specific format from the loaded skill if one exists for this opportunity; otherwise use the generic chronological format. Pull entries ONLY from the AKB. No invented items. Return plain text, section-delimited (EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS / PUBLICATIONS / AWARDS / COLLECTIONS / REPRESENTATION). No preamble. (StyleFingerprint not needed here — CV is factual.)",
-    user: `OPPORTUNITY: ${ctx.opp.name} — submission format requirements per your skill file.
-
-ARTIST_AKB:
-${JSON.stringify(ctx.akb, null, 2)}
-
-Format the CV now.`,
-  }),
+  // WALKTHROUGH Note 22-fix.3: cv entry removed. Master CV is generated
+  // once per run by generateMasterCv() and persisted on dossiers.master_cv.
   cover_letter: (ctx) => ({
     system:
       ctx.voiceSkill +
@@ -396,7 +423,6 @@ Write the cover letter now.`,
 const MAX_TOKENS_BY_TYPE: Record<MaterialType, number> = {
   artist_statement: 3000,
   project_proposal: 4000,
-  cv: 3000,
   cover_letter: 3000,
 };
 
@@ -583,6 +609,111 @@ async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
   return revised.length > 0 ? revised : first;
+}
+
+/**
+ * WALKTHROUGH Note 22-fix.3: generate ONE master CV per run. Called from the
+ * orchestrator after AKB is finalized. Produces canonical sections in
+ * canonical order per Note 22-fix.2, ALWAYS includes CURATORIAL AND
+ * ORGANIZATIONAL when AKB has the field non-empty (Note 22-fix.1 — never
+ * trim curatorial credentials by opportunity type).
+ *
+ * Pure single-call function — no per-opp variation, no skill-loader chain.
+ * Returns the rendered CV plain-text.
+ */
+const MASTER_CV_SYSTEM = `You are formatting a single canonical CV for a working visual artist. This CV is used as-is across every application — there is no per-opportunity variation. Pull entries ONLY from the AKB; never invent.
+
+Use these section labels EXACTLY, in this order. Skip a section heading ONLY if its AKB field is empty.
+
+NAME (top, large)
+b. YEAR | Lives and works in CITY, STATE, COUNTRY [single-line bio]
+
+EDUCATION
+SOLO EXHIBITIONS
+GROUP EXHIBITIONS (selected)
+PUBLICATIONS (selected)
+AWARDS AND HONORS
+COLLECTIONS
+REPRESENTATION
+CURATORIAL AND ORGANIZATIONAL
+
+CURATORIAL AND ORGANIZATIONAL is required whenever akb.curatorial_and_organizational has at least one entry. Curatorial credentials strengthen ANY application — do not trim them.
+
+Inside each entry use em-dash for the primary field separator (year — title, venue, city) and comma for sub-attributes within a row. This is CV convention; the prose zero-em-dash rule does not apply here.
+
+Return plain text only. No preamble, no markdown, no commentary.`;
+
+export async function generateMasterCv(
+  akb: ArtistKnowledgeBase,
+  fingerprint: StyleFingerprint,
+): Promise<string> {
+  const cvSkill = await readSkill('cv-format-by-institution.md', DEFAULT_CV_SKILL);
+  const client = getAnthropic();
+  const userText = `ARTIST_AKB:
+${JSON.stringify(akb, null, 2)}
+
+FINGERPRINT (for reference only — CV is factual, fingerprint does NOT introduce visual claims here):
+${JSON.stringify({ career_positioning_read: fingerprint.career_positioning_read }, null, 2)}
+
+Format the master CV now. Use the canonical section list and order. Always include CURATORIAL AND ORGANIZATIONAL if the AKB has that field with at least one entry.`;
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: 4000,
+        thinking: { type: 'adaptive' },
+        system: cvSkill + '\n\n---\n\n' + MASTER_CV_SYSTEM,
+        messages: [{ role: 'user', content: userText }],
+      }),
+    { label: 'drafter.master_cv' },
+  );
+  return (resp.content.find((b) => b.type === 'text')?.text ?? '').trim();
+}
+
+/**
+ * WALKTHROUGH Note 22-fix.3: deterministic per-opp trim NOTE (not a CV).
+ * Repurposes the drafted_packages.cv_formatted column. Returns null when
+ * the opportunity has no stated CV cap; otherwise returns a 1-sentence
+ * note describing what to trim. No LLM call — pure regex on the Drafter's
+ * already-fetched oppRequirementsText.
+ */
+const CV_CAP_PATTERNS: Array<{ re: RegExp; render: (m: RegExpMatchArray, oppName: string) => string }> = [
+  {
+    re: /single[- ]page\s+(pdf|cv|resume)/i,
+    render: (_m, oppName) =>
+      `For ${oppName}: single-page PDF cap. Trim pre-2018 entries and any non-load-bearing items so the CV fits one page.`,
+  },
+  {
+    re: /one[- ]page\s+(pdf|cv|resume)/i,
+    render: (_m, oppName) =>
+      `For ${oppName}: one-page PDF cap. Trim pre-2018 entries and any non-load-bearing items so the CV fits one page.`,
+  },
+  {
+    // Allow comma as thousands separator ("2,000 character") and require a
+    // word boundary before the digit so "v2.000" or "tag-000" don't trigger.
+    re: /\b(\d{1,3}(?:,\d{3})+|\d{2,5})[- ]?character[s]?\s+(limit|max|cap)/i,
+    render: (m, oppName) =>
+      `For ${oppName}: ${m[1]}-character cap on the CV/resume field. Abbreviate venue names and drop the oldest entries first.`,
+  },
+  {
+    re: /\b(\d{1,3}(?:,\d{3})+|\d{1,4})[- ]?word[s]?\s+(limit|max|cap|maximum)/i,
+    render: (m, oppName) =>
+      `For ${oppName}: ${m[1]}-word cap on the CV/resume field. Abbreviate venue names and drop the oldest entries first.`,
+  },
+  {
+    re: /\b(2|3|4|5)\s*pages?\s+(max|maximum|cap)/i,
+    render: (m, oppName) =>
+      `For ${oppName}: ${m[1]}-page CV maximum. Keep current section order; drop the oldest entries that exceed the page count.`,
+  },
+];
+
+export function computeTrimNote(oppName: string, oppRequirementsText: string): string | null {
+  if (!oppRequirementsText || oppRequirementsText.length === 0) return null;
+  for (const { re, render } of CV_CAP_PATTERNS) {
+    const m = oppRequirementsText.match(re);
+    if (m) return render(m, oppName);
+  }
+  return null;
 }
 
 export type WorkSample = {
@@ -788,10 +919,9 @@ export async function draftPackageForMatch(
     if (r) ws.rationale = r;
   }
 
-  const [voiceSkill, proposalSkill, cvSkill, examplesSkill, proposalExamplesSkill] = await Promise.all([
+  const [voiceSkill, proposalSkill, examplesSkill, proposalExamplesSkill] = await Promise.all([
     readSkill('artist-statement-voice.md', DEFAULT_VOICE_SKILL),
     readSkill('project-proposal-structure.md', DEFAULT_PROPOSAL_SKILL),
-    readSkill('cv-format-by-institution.md', DEFAULT_CV_SKILL),
     // WALKTHROUGH Note 20: real-statement few-shot reference. Falls back to a
     // brief inline note if the file is missing — but it should always be
     // present (committed).
@@ -817,7 +947,6 @@ export async function draftPackageForMatch(
     fingerprint,
     voiceSkill,
     proposalSkill,
-    cvSkill,
     examplesSkill,
     proposalExamplesSkill,
     oppType,
@@ -827,8 +956,12 @@ export async function draftPackageForMatch(
 
   const artist_statement = await draftStatementWithVoiceCheck(ctx);
   const project_proposal = await draftProposalWithVoiceCheck(ctx);
-  const cv_formatted = await draftMaterial('cv', ctx);
   const cover_letter = await draftMaterial('cover_letter', ctx);
+  // WALKTHROUGH Note 22-fix.3: cv_formatted column repurposed as a per-opp
+  // trim NOTE (not a CV). Deterministic regex on oppRequirementsText —
+  // null when the opportunity has no stated CV cap. Master CV is generated
+  // once per run by the orchestrator and persisted on dossiers.master_cv.
+  const cv_formatted = computeTrimNote(opp.name, oppRequirementsText);
 
   // INSERT OR REPLACE so re-drafting the same match overwrites instead of
   // violating the implicit PK + error on duplicate.

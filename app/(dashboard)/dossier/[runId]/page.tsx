@@ -38,10 +38,12 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
 
   const dossierRow = (
     await db.execute({
-      sql: `SELECT cover_narrative, ranking_narrative FROM dossiers WHERE run_id = ?`,
+      sql: `SELECT cover_narrative, ranking_narrative, master_cv FROM dossiers WHERE run_id = ?`,
       args: [runIdNum],
     })
-  ).rows[0] as unknown as { cover_narrative: string; ranking_narrative: string } | undefined;
+  ).rows[0] as unknown as
+    | { cover_narrative: string; ranking_narrative: string; master_cv: string | null }
+    | undefined;
 
   // If dossier hasn't been persisted yet, send user back to the run page
   // (which handles in-progress + error states via the polling UI).
@@ -156,6 +158,7 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
       runId={runIdNum}
       cover={dossierRow.cover_narrative}
       ranking={dossierRow.ranking_narrative}
+      masterCv={dossierRow.master_cv}
       matches={matches}
       filteredOut={filtered}
       artistName={coverArtistName}

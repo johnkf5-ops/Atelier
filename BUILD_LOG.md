@@ -364,6 +364,31 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 22 — master CV per dossier + canonical sections + always-curatorial (full architectural refactor)
+
+Each opportunity was getting a slightly-tweaked CV from the per-opp Drafter loop. Wrong by design — institutions expect a single PDF upload, not 10 custom rewrites. The N-CV pattern produced consistency drift (different section labels across opps, ordering variations, em-dash-vs-comma drift) AND ate ~$4.50 of API spend per run for zero added value. Plus the ILPOTY CV was missing the entire CURATORIAL AND ORGANIZATIONAL section because the model decided "competition = curatorial work irrelevant" — wrong judgment, curatorial credentials strengthen ANY application.
+
+**22-fix.3 — one master CV per run (the real architecture).**
+- Schema: new `dossiers.master_cv TEXT` column. Added to the canonical CREATE TABLE plus a sibling `ALTER TABLE dossiers ADD COLUMN master_cv TEXT` statement so existing prod tables get the column on next bootstrap (the migrations runner swallows the duplicate-column error on fresh installs).
+- New `generateMasterCv(akb, fingerprint)` in `lib/agents/package-drafter.ts`. Single LLM call per run, max_tokens=4000 (CV can run to 2 pages + adaptive thinking budget). Loads the existing `cv-format-by-institution.md` skill plus a new `MASTER_CV_SYSTEM` prompt that names canonical sections + always-include-curatorial.
+- Orchestrator: `generateMasterCv` runs in parallel with cover + ranking narratives via `Promise.all([…])`. Persisted in the same `dossiers` INSERT/ON CONFLICT.
+- Drafter: `MaterialType` no longer includes `'cv'`. The per-opp `draftMaterial('cv', ctx)` call is gone. `cvSkill` removed from `DraftCtx` (the master CV loads its own skill). The `cv` entry in `PROMPTS` and `MAX_TOKENS_BY_TYPE` is dropped.
+- The `drafted_packages.cv_formatted` column is repurposed (no schema change) as a per-opp **TRIM NOTE** — a 1-sentence string written by the new deterministic `computeTrimNote(oppName, oppRequirementsText)` helper. Returns `null` when the opportunity has no stated CV cap; otherwise renders one of: single-page PDF, one-page PDF, N-character cap (with comma-thousands handling so "2,000 character" parses cleanly), N-word cap, multi-page max. **No LLM call** — pure regex on the already-fetched requirements text. ~$4.50 cost reduction per run vs the old per-opp CV path.
+
+**22-fix.1 — always include CURATORIAL AND ORGANIZATIONAL.** Hard-coded in the `MASTER_CV_SYSTEM` prompt: "CURATORIAL AND ORGANIZATIONAL is required whenever akb.curatorial_and_organizational has at least one entry. Curatorial credentials strengthen ANY application — do not trim them." Section list explicitly enumerated.
+
+**22-fix.2 — canonical section labels + ordering.** Both the system prompt AND the `DEFAULT_CV_SKILL` fallback enumerate the exact labels in the exact order: NAME / b. YEAR / EDUCATION / SOLO EXHIBITIONS / GROUP EXHIBITIONS (selected) / PUBLICATIONS (selected) / AWARDS AND HONORS / COLLECTIONS / REPRESENTATION / CURATORIAL AND ORGANIZATIONAL. Skip a heading ONLY when its AKB field is empty (no inventing labels). Em-dash as field separator inside entries (the prose zero-em-dash rule does not apply to CVs — em-dashes are institutional field separators here, NEA / MacDowell / Aperture convention).
+
+**Dossier UI surface.** New `MasterCvSection` component renders the master CV ONCE between the Ranking narrative and the Top Opportunities list, with Copy + Download .docx buttons. The per-opp `cv` tab is removed entirely (`Tab` type narrowed). Per-opp expanded cards show an inline amber "CV trim note" panel above the materials Tabs whenever `cv_formatted` is non-null, pointing the user back to the master CV section above.
+
+**DOCX route.** `cv_formatted` removed from the per-opp `[materialType]/docx` route's whitelist (per-opp CV is no longer a downloadable document). New sibling `/api/dossier/[runId]/cv/docx` reads from `dossiers.master_cv`, joins through `runs → akb_versions` to get the byline (`identity.artist_name`), and emits a Word .docx attachment.
+
+**PDF route.** Per-opp `cv_formatted` dropped from the `PdfMatch` projection and the per-opp page render block. `DossierDocument` gains `masterCv: string | null` prop and renders a single "Curriculum Vitae" appendix page after the per-opp pages.
+
+**Tests.** New `tests/smoke/drafter-cv-shape.test.ts` (12 cases, 121/121 total). `computeTrimNote` cases: returns null on empty/no-cap input; detects single-page PDF, one-page PDF, character limits (with comma-thousands), word limits, multi-page caps; first-match-wins ordering. `generateMasterCv` cases (Anthropic mocked at module boundary): returns trimmed model text; AKB curatorial fields flow through to the user message verbatim; system prompt instructs canonical sections + always-include-curatorial.
+
+`tsc --noEmit` clean, 121/121 smoke tests pass, `pnpm check:copy` clean.
+
 ### Note 21 — project-proposal voice + per-type templates + truncation regression fix
 
 Drafted project proposals were reading as submission cover letters with the wrong shape for the funder type — state arts council fellowships missing timeline / deliverables / budget; competition statements rambling about lineage instead of framing the submitted images; book-grant statements describing a portfolio instead of a book object. Plus the Epson Pano regression: a project proposal truncated to 63 words because adaptive thinking exhausted `max_tokens`.

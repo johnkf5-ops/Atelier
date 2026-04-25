@@ -4,17 +4,19 @@ import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
 
+// WALKTHROUGH Note 22-fix.3: cv_formatted removed — CV is downloaded from
+// the dossier-level /api/dossier/[runId]/cv/docx endpoint (one master CV
+// per run). Per-opp cv_formatted is now a 1-sentence trim note, not a
+// downloadable document.
 const MATERIAL_COLS: Record<string, string> = {
   artist_statement: 'artist_statement',
   project_proposal: 'project_proposal',
-  cv_formatted: 'cv_formatted',
   cover_letter: 'cover_letter',
 };
 
 const MATERIAL_TITLES: Record<string, string> = {
   artist_statement: 'Artist Statement',
   project_proposal: 'Project Proposal',
-  cv_formatted: 'CV',
   cover_letter: 'Cover Letter',
 };
 
