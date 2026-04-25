@@ -194,3 +194,21 @@ Structural fix per spec: every portfolio query goes through a new `lib/db/querie
 
 Regression test `tests/smoke/portfolio-count.test.ts` inserts 21 rows, asserts the canonical fn returns 21, asserts it never returns 0 when rows exist (the exact failure case), and asserts the back-compat aliases reference the same function reference (preventing a future fork). Live-verified `/runs/new` renders "21 images" — Start Run button enabled. 30/30 smoke tests pass.
 
+### Note 6 — interview submit 500 + systemic fetch contract
+
+**Commit:** `6cff8ef`.
+
+**Two root causes behind the intermittent 500.**
+
+1. **Anthropic transient throws escaped the agent helpers.** `nextInterviewTurn()` only retried on JSON validation failures — if the API itself threw (429, 529 overloaded, 5xx, network blip), the throw escaped and the route 500'd. John's "repeat the same answer and the second works" was him accidentally retrying the Anthropic call. Fix: new `lib/anthropic-retry.ts` with exponential backoff (4 attempts, 500ms → 8s + jitter) on transient HTTP statuses (408/409/425/429/5xx) and network errors (ECONNRESET, socket hang up, "overloaded"). Wrapped around the interview agent call.
+
+2. **Turn-index race on concurrent submits.** The route read `history.length` then inserted with `turn_index = history.length - 1`. Two submits during the 30s Anthropic call both saw stale history and tried to write the same turn_index. Fix: atomic `COALESCE((SELECT MAX(turn_index)+1 FROM extractor_turns WHERE user_id=?), 0)` INSERT, plus a UNIQUE INDEX on `(user_id, turn_index)` in schema.sql. Double-submits now serialize at the DB layer instead of corrupting history.
+
+**Systemic fetch contract (the "never ships again" guarantee).**
+
+- **Every client fetch migrated to `fetchJson`.** interview-client, review-client, auto-discover-panel, health-panel, upload-client (delete + reorder), run-live (events + playback), new-run-client. Every failure now surfaces a categorised `kind` with console.warn diagnostics. SSE streams (portfolio/scrape, extractor/auto-discover) keep raw fetch() with explicit `// eslint-disable-next-line no-restricted-syntax` comments documenting the exception.
+- **ESLint rule blocks regressions.** `eslint.config.mjs` adds `no-restricted-syntax` banning raw `fetch(` in `app/**` + `components/**` (excluding `app/api/**`). Verified firing on a test file. Future PRs that reintroduce raw fetch fail CI.
+- **API error contract test.** `tests/smoke/api-error-contract.test.ts` asserts `withApiErrorHandling` + `errorResponse` always produce JSON-bodied 4xx/5xx — never empty bodies. Plus a route-file audit that walks every `app/api/[...]/route.ts` and fails if any route doesn't import `withApiErrorHandling` (SSE routes exempt by path). One missed route (`/api/health/web-search`) was caught and fixed.
+
+37/37 smoke tests pass. `pnpm build` + `tsc` clean. Pushed to main.
+
