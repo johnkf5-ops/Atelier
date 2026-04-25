@@ -153,17 +153,49 @@ async function downloadRow(
       });
       if (!res.ok) {
         failures.push({ url, reason: `HTTP ${res.status}` });
+        console.warn(
+          `[finalize-scout] HTTP ${res.status} url=${url} (recipient=${row.name}, opp=${row.opportunity_id})`,
+        );
+        continue;
+      }
+      // Detect non-image responses (sites that return 200 + an HTML login page
+      // for hotlink-protected URLs) before they hit Sharp + waste an upload.
+      const ct = (res.headers.get('content-type') ?? '').toLowerCase();
+      if (ct && !ct.startsWith('image/')) {
+        failures.push({ url, reason: `non-image content-type: ${ct}` });
+        console.warn(
+          `[finalize-scout] non-image url=${url} ct=${ct} (recipient=${row.name}, opp=${row.opportunity_id})`,
+        );
         continue;
       }
       const buf = Buffer.from(await res.arrayBuffer());
-      const thumb = await sharp(buf)
-        .rotate()
-        .resize(1024, 1024, { fit: 'inside' })
-        .jpeg({ quality: 85 })
-        .toBuffer();
+
+      // Try Sharp preprocessing for the thumbnail; if Sharp can't read the
+      // format (rare WebP/AVIF/HEIC variants), fall back to uploading the
+      // raw bytes — Anthropic Files API accepts JPEG/PNG/WebP/GIF natively.
+      let uploadBuf: Buffer;
+      let uploadCt: string;
+      let uploadExt: string;
+      try {
+        uploadBuf = await sharp(buf)
+          .rotate()
+          .resize(1024, 1024, { fit: 'inside' })
+          .jpeg({ quality: 85 })
+          .toBuffer();
+        uploadCt = 'image/jpeg';
+        uploadExt = 'jpg';
+      } catch (sharpErr) {
+        console.warn(
+          `[finalize-scout] sharp failed, uploading raw bytes url=${url} reason=${(sharpErr as Error).message}`,
+        );
+        uploadBuf = buf;
+        uploadCt = ct.startsWith('image/') ? ct : 'image/jpeg';
+        uploadExt = uploadCt.split('/')[1]?.split(';')[0] || 'jpg';
+      }
+
       const safeName = row.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
       const idx = blobUrls.length;
-      const pathname = `recipients/${row.opportunity_id}/${safeName}_pr${row.id}/${idx}.jpg`;
+      const pathname = `recipients/${row.opportunity_id}/${safeName}_pr${row.id}/${idx}.${uploadExt}`;
 
       // Mirror to Vercel Blob — only when not already mirrored. If
       // already mirrored, keep the existing URL as-is (re-uploading to
@@ -172,9 +204,9 @@ async function downloadRow(
       if (alreadyMirrored) {
         blobUrl = url;
       } else {
-        const r = await put(pathname, thumb, {
+        const r = await put(pathname, uploadBuf, {
           access: 'public',
-          contentType: 'image/jpeg',
+          contentType: uploadCt,
           addRandomSuffix: false,
           allowOverwrite: true,
         });
@@ -186,9 +218,9 @@ async function downloadRow(
       // prior swallow-and-continue pattern is what produced the
       // file_ids=[] silent failure on prod.
       const fileId = await uploadToFilesApi(
-        thumb,
-        `opp${row.opportunity_id}_${safeName}_${idx}.jpg`,
-        'image/jpeg',
+        uploadBuf,
+        `opp${row.opportunity_id}_${safeName}_${idx}.${uploadExt}`,
+        uploadCt,
       );
       fileIds.push(fileId);
       console.log(
