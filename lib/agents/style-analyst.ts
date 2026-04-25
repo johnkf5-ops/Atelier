@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type Anthropic from '@anthropic-ai/sdk';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import {
   StyleFingerprint,
   PartialStyleFingerprint,
@@ -170,7 +171,10 @@ async function callWithSchema<S extends { safeParse: (x: unknown) => { success: 
           },
         ]
       : params.messages;
-    const resp = await client.messages.create({ ...params, messages });
+    const resp = await withAnthropicRetry(
+      () => client.messages.create({ ...params, messages }),
+      { label: 'style-analyst' },
+    );
     const text = extractText(
       (resp.content as Array<{ type: string; text?: string }>).filter((b) => b.type === 'text'),
     );
