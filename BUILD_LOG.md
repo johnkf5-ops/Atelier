@@ -364,6 +364,20 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 19b — per-image-per-opportunity work-sample rationales
+
+Every drafted package's work samples were stamped with the same hardcoded placeholder string ("cited as supporting the institution's aesthetic signature in the Rubric Matcher's reasoning") on every image on every opportunity. Looked like the demo had a single canned blurb. Note 19a (identical 12 image_ids across 8 of 10 opps) cascades from the upstream Scout direct-image-URL fix in `a2eca7e` and self-resolves on the next clean run — verification only, no Drafter change needed.
+
+**New `generateSampleRationales(opp, rubricReasoning, images)`** in `lib/agents/package-drafter.ts`. Single Anthropic call per opportunity. System prompt enforces: terse, ≤30 words per sentence, references both what the opportunity values (per Rubric reasoning) AND what's actually visible (per filename + EXIF subject hint), bans marketing language ("stunning", "haunting", "showcases"), and explicitly requires every sentence to be DISTINCT from the others. Returns strict JSON `{rationales: [{image_id, rationale}]}`; parsed via `parseLooseJson` and shape-validated. Wrapped in `withAnthropicRetry`. ~$0.30–0.60 per dossier added.
+
+**Soft-failure on LLM error.** Returns an empty Map on any throw or parse failure, and the caller keeps the existing placeholder strings for that opportunity. The rationale is auxiliary signal — a transient Anthropic failure shouldn't kill the whole drafted package. The 3 prior placeholder strings stay in `selectWorkSamples` as the fallback.
+
+**Wired into `draftPackageForMatch`** between sample selection and per-material drafting: builds `rationaleImages` (id + filename + parsed-EXIF-subject when present), calls `generateSampleRationales(opp, row.reasoning, rationaleImages)`, then mutates each WorkSample's `rationale` from the returned Map. Persistence is unchanged — the WorkSample objects flow into `work_sample_selection_json` exactly as before.
+
+**Smoke tests** in `tests/smoke/sample-rationales.test.ts` mock the Anthropic SDK at the module boundary and lock in five contracts: (1) happy-path JSON parse returns image_id→sentence Map with all distinct values; (2) LLM throw → empty Map (soft fallback); (3) malformed model output → empty Map; (4) empty + whitespace rationales are dropped; (5) zero input images short-circuits without an API call. 5/5 new tests pass; 83/83 total.
+
+`tsc --noEmit` clean, `pnpm check:copy` clean.
+
 ### Note 18 — Aggressiveness time + cost estimates + Note 16 cost-claim correction
 
 The Note 17c Aggressiveness selector shipped without time/cost numbers, so users had no way to know what they were committing to. Worse, the Note 16 modal copy advertised "~$3–5 per run" — actual cost is $10–60 depending on the slate size, off by an order of magnitude.

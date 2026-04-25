@@ -7,6 +7,7 @@ import { getDb } from '@/lib/db/client';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { Opportunity } from '@/lib/schemas/opportunity';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
+import { parseLooseJson, extractText } from './json-parse';
 
 // Used when skills/artist-statement-voice.md etc. haven't landed yet.
 // Short but deliberate — prevents silent quality degradation if §4.6 timing slips.
@@ -230,6 +231,85 @@ export function selectWorkSamples(
   ];
 }
 
+/**
+ * WALKTHROUGH Note 19b: ask the model for one short rationale sentence per
+ * image-per-opportunity, grounded in the Rubric reasoning paragraph. Replaces
+ * the prior hardcoded placeholder strings ("cited as supporting the
+ * institution's aesthetic signature in the Rubric Matcher's reasoning") that
+ * appeared identically on every sample across every opportunity.
+ *
+ * Returns a Map<image_id, sentence>. Soft-failure: on LLM error or invalid
+ * shape we return an empty Map and the caller keeps the existing placeholder
+ * — the rationale is auxiliary signal, not load-bearing for the rest of the
+ * dossier.
+ */
+const SAMPLE_RATIONALE_SYSTEM = `You are writing one-sentence rationales explaining why each portfolio image fits a specific institutional opportunity.
+
+VOICE:
+- Terse and specific. One sentence per image. ≤ 30 words.
+- Reference what THIS opportunity values (from the Rubric reasoning) and what's actually visible in the image (from filename or EXIF subject hints).
+- No marketing language. No "stunning", "haunting", "powerful", "showcases", "demonstrates". Verb-first concrete claims.
+- Each rationale must be DISTINCT — no two sentences should read the same.
+- If you have no honest reason for a given image, write "alternate from the same body — included for range" rather than padding.
+
+OUTPUT STRICTLY JSON in this shape, no markdown fence, no preamble:
+{ "rationales": [ { "image_id": 1, "rationale": "..." }, { "image_id": 6, "rationale": "..." } ] }
+Include EVERY image_id from the input. Order does not matter.`;
+
+export async function generateSampleRationales(
+  opp: Opportunity,
+  rubricReasoning: string,
+  images: Array<{ id: number; filename: string; exif_subject?: string | null }>,
+): Promise<Map<number, string>> {
+  if (images.length === 0) return new Map();
+  const client = getAnthropic();
+  const userText = `OPPORTUNITY: ${opp.name} (${opp.award.type}, ${opp.award.prestige_tier})
+
+RUBRIC REASONING (why this opportunity was scored a fit):
+${rubricReasoning}
+
+IMAGES TO RATIONALIZE (write one sentence per image, distinct from the others):
+${JSON.stringify(
+  images.map((i) => ({
+    image_id: i.id,
+    filename: i.filename,
+    exif_subject: i.exif_subject ?? null,
+  })),
+  null,
+  2,
+)}
+
+Return JSON only.`;
+  try {
+    const resp = await withAnthropicRetry(
+      () =>
+        client.messages.create({
+          model: MODEL_OPUS,
+          max_tokens: 1500,
+          system: [
+            { type: 'text', text: SAMPLE_RATIONALE_SYSTEM, cache_control: { type: 'ephemeral' } },
+          ],
+          messages: [{ role: 'user', content: [{ type: 'text', text: userText }] }],
+        }),
+      { label: `drafter.sample_rationales(opp=${opp.source_id})` },
+    );
+    const text = extractText(resp.content as Array<{ type: string; text?: string }>);
+    const parsed = parseLooseJson(text) as { rationales?: Array<{ image_id: number; rationale: string }> };
+    const out = new Map<number, string>();
+    if (Array.isArray(parsed?.rationales)) {
+      for (const r of parsed.rationales) {
+        if (typeof r?.image_id === 'number' && typeof r?.rationale === 'string' && r.rationale.trim().length > 0) {
+          out.set(r.image_id, r.rationale.trim());
+        }
+      }
+    }
+    return out;
+  } catch {
+    // Soft fallback — caller keeps the prior placeholder so the dossier still renders.
+    return new Map();
+  }
+}
+
 export type MatchRow = {
   id: number;
   opportunity_id: number;
@@ -269,6 +349,28 @@ export async function draftPackageForMatch(
   }
 
   const workSamples = selectWorkSamples(supportingIds, portfolio, 12);
+
+  // WALKTHROUGH Note 19b: replace the placeholder rationale strings with
+  // per-image-per-opportunity reasoning grounded in this match's Rubric
+  // paragraph. Soft fallback — on LLM failure the original placeholders stay.
+  const rationaleImages = workSamples.map((ws) => {
+    const p = portfolio.find((q) => q.id === ws.portfolio_image_id);
+    let exifSubject: string | null = null;
+    if (p?.exif_json) {
+      try {
+        const exif = JSON.parse(p.exif_json) as { subject?: string; ImageDescription?: string };
+        exifSubject = exif.subject ?? exif.ImageDescription ?? null;
+      } catch {
+        /* malformed exif — skip */
+      }
+    }
+    return { id: ws.portfolio_image_id, filename: ws.filename, exif_subject: exifSubject };
+  });
+  const rationaleMap = await generateSampleRationales(opp, row.reasoning, rationaleImages);
+  for (const ws of workSamples) {
+    const r = rationaleMap.get(ws.portfolio_image_id);
+    if (r) ws.rationale = r;
+  }
 
   const [voiceSkill, proposalSkill, cvSkill] = await Promise.all([
     readSkill('artist-statement-voice.md', DEFAULT_VOICE_SKILL),
