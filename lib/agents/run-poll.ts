@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { persistOpportunityFromAgent } from '@/lib/agents/opportunity-scout';
 import { persistMatchFromAgent } from '@/lib/agents/rubric-matcher';
 
@@ -53,16 +54,20 @@ export async function handleRequiresAction(
       result = `error: ${(err as Error).message}`;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (client.beta as any).sessions.events.send(sessionId, {
-      events: [
-        {
-          type: 'user.custom_tool_result',
-          custom_tool_use_id: ev.id,
-          content: [{ type: 'text', text: result }],
-        },
-      ],
-    });
+    await withAnthropicRetry(
+      () =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.beta as any).sessions.events.send(sessionId, {
+          events: [
+            {
+              type: 'user.custom_tool_result',
+              custom_tool_use_id: ev.id,
+              content: [{ type: 'text', text: result }],
+            },
+          ],
+        }),
+      { label: `run-poll.events.send(run=${runId},tool_use=${ev.id})` },
+    );
   }
 }
 
@@ -132,8 +137,12 @@ export async function pollRun(
     lastIdleStopReason = ((dbIdle.rows[0] as unknown as { sr?: string })?.sr) ?? null;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const sess = (await (client.beta as any).sessions.retrieve(managed_session_id)) as { status: string };
+  const sess = (await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).sessions.retrieve(managed_session_id),
+    { label: `run-poll.sessions.retrieve(run=${runId})` },
+  )) as { status: string };
   const sessionTerminal =
     sess.status === 'terminated' ||
     (sess.status === 'idle' && lastIdleStopReason !== null && lastIdleStopReason !== 'requires_action');

@@ -2,7 +2,8 @@ import { ensureDbReady, getDb } from '@/lib/db/client';
 import { hasAnthropicKey } from '@/lib/auth/api-key';
 import { withApiErrorHandling } from '@/lib/api/response';
 import { uploadToFilesApi } from '@/lib/anthropic-files';
-import { getAnthropic } from '@/lib/anthropic';
+import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,6 +32,34 @@ export const GET = withApiErrorHandling(async () => {
     status.db = r.rows[0]?.ok === 1;
   } catch (err) {
     status.db_error = (err as Error).message;
+  }
+
+  // Anthropic capacity probe: tiny messages.create() to surface upstream
+  // overload (529) BEFORE running an expensive flow. WALKTHROUGH Note 11.
+  // The withAnthropicRetry wrapper handles the transient classes — the
+  // probe reports either "ok (Nms)" or the final error after retries
+  // exhaust, so a green health check means the agent paths will get a
+  // model response without 529-fallout.
+  if (hasAnthropicKey()) {
+    const t0 = Date.now();
+    try {
+      const r = await withAnthropicRetry(
+        () =>
+          getAnthropic().messages.create({
+            model: MODEL_OPUS,
+            max_tokens: 8,
+            messages: [{ role: 'user', content: 'pong' }],
+          }),
+        { label: 'health.capacity-probe', maxAttempts: 2 },
+      );
+      void r;
+      status.anthropic_messages = `ok (${Date.now() - t0}ms)`;
+    } catch (err) {
+      const e = err as { status?: number; message?: string };
+      status.anthropic_messages = `FAILED${e.status ? ` (HTTP ${e.status})` : ''}: ${e.message ?? String(err)}`;
+    }
+  } else {
+    status.anthropic_messages = 'skipped (no api key)';
   }
 
   // Files-API probe: upload a 1-byte JPEG and immediately delete it. This

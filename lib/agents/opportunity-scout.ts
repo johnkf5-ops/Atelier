@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { OpportunityWithRecipientUrls } from '@/lib/schemas/opportunity';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
@@ -14,12 +15,16 @@ export async function startScoutSession(
 ): Promise<string> {
   const client = new Anthropic({ apiKey: getAnthropicKey() });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const session = await (client.beta as any).sessions.create({
-    agent: process.env.SCOUT_AGENT_ID!,
-    environment_id: process.env.ATELIER_ENV_ID!,
-    title: `Scout run ${runId}`,
-  });
+  const session = (await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).sessions.create({
+        agent: process.env.SCOUT_AGENT_ID!,
+        environment_id: process.env.ATELIER_ENV_ID!,
+        title: `Scout run ${runId}`,
+      }),
+    { label: `scout.sessions.create(run=${runId})` },
+  )) as { id: string };
 
   const db = getDb();
   await db.execute({
@@ -34,15 +39,19 @@ export async function startScoutSession(
   });
   await db.execute({ sql: `UPDATE runs SET status = 'scout_running' WHERE id = ?`, args: [runId] });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (client.beta as any).sessions.events.send(session.id, {
-    events: [
-      {
-        type: 'user.message',
-        content: [{ type: 'text', text: buildScoutPrompt(akb, fingerprint, config) }],
-      },
-    ],
-  });
+  await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).sessions.events.send(session.id, {
+        events: [
+          {
+            type: 'user.message',
+            content: [{ type: 'text', text: buildScoutPrompt(akb, fingerprint, config) }],
+          },
+        ],
+      }),
+    { label: `scout.events.send(run=${runId})` },
+  );
 
   return session.id;
 }

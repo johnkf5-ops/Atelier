@@ -1,6 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import {
   DiscoveryResult,
   type AutoDiscoverInput,
@@ -90,6 +91,13 @@ export async function discoverArtist(
   let pauseCount = 0;
 
   while (true) {
+    // Streaming call — withAnthropicRetry can't safely wrap a stream because
+    // a mid-iteration retry would replay events already consumed. The outer
+    // pause/resume loop here already handles transient interruptions by
+    // continuing from the last assistant message. Initial-connect 529/503
+    // is rare and surfaces as a thrown stream-create that the route's
+    // withApiErrorHandling converts to a JSON 500.
+    // eslint-disable-next-line no-restricted-syntax
     const stream = client.messages.stream({
       model: MODEL_OPUS,
       max_tokens: 8000,
@@ -240,7 +248,9 @@ For each URL field, output ONLY the clean URL string. If the source text contain
       },
     ],
   } as unknown as Anthropic.MessageCreateParamsNonStreaming;
-  const r = await client.messages.create(params);
+  const r = await withAnthropicRetry(() => client.messages.create(params), {
+    label: 'auto-discover.parse',
+  });
 
   const text =
     r.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text ?? '';

@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import { z } from 'zod';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import {
   PartialArtistKnowledgeBase,
   type PartialArtistKnowledgeBase as TPartialAkb,
@@ -93,22 +94,26 @@ async function extractFromText(url: string, body: string): Promise<TPartialAkb> 
     const promptSuffix = lastErr
       ? `\n\nYour previous output failed validation: ${lastErr}\nReturn corrected JSON only.`
       : '';
-    const resp = await client.messages.create({
-      model: MODEL_OPUS,
-      max_tokens: 4000,
-      system: [{ type: 'text', text: INGEST_INSTRUCTIONS }],
-      messages: [
-        {
-          role: 'user',
-          content: [
+    const resp = await withAnthropicRetry(
+      () =>
+        client.messages.create({
+          model: MODEL_OPUS,
+          max_tokens: 4000,
+          system: [{ type: 'text', text: INGEST_INSTRUCTIONS }],
+          messages: [
             {
-              type: 'text',
-              text: `SOURCE URL: ${url}\n\nPAGE TEXT:\n${body}${promptSuffix}`,
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `SOURCE URL: ${url}\n\nPAGE TEXT:\n${body}${promptSuffix}`,
+                },
+              ],
             },
           ],
-        },
-      ],
-    });
+        }),
+      { label: `knowledge-extractor.ingest(${url})` },
+    );
     const text = extractText(resp.content as Array<{ type: string; text?: string }>);
     let parsed: unknown;
     try {

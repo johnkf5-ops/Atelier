@@ -1,5 +1,6 @@
 import pLimit from 'p-limit';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { getDb } from '@/lib/db/client';
 import { getLogoUrl } from '@/lib/logos';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
@@ -44,19 +45,23 @@ async function generateCoverNarrative(
   fp: StyleFingerprint,
 ): Promise<string> {
   const client = getAnthropic();
-  const resp = await client.messages.create({
-    model: MODEL_OPUS,
-    max_tokens: 1500,
-    thinking: { type: 'adaptive' },
-    system:
-      "You are writing the COVER PAGE of a Career Dossier for a working visual artist. Synthesize the StyleFingerprint + career highlights from the AKB into a 2-3 paragraph narrative the artist can read aloud. Plain text, no markdown, no preamble. The voice is serious but warm — not a marketing blurb. Lead with the work's formal identity, then the career positioning, then what the dossier ahead will do for them.",
-    messages: [
-      {
-        role: 'user',
-        content: `ARTIST_AKB:\n${JSON.stringify(akb, null, 2)}\n\nSTYLE_FINGERPRINT:\n${JSON.stringify(fp, null, 2)}\n\nWrite the cover narrative now.`,
-      },
-    ],
-  });
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: 1500,
+        thinking: { type: 'adaptive' },
+        system:
+          "You are writing the COVER PAGE of a Career Dossier for a working visual artist. Synthesize the StyleFingerprint + career highlights from the AKB into a 2-3 paragraph narrative the artist can read aloud. Plain text, no markdown, no preamble. The voice is serious but warm — not a marketing blurb. Lead with the work's formal identity, then the career positioning, then what the dossier ahead will do for them.",
+        messages: [
+          {
+            role: 'user',
+            content: `ARTIST_AKB:\n${JSON.stringify(akb, null, 2)}\n\nSTYLE_FINGERPRINT:\n${JSON.stringify(fp, null, 2)}\n\nWrite the cover narrative now.`,
+          },
+        ],
+      }),
+    { label: 'orchestrator.cover-narrative' },
+  );
   return resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
 }
 
@@ -73,36 +78,44 @@ async function generateRankingNarrative(
         `${i + 1}. ${m.opp.name} (composite ${m.composite.toFixed(2)}, fit ${m.fit_score.toFixed(2)}): ${m.reasoning}`,
     )
     .join('\n\n');
-  const resp = await client.messages.create({
-    model: MODEL_OPUS,
-    max_tokens: 1500,
-    thinking: { type: 'adaptive' },
-    system:
-      'You are writing the RANKING NARRATIVE section of a Career Dossier — 3-4 paragraphs explaining why the top opportunities are ordered the way they are, what thematic threads connect them, and which to prioritize applying to first. Reference specific opportunities by name. Plain text, no markdown, no preamble.',
-    messages: [
-      {
-        role: 'user',
-        content: `TOP ${topMatches.length} OPPORTUNITIES (already composite-ranked):\n\n${matchSummaries}\n\nWrite the ranking narrative now.`,
-      },
-    ],
-  });
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: 1500,
+        thinking: { type: 'adaptive' },
+        system:
+          'You are writing the RANKING NARRATIVE section of a Career Dossier — 3-4 paragraphs explaining why the top opportunities are ordered the way they are, what thematic threads connect them, and which to prioritize applying to first. Reference specific opportunities by name. Plain text, no markdown, no preamble.',
+        messages: [
+          {
+            role: 'user',
+            content: `TOP ${topMatches.length} OPPORTUNITIES (already composite-ranked):\n\n${matchSummaries}\n\nWrite the ranking narrative now.`,
+          },
+        ],
+      }),
+    { label: 'orchestrator.ranking-narrative' },
+  );
   return resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
 }
 
 async function generateFilteredOutBlurb(opp: Opportunity, reasoning: string): Promise<string> {
   const client = getAnthropic();
-  const resp = await client.messages.create({
-    model: MODEL_OPUS,
-    max_tokens: 200,
-    thinking: { type: 'disabled' },
-    system: `Summarize why the given opportunity was filtered out for this artist into ONE sentence starting with "Why not ${opp.name}:". The reasoning provided is the Rubric Matcher's full analysis — boil it down to its sharpest single sentence. Plain text, no markdown, no preamble.`,
-    messages: [
-      {
-        role: 'user',
-        content: `OPPORTUNITY: ${opp.name}\nRUBRIC_REASONING: ${reasoning}\n\nWrite the one-sentence "why not" blurb.`,
-      },
-    ],
-  });
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: 200,
+        thinking: { type: 'disabled' },
+        system: `Summarize why the given opportunity was filtered out for this artist into ONE sentence starting with "Why not ${opp.name}:". The reasoning provided is the Rubric Matcher's full analysis — boil it down to its sharpest single sentence. Plain text, no markdown, no preamble.`,
+        messages: [
+          {
+            role: 'user',
+            content: `OPPORTUNITY: ${opp.name}\nRUBRIC_REASONING: ${reasoning}\n\nWrite the one-sentence "why not" blurb.`,
+          },
+        ],
+      }),
+    { label: `orchestrator.filtered-out(${opp.name})` },
+  );
   return (
     resp.content.find((b) => b.type === 'text')?.text?.trim() ??
     `Why not ${opp.name}: filtered (reasoning unavailable).`

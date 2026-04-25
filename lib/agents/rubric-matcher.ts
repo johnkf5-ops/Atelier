@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { RubricMatchResult } from '@/lib/schemas/match';
 import { slugForMount } from '@/lib/anthropic-files';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
@@ -85,13 +86,17 @@ export async function startRubricSession(
   const resources = buildSessionResources(portfolioImages, opportunities);
   console.log(`[start-rubric] mounting ${resources.length} files as session resources`);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const session = await (client.beta as any).sessions.create({
-    agent: process.env.RUBRIC_AGENT_ID!,
-    environment_id: process.env.ATELIER_ENV_ID!,
-    title: `Rubric run ${runId}`,
-    ...(resources.length > 0 ? { resources } : {}),
-  });
+  const session = (await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).sessions.create({
+        agent: process.env.RUBRIC_AGENT_ID!,
+        environment_id: process.env.ATELIER_ENV_ID!,
+        title: `Rubric run ${runId}`,
+        ...(resources.length > 0 ? { resources } : {}),
+      }),
+    { label: `rubric.sessions.create(run=${runId})` },
+  )) as { id: string };
 
   await getDb().execute({
     sql: `INSERT INTO run_event_cursors (run_id, managed_session_id, phase, last_event_id)
@@ -104,17 +109,24 @@ export async function startRubricSession(
     args: [runId, session.id],
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (client.beta as any).sessions.events.send(session.id, {
-    events: [
-      {
-        type: 'user.message',
-        content: [
-          { type: 'text', text: buildRubricPrompt(akb, styleFingerprint, portfolioImages, opportunities) },
+  await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).sessions.events.send(session.id, {
+        events: [
+          {
+            type: 'user.message',
+            content: [
+              {
+                type: 'text',
+                text: buildRubricPrompt(akb, styleFingerprint, portfolioImages, opportunities),
+              },
+            ],
+          },
         ],
-      },
-    ],
-  });
+      }),
+    { label: `rubric.events.send(run=${runId})` },
+  );
 
   return session.id;
 }
