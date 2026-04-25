@@ -112,28 +112,30 @@ Each chunk call includes the full `skills/aesthetic-vocabulary.md` as a `cache_c
 
 `StyleFingerprint` schema (`lib/schemas/style-fingerprint.ts`): `composition_tendencies`, `palette` (`dominant_temperature`, `saturation_register`, `notable_palette_notes`), `subject_categories`, `light_preferences`, `formal_lineage`, `career_positioning_read`, `museum_acquisition_signals`, `weak_signals`. Persisted versioned per user in `style_fingerprints` (`user_id`, `version`, `json`).
 
-### 3.2 Knowledge Extractor — `lib/agents/knowledge-extractor.ts` + `lib/extractor/auto-discover.ts` + `lib/agents/interview.ts`
+### 3.2 Knowledge Extractor — `lib/agents/interview.ts` (live) + `lib/agents/knowledge-extractor.ts` + `lib/extractor/auto-discover.ts` (Auto-Discover, beta — fine-tune target)
 
-Three coordinated paths build the Artist Knowledge Base (AKB):
+Two paths build the Artist Knowledge Base (AKB). The interview is the live default; Auto-Discover is implemented and reachable behind a beta affordance, but not in the default onboarding flow because most working fine-art photographers don't have a public web footprint deep enough for it to be load-bearing yet. Auto-Discover stays as the fine-tune target as the user corpus grows.
 
-**Auto-discover (`lib/extractor/auto-discover.ts`).** Streaming `messages.create` with the `web_search_20250305` tool, prompted to generate 6–10 queries about the artist (name + medium, name + each affiliation, name + city, etc.) and return a discovery list. We use `client.messages.stream(...)` (one of two places we don't go through `withAnthropicRetry` — the wrapper can't safely retry mid-stream because events would replay). The stream is captured for two purposes: (a) emit `query_running` and `results_received` server-sent events to the client for the cycling status UI, and (b) capture per-URL snippets from `web_search_tool_result` blocks (the `encrypted_content` field) into `snippetsByUrl`. The stream tolerates `pause_turn` up to `MAX_PAUSE_RETRIES = 3` by echoing assistant content back and continuing. After the stream resolves, `parseDiscovery` is a second non-streaming call that re-parses the freeform text into the strict `DiscoveryResult` schema using `output_config.format.schema` (with `stripUnsupportedJsonSchemaKeys` applied since Anthropic's structured-output validator rejects `minimum`/`maximum`/`format`/`pattern`). Top-K cap of 15: `parsed.discovered.sort((a, b) => b.confidence_0_1 - a.confidence_0_1).slice(0, 15)`. Eliminates the 60-link noise wall (Note 3 fix #1) before we burn fetch calls.
-
-**URL ingest (`lib/agents/knowledge-extractor.ts`).** For each top-K URL, `ingestUrl(url, { anchor, snippet })`:
-1. Try `fetchHtml(url)` with a 15s timeout and a real UA string.
-2. On fetch failure (404/403/JS-SPA timeout), fall back to the `web_search` snippet captured during auto-discover (Note 3 fix #2 — snippet is JS-rendered as Google sees it, often sufficient for fact extraction).
-3. Pass cleaned HTML or snippet to `extractFromText` with the **identity anchor** baked into the system prompt (`buildInstructions`): "If this page describes a DIFFERENT person with the same or similar name… return {} for this source. Do NOT extract any facts from a same-name page about another person." This is Note 3 fix #3 — it makes "wrong John Knopf" facts structurally impossible to ingest.
-4. Schema validation against `PartialArtistKnowledgeBase` with the same ONE-retry-on-validation-failure pattern as Style Analyst.
-5. Per-call `withAnthropicRetry` with `label: knowledge-extractor.ingest(${url})`.
-
-The merged AKB is written to `akb_versions` with `source: 'ingest'`. Each version is an immutable row; the latest is what `loadLatestAkb()` returns.
-
-**Interview (`lib/agents/interview.ts`).** Conversational turn-loop driven by gap detection (`lib/akb/gaps.ts`). Each turn:
+**Interview (`lib/agents/interview.ts`) — LIVE default path.** Conversational turn-loop driven by gap detection (`lib/akb/gaps.ts`). Each turn:
 1. `detectGaps(currentAkb)` walks the priority-tiered field list (e.g., `identity.artist_name = 115`, `identity.legal_name = 100`, `identity.home_base = 95`, …, `identity.year_of_birth = 15`) and returns gaps ordered by priority.
 2. **DEFAULT_EQUALS suppression** — `legal_name` is suppressed when `legal_name_matches_artist_name === true` (Note 4). Citizenship is suppressed when `home_base.country` is filled (Note 5 — most users' citizenship equals home country; the interview only re-asks if the user explicitly says different).
 3. Top 8 gaps are formatted into the prompt; the model returns `{ agent_message, next_field_target, akb_patch }` validated against `InterviewResponseSchema`. The system prompt enumerates exact question phrasings for the high-priority identity fields so the conversation doesn't ask "What's your full legal name?" before "How should your name appear in your bio?" (the artist-name-primacy fix from Note 4).
 4. The merge patch is applied via `json-merge-patch` and a new `akb_versions` row is written with `source: 'interview'`.
 
-The interview turn handler is wrapped in `withAnthropicRetry` (`label: 'interview.turn'`) — the intermittent 500s John saw on `/api/extractor/turn` (answer the question twice and the second works) were Anthropic transient throws escaping the agent loop. The retry wrapper fixes them at the source.
+The interview turn handler is wrapped in `withAnthropicRetry` (`label: 'interview.turn'`) — the intermittent 500s on `/api/extractor/turn` (answer the question twice and the second works) were Anthropic transient throws escaping the agent loop. The retry wrapper fixes them at the source.
+
+**Auto-Discover (`lib/extractor/auto-discover.ts`) — beta, off by default.** Streaming `messages.create` with the `web_search_20250305` tool, prompted to generate 6–10 queries about the photographer (name + medium, name + each affiliation, name + city, etc.) and return a discovery list. We use `client.messages.stream(...)` (one of two places we don't go through `withAnthropicRetry` — the wrapper can't safely retry mid-stream because events would replay). The stream is captured for two purposes: (a) emit `query_running` and `results_received` server-sent events to the client for the cycling status UI, and (b) capture per-URL snippets from `web_search_tool_result` blocks (the `encrypted_content` field) into `snippetsByUrl`. The stream tolerates `pause_turn` up to `MAX_PAUSE_RETRIES = 3` by echoing assistant content back and continuing. After the stream resolves, `parseDiscovery` is a second non-streaming call that re-parses the freeform text into the strict `DiscoveryResult` schema using `output_config.format.schema` (with `stripUnsupportedJsonSchemaKeys` applied since Anthropic's structured-output validator rejects `minimum`/`maximum`/`format`/`pattern`). Top-K cap of 15: `parsed.discovered.sort((a, b) => b.confidence_0_1 - a.confidence_0_1).slice(0, 15)`. Eliminates the 60-link noise wall (Note 3 fix #1) before we burn fetch calls.
+
+**URL ingest (`lib/agents/knowledge-extractor.ts`) — beta, off by default.** For each top-K URL, `ingestUrl(url, { anchor, snippet })`:
+1. Try `fetchHtml(url)` with a 15s timeout and a real UA string.
+2. On fetch failure (404/403/JS-SPA timeout), fall back to the `web_search` snippet captured during auto-discover (Note 3 fix #2 — snippet is JS-rendered as Google sees it, often sufficient for fact extraction).
+3. Pass cleaned HTML or snippet to `extractFromText` with the **identity anchor** baked into the system prompt (`buildInstructions`): "If this page describes a DIFFERENT person with the same or similar name… return {} for this source. Do NOT extract any facts from a same-name page about another person." This is Note 3 fix #3 — it makes wrong-person facts structurally impossible to ingest.
+4. Schema validation against `PartialArtistKnowledgeBase` with the same ONE-retry-on-validation-failure pattern as Style Analyst.
+5. Per-call `withAnthropicRetry` with `label: knowledge-extractor.ingest(${url})`.
+
+The merged AKB from any successful Auto-Discover run is written to `akb_versions` with `source: 'ingest'`. Each version is an immutable row; the latest is what `loadLatestAkb()` returns.
+
+**Why Auto-Discover sits behind a beta affordance instead of the default.** Auto-Discover works well for photographers with fifteen years of press; it returns thin output for the prototypical mid-career photographer with two galleries and no Wikipedia page. We built it, tested it against the prototypical user pool, learned the limit, and pulled it out of the default onboarding flow. It will be fine-tuned against the kind of public footprint working photographers actually have once the user corpus is large enough to drive the tuning.
 
 ### 3.3 Opportunity Scout (Managed Agent) — `lib/agents/opportunity-scout.ts`
 

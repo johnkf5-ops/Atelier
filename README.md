@@ -23,6 +23,8 @@ Atelier is the tool that removes the writing wall. It reads your portfolio with 
 
 It is built for mid-career US fine-art photographers with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user — the moat is photography-domain depth, not breadth across every medium.
 
+This is **version one of a real product** that will live past the hackathon. Atelier will be free for working photographers because they deserve a tool like this, and starting in the medium the builder knows best lets the system get the depth right before it gets the breadth wide. The path forward is to ship to photographers, listen to what they recommend, and expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time.
+
 ---
 
 ## Demo
@@ -64,7 +66,7 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
 ```
 
 - **Style Analyst** — Opus 4.7 vision over the full portfolio. Produces a structured aesthetic fingerprint: composition, palette, subject, light, formal lineage, career-positioning read. Direct SDK call.
-- **Knowledge Extractor** — Builds the Artist Knowledge Base by ingesting URLs the artist provides (personal site, gallery bios, press mentions), then interviewing them via text to fill gaps the ingestion missed. Direct SDK call. Versioned and durable across runs.
+- **Knowledge Extractor** — Builds the Artist Knowledge Base via a gap-driven structured text interview. The interview walks a priority-tiered field list (identity, practice, bodies of work, exhibitions, etc.) and only asks for what's missing. A separate Auto-Discover path (search → rank → top-K → fetch → identity-anchored extraction from the photographer's public web presence) is implemented and reachable in the code; it's not in the default onboarding flow because most working fine-art photographers don't have a public web footprint deep enough for it to be load-bearing yet. Auto-Discover is the fine-tune target as the user corpus grows. Direct SDK call. Versioned and durable across runs.
 - **Opportunity Scout** *(Managed Agent)* — Searches twenty-plus curated source archetypes for current open calls in the artist's window. Runs long; uses `agent_toolset_20260401` (web_search, web_fetch, bash, read).
 - **Rubric Matcher** *(Managed Agent)* — For each candidate opportunity, fetches past recipients, normalizes their portfolio images through Sharp, uploads them to the Anthropic Files API, then sends them as image content blocks inside per-opportunity `user.message` events so the agent reads both the artist's portfolio and the recipient cohort directly with vision. Produces a fit score, reasoning, and supporting / weakening images per match.
 - **Package Drafter** — For matched opportunities, drafts artist statement, project proposal, CV, and cover letter in the institutional voice each program expects. Pulls facts exclusively from the AKB. Direct SDK call.
@@ -96,9 +98,13 @@ Detailed architecture, including the run lifecycle, Managed Agent session shape,
 
 These are the contributions that distinguish Atelier from a chat-with-your-portfolio prototype.
 
-### 1. Knowledge Extractor — durable structured artist knowledge from public web data plus interview
+### 1. The Artist Knowledge Base — durable structured photographer knowledge from a gap-driven interview (with Auto-Discover as the next layer)
 
-Most working artists are not very googlable, and most cannot write well about their own work. The Extractor solves both. It runs a search → rank → top-K → fetch pipeline against URLs the artist seeds and against discovered references, with a snippet-fallback for JS-rendered pages and bot-blocked sources. Every fact written to the AKB carries a `source_url`, an `extracted_quote`, and an identity-anchor check — the same name belonging to a different person never enters the record. Then a gap-detection pass identifies which AKB fields are still empty and runs a structured text interview targeted at exactly those gaps. The output is a versioned Artist Knowledge Base — a durable user asset reusable across every future run. See [`lib/agents/knowledge-extractor.ts`](./lib/agents/knowledge-extractor.ts) and [`lib/extractor/`](./lib/extractor/).
+Most working fine-art photographers cannot write well about their own work, and most don't have a public web footprint deep enough to assemble a CV from. Atelier solves the first problem now and is positioned to solve the second as the user corpus grows.
+
+The live path is a **gap-driven structured interview**. A priority-tiered field list (identity, practice, bodies of work, exhibitions, publications, awards, collections, representation, intent) drives the conversation: each turn detects which AKB fields are still empty, surfaces the highest-priority gap, and asks for it in plain language. The interview never asks for what it can derive (legal name when artist name is given and they match, citizenship when home country is set). The output is a **versioned Artist Knowledge Base** persisted as immutable rows in `akb_versions` — a durable user asset reusable across every future run.
+
+The next layer, **Auto-Discover**, is implemented and reachable in the codebase. It runs a search → rank → top-K → fetch pipeline against URLs the photographer seeds and against discovered references, with a snippet-fallback for JS-rendered pages and bot-blocked sources. Every fact written to the AKB carries a `source_url`, an `extracted_quote`, and an identity-anchor check — the same name belonging to a different person never enters the record. It works well for photographers with fifteen years of press; it returns thin output for the prototypical mid-career photographer with two galleries and no Wikipedia page. So it stays as a fork in the road, surfaced as "Auto-Discover (beta)" in the onboarding flow, and waits for fine-tuning against the kind of footprint working photographers actually have. See [`lib/agents/knowledge-extractor.ts`](./lib/agents/knowledge-extractor.ts), [`lib/extractor/`](./lib/extractor/), and [`lib/agents/interview.ts`](./lib/agents/interview.ts).
 
 ### 2. Rubric Matcher — aesthetic-judgment-as-matching against past-recipient cohorts
 

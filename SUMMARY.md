@@ -80,13 +80,13 @@ Implementing it took three architectural pivots, each forced by a behavior that 
 
 The earlier shape — mounting all images as session resources and asking the agent to read them with the `read` tool — works at probe scale (five files, twenty files) and silently fails at production scale (ninety-five files). The `read` tool returns text-only output rather than multimodal binary above some session-resource ceiling that isn't documented anywhere. Image content blocks in `user.message` are the documented multimodal pattern and they engage vision regardless of session size. The bandage is the cure.
 
-### The Knowledge Extractor
+### The Artist Knowledge Base
 
 The other piece that took serious engineering: building the Artist Knowledge Base.
 
-Most working fine-art photographers are not very googlable, and most cannot write well about their own work. The Extractor handles both. It runs a search → rank → top-K → fetch pipeline against the URLs the artist seeds (personal site, gallery bios, press mentions) and against any other URLs it discovers along the way. Pages that don't render server-side or that block the user agent get a snippet fallback so the structured data isn't entirely lost.
+Most working fine-art photographers cannot write well about their own work, and most don't have a public web footprint deep enough to assemble a CV from. The live path through the AKB is a **gap-driven structured interview**. A priority-tiered field list (identity, practice, bodies of work, exhibitions, publications, awards, collections, representation, intent) drives the conversation: each turn detects which AKB fields are still empty, surfaces the highest-priority gap, and asks for it in plain language. The interview never asks for what it can derive — legal name when artist name is given and they match, citizenship when home country is set. The output is a versioned Artist Knowledge Base persisted as immutable rows in `akb_versions`, reusable across every future run. Onboard once.
 
-Every fact written to the AKB carries a `source_url` and an `extracted_quote`. Every candidate fact passes through an identity-anchor check — the same name belonging to a different artist never enters the record. Then a gap-detection pass identifies which AKB fields are still empty, and a structured text interview targets exactly those gaps. The output is a versioned Artist Knowledge Base that's reusable across every future run. Onboard once.
+A second layer, **Auto-Discover**, is implemented and reachable in the code. It runs a search → rank → top-K → fetch pipeline against URLs the photographer seeds and against discovered references, with a snippet fallback for JS-rendered pages and bot-blocked sources. Every fact carries a `source_url` and an `extracted_quote`. Every candidate fact passes through an identity-anchor check — the same name belonging to a different artist never enters the record. It works for photographers with fifteen years of press; it returns thin output for the prototypical mid-career photographer with two galleries and no Wikipedia page. So we built it, tested it, learned the limit, and pulled it out of the default flow. It stays as the fine-tune target for when the user corpus grows.
 
 The AKB is the asset that makes the rest of the system possible. The Drafter pulls every fact from it. The fact-grounding linter that runs on each drafted material checks that every year, every proper-noun phrase, and every named institution in the draft can be traced to a string the AKB literally contains. Hallucinated exhibitions, fabricated partnerships, made-up dates — those bugs are gone because the linter rejects the draft and forces a revision pass when they appear.
 
@@ -137,6 +137,12 @@ The first run I did with Atelier on my own portfolio surfaced six included oppor
 I'm going to apply to all six.
 
 That's the test the system has to pass for every photographer who uses it. Not "did the agent loop complete." Not "did vision engage." Did the photographer read the dossier and decide to apply.
+
+---
+
+## What this is, going forward
+
+Atelier was built for the hackathon and it is also a real product. It will live past the submission window. It will be free for working photographers because they deserve a tool like this and the existing aggregators do not serve them. The version one is photography-only on purpose — the moat is domain depth, and starting in the medium the builder knows best is the only honest way to get the depth right before getting the breadth wide. The path forward is: ship to photographers, listen to what they recommend, fine-tune Auto-Discover against the public footprints working photographers actually have, then expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time. One genre, then the next, with feedback from the people using it. That's the plan. The hackathon is the start, not the finish.
 
 ---
 
