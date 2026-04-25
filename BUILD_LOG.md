@@ -320,3 +320,17 @@ Four notes shipped together since they touched disjoint files.
 
 53/53 smoke tests pass. `tsc` + `lint` + `build` all clean. Pushed to main.
 
+### Notes 13 + 14 — dossier polish (tier labels + sort + humanised dates + delete timeline)
+
+**Commit:** `a5b15a0`. Pushed.
+
+Bundled because both notes touched the same dossier-view file.
+
+**Note 13 — drop internal scores, use tier labels.** New `lib/ui/copy.ts` `fitTier()` maps composite to qualitative label + colour: ≥0.65 "Strong fit", ≥0.45 "Solid fit", ≥0.25 "Worth applying", below "Long shot". Removes the false-rigor "0.36 vs 0.40" feeling — every user understands a tier label. `dossier-view.tsx` `ScoreBadge` replaced with the tier pill. The "Why this fit?" disclosure on every collapsed card surfaces the Rubric reasoning directly — default collapsed, one click to expand the paragraph inline. Filtered-out section reframed: *"We considered these but they're not your room"* with the `filtered_out_blurb` as explanation. The "Why this match" expanded-card tab is also relabelled "Why this fit" for consistency.
+
+**Note 14 — delete Deadline Timeline, add sort toggle.** `DeadlineStrip` component deleted entirely. Decoration — showed dots without labels, redundant with the deadline-per-card already on the list. New sort toggle on the list header: **Best fit | Deadline | Prize amount**. Default Best fit. User clicks Deadline → list re-sorts by `daysUntilDeadline` ASC. Single source of truth; user pivots however they want. Deadline + prize fields now humanised: *"Jun 30, 2026 — 9 weeks"* instead of ISO; *"$10k"* instead of *"$10000"*.
+
+Smoke test `tests/smoke/copy.test.ts` locks the tier boundaries + date humanisation + money formatting so future tweaks don't drift silently. 67/67 tests pass.
+
+Layer-2 app-wide vocabulary sweep + Layer-3 CI grep guard left for future scope — out of bounds for the demo-blocker batch. The dossier (the surface a judge sees) is now clean.
+
