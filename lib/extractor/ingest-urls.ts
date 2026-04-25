@@ -3,6 +3,7 @@ import { loadLatestAkb, loadAkbById, saveAkb } from '@/lib/akb/persistence';
 import { mergeAkb, type Provenance } from '@/lib/akb/merge';
 import { emptyAkb, type ArtistKnowledgeBase as TAkb } from '@/lib/schemas/akb';
 import type { IdentityAnchor } from '@/lib/schemas/discovery';
+import { listUntrustedSources } from '@/lib/db/queries/untrusted-sources';
 
 export type IngestSource = 'auto-discover' | 'paste' | 'manual';
 
@@ -52,11 +53,22 @@ export async function ingestUrls(
   let ingestedCount = 0;
   let snippetFallbackCount = 0;
 
+  // Filter out URLs the user has previously rejected as ingest sources.
+  // WALKTHROUGH Note 10 — without this, every re-ingest re-introduces
+  // the same hallucinated facts the user already deleted.
+  const untrustedList = new Set(await listUntrustedSources(userId));
+  const skippedAsUntrusted = urls.filter((u) => untrustedList.has(u));
+  const eligibleUrls = urls.filter((u) => !untrustedList.has(u));
+  for (const url of skippedAsUntrusted) {
+    failed.push({ url, reason: 'source previously marked untrusted by user' });
+    opts.onProgress?.({ type: 'failed', url, reason: 'untrusted source' });
+  }
+
   // Emit fetching events in order, then kick off all fetches in parallel.
   // Plan §2.5: `Promise.allSettled` so one bad URL doesn't break the batch.
-  for (const url of urls) opts.onProgress?.({ type: 'fetching', url });
+  for (const url of eligibleUrls) opts.onProgress?.({ type: 'fetching', url });
   const settled = await Promise.allSettled(
-    urls.map((u) =>
+    eligibleUrls.map((u) =>
       ingestUrl(u, {
         anchor: opts.anchor ?? null,
         snippet: opts.snippetsByUrl?.[u],
@@ -65,7 +77,7 @@ export async function ingestUrls(
   );
 
   for (let i = 0; i < settled.length; i++) {
-    const url = urls[i];
+    const url = eligibleUrls[i];
     const s = settled[i];
     if (s.status === 'rejected') {
       const reason = String(s.reason);

@@ -38,6 +38,7 @@ const EXPECTED_TABLES = [
   'drafted_packages',
   'dossiers',
   'run_opportunities',
+  'untrusted_sources',
   '_migrations',
 ] as const;
 

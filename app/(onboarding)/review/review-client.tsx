@@ -252,24 +252,216 @@ export default function ReviewClient() {
         </Section>
       </div>
 
-      <Section title="Bodies of work / exhibitions / publications / awards / collections / representation" provenancePrefix="" akb={draft}>
-        <pre className="text-[11px] text-neutral-300 overflow-auto max-h-[24rem] leading-snug whitespace-pre-wrap">
-{JSON.stringify({
-  bodies_of_work: draft.bodies_of_work,
-  exhibitions: draft.exhibitions,
-  publications: draft.publications,
-  awards_and_honors: draft.awards_and_honors,
-  collections: draft.collections,
-  representation: draft.representation,
-  education: draft.education,
-}, null, 2)}
-        </pre>
-        <p className="text-xs text-neutral-500 mt-2">
-          Array editing UI lands in Path B; for v1 these are populated by ingestion + interview.
-          Edit raw JSON via the API if needed.
-        </p>
-      </Section>
+      <ArrayFactSection
+        path="awards_and_honors"
+        label="Awards and honors"
+        items={draft.awards_and_honors as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="exhibitions"
+        label="Exhibitions"
+        items={draft.exhibitions as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="publications"
+        label="Publications"
+        items={draft.publications as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="bodies_of_work"
+        label="Bodies of work"
+        items={draft.bodies_of_work as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="education"
+        label="Education"
+        items={draft.education as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="representation"
+        label="Gallery representation"
+        items={draft.representation as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
+      <ArrayFactSection
+        path="collections"
+        label="Collections"
+        items={draft.collections as unknown[] | undefined}
+        akb={draft}
+        onAfterDelete={async (next) => {
+          const normalized = normalizeAkbForForm(next as Record<string, unknown>);
+          setAkb(normalized);
+          setDraft(normalized);
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * Per-array-entry editor with delete + untrust-source affordance.
+ * WALKTHROUGH Note 10 — every fact must be deletable, regardless of source,
+ * and the source URL can be marked untrusted so future ingests skip it.
+ */
+function ArrayFactSection({
+  path,
+  label,
+  items,
+  akb,
+  onAfterDelete,
+}: {
+  path: string;
+  label: string;
+  items: unknown[] | undefined;
+  akb: Akb;
+  onAfterDelete: (nextAkb: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const list = Array.isArray(items) ? items : [];
+  if (list.length === 0) {
+    return (
+      <Section title={label} provenancePrefix="" akb={akb}>
+        <p className="text-xs text-neutral-500">No {label.toLowerCase()} captured yet.</p>
+      </Section>
+    );
+  }
+  return (
+    <Section title={label} provenancePrefix="" akb={akb}>
+      <ul className="divide-y divide-neutral-800 text-sm">
+        {list.map((item, i) => {
+          const provKey = `${path}[${i}]`;
+          const prov = akb.source_provenance[provKey] ?? akb.source_provenance[path];
+          const provUrl = prov?.startsWith('ingested:') ? prov.slice('ingested:'.length) : null;
+          return (
+            <li key={`${path}-${i}`} className="py-2 flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <pre className="text-[11px] text-neutral-300 whitespace-pre-wrap font-mono">
+{JSON.stringify(item, null, 2)}
+                </pre>
+                {prov && (
+                  <div className="text-[10px] text-neutral-600 mt-1">
+                    source: {prov === 'manual' ? 'manual edit' : provUrl ?? prov}
+                  </div>
+                )}
+              </div>
+              <DeleteFactButton
+                path={path}
+                index={i}
+                hasIngestedSource={!!provUrl}
+                onAfterDelete={onAfterDelete}
+              />
+            </li>
+          );
+        })}
+      </ul>
+    </Section>
+  );
+}
+
+function DeleteFactButton({
+  path,
+  index,
+  hasIngestedSource,
+  onAfterDelete,
+}: {
+  path: string;
+  index: number;
+  hasIngestedSource: boolean;
+  onAfterDelete: (nextAkb: Record<string, unknown>) => void | Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  async function doDelete(untrust: boolean) {
+    setBusy(true);
+    try {
+      const r = await fetchJson<{ akb: Record<string, unknown> }>('/api/akb/delete-fact', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path, index, untrust_source: untrust }),
+      });
+      if (r.ok) await onAfterDelete(r.data.akb);
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  }
+
+  if (confirming) {
+    return (
+      <div className="shrink-0 flex flex-col items-end gap-1 text-[11px]">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => doDelete(false)}
+          className="px-2 py-1 border border-rose-500/40 rounded text-rose-200 hover:bg-rose-500/10 disabled:opacity-40"
+        >
+          Delete
+        </button>
+        {hasIngestedSource && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => doDelete(true)}
+            className="px-2 py-1 border border-rose-500/40 rounded text-rose-200 hover:bg-rose-500/10 disabled:opacity-40"
+          >
+            Delete + untrust source
+          </button>
+        )}
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setConfirming(false)}
+          className="px-2 py-1 border border-neutral-700 rounded text-neutral-400 hover:bg-neutral-800 disabled:opacity-40"
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setConfirming(true)}
+      className="shrink-0 px-2 py-1 text-[11px] border border-neutral-700 rounded text-neutral-400 hover:bg-neutral-800 hover:text-rose-300"
+    >
+      Remove
+    </button>
   );
 }
 

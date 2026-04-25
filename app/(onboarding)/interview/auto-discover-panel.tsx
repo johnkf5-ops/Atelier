@@ -1,6 +1,26 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import CyclingStatus from '@/app/_components/cycling-status';
+
+const DISCOVERY_STATUS_MESSAGES = [
+  'Searching the web for your public record…',
+  'Reading gallery sites, bios, and press features…',
+  'Parsing publication and exhibition mentions…',
+  'Cross-referencing affiliations and residencies…',
+  'Identifying same-name disambiguation candidates…',
+  'Compiling the discovery list…',
+];
+
+const INGEST_STATUS_MESSAGES = [
+  'Opening your selected pages…',
+  'Extracting biography, CV, and press mentions…',
+  'Parsing exhibition history…',
+  'Reading gallery representation details…',
+  'Checking each fact against your identity anchor…',
+  'Normalizing facts into your Knowledge Base…',
+  'Saving your updated Knowledge Base…',
+];
 
 type DiscoveredEntry = {
   url: string;
@@ -318,8 +338,11 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
             Confirm and ingest ({checked.size})
           </button>
         )}
-        {status === 'ingesting' && <span className="text-xs text-neutral-500">Ingesting selected pages…</span>}
       </div>
+
+      {status === 'ingesting' && (
+        <CyclingStatus messages={INGEST_STATUS_MESSAGES} intervalMs={5000} />
+      )}
 
       {errorMsg && (
         <div className="rounded border border-rose-700 bg-rose-950/30 p-3 text-sm text-rose-300">
@@ -330,6 +353,10 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
             </div>
           )}
         </div>
+      )}
+
+      {(status === 'searching' || status === 'parsing') && (
+        <CyclingStatus messages={DISCOVERY_STATUS_MESSAGES} intervalMs={5000} />
       )}
 
       {(status === 'searching' || status === 'parsing') && (

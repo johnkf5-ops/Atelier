@@ -9,6 +9,10 @@ type AtelierEvent = {
   _agent?: string;
   _kind?: string;
   _created_at?: number;
+  // Anthropic Managed Agents emit processed_at as ISO; the playback route
+  // synthesises _created_at as unix-seconds. WALKTHROUGH Note 12: use the
+  // per-event timestamp, not the poll-fetch wall-clock.
+  processed_at?: string;
   type?: string;
   name?: string;
   input?: Record<string, unknown>;
@@ -23,6 +27,35 @@ type FeedItem = {
   detail?: string;
   tone: 'neutral' | 'tool' | 'thinking' | 'status' | 'error' | 'persist';
 };
+
+function pickEventTs(e: AtelierEvent): number {
+  // Prefer Anthropic processed_at (live poll path), fall back to playback's
+  // _created_at, fall back to 0 only if both absent. Returns ms.
+  if (e.processed_at) {
+    const t = Date.parse(e.processed_at);
+    if (!Number.isNaN(t)) return t;
+  }
+  if (e._created_at) return e._created_at * 1000;
+  return 0;
+}
+
+function formatEventTime(ts: number): string {
+  if (!ts) return '';
+  return new Date(ts).toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatDelta(ms: number): string {
+  if (ms < 1000) return `+${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `+${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s % 60;
+  return rs > 0 ? `+${m}m ${rs}s` : `+${m}m`;
+}
 
 const HIDDEN_TOOLS = new Set(['bash', 'read', 'write', 'edit', 'glob', 'grep']);
 
@@ -54,7 +87,7 @@ function formatStatus(s: string): string {
 function eventToItem(e: AtelierEvent): FeedItem | null {
   const agent = e._agent ?? (e.type ?? '').split('.')[0];
   const kind = e._kind ?? (e.type ?? '').split('.').slice(1).join('.');
-  const ts = (e._created_at ?? 0) * 1000;
+  const ts = pickEventTs(e);
   const key = `${agent}.${kind}.${ts}.${Math.random().toString(36).slice(2, 6)}`;
 
   if (agent === 'agent') {
@@ -202,16 +235,18 @@ export default function RunLive({ runId }: { runId: number }) {
       <section className="rounded border border-neutral-800 bg-neutral-950">
         <div ref={scrollerRef} className="h-[32rem] overflow-y-auto p-4 space-y-2 font-mono text-xs">
           {feed.length === 0 && <div className="text-neutral-500">Waiting for first event…</div>}
-          {feed.map((it) => (
-            <FeedRow key={it.id} item={it} />
-          ))}
+          {feed.map((it, i) => {
+            const prev = i > 0 ? feed[i - 1] : null;
+            const deltaMs = prev && prev.ts && it.ts ? it.ts - prev.ts : 0;
+            return <FeedRow key={it.id} item={it} deltaMs={deltaMs} />;
+          })}
         </div>
       </section>
     </div>
   );
 }
 
-function FeedRow({ item }: { item: FeedItem }) {
+function FeedRow({ item, deltaMs }: { item: FeedItem; deltaMs: number }) {
   const color =
     item.tone === 'error'
       ? 'text-rose-400'
@@ -224,10 +259,21 @@ function FeedRow({ item }: { item: FeedItem }) {
             : item.tone === 'status'
               ? 'text-neutral-400'
               : 'text-neutral-200';
-  const time = new Date(item.ts || Date.now()).toTimeString().slice(0, 8);
+  const time = formatEventTime(item.ts) || '—:—:—';
+  // WALKTHROUGH Note 12: highlight long gaps so the silence reads as
+  // "agent thinking", not "frozen UI".
+  const gapDanger = deltaMs > 30_000;
   return (
     <div className={`flex gap-3 ${color}`}>
-      <span className="text-neutral-600">{time}</span>
+      <span className="text-neutral-600 tabular-nums">{time}</span>
+      {deltaMs > 0 && (
+        <span
+          className={`text-[10px] tabular-nums ${gapDanger ? 'text-amber-400' : 'text-neutral-700'}`}
+          title={gapDanger ? 'long gap — agent still running' : undefined}
+        >
+          {formatDelta(deltaMs)}
+        </span>
+      )}
       <div className="flex-1 min-w-0">
         <div className="truncate">{item.title}</div>
         {item.detail && <div className="text-neutral-500 truncate">› {item.detail}</div>}

@@ -197,6 +197,18 @@ CREATE TABLE IF NOT EXISTS run_opportunities (
 );
 CREATE INDEX IF NOT EXISTS idx_run_opportunities_run_id ON run_opportunities(run_id);
 
+-- WALKTHROUGH Note 10: when the user rejects a fact on /review that came
+-- from auto-discover, the source URL is recorded here so future runs of
+-- auto-discover skip it. Prevents the "delete this hallucination forever"
+-- treadmill where every re-ingest re-introduces the same wrong fact.
+CREATE TABLE IF NOT EXISTS untrusted_sources (
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  url TEXT NOT NULL,
+  reason TEXT,                       -- optional free-text user note
+  rejected_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (user_id, url)
+);
+
 -- Migration bookkeeping (kept for historical compat; no files tracked anymore).
 CREATE TABLE IF NOT EXISTS _migrations (
   name TEXT PRIMARY KEY,
