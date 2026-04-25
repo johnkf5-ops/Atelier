@@ -2,7 +2,7 @@
 
 ## What this file is for
 
-An artist statement is a short piece of writing the artist provides alongside images so a juror, curator, or fellowship panel can hear the artist think. It is not a press release, not a third-person bio, and not a pitch. A good one opens with what the artist is after — a question, a place, a stake — and then earns the technical detail by showing what it enables. A bad one opens with cameras, formats, or a list of locations; uses the third person to sound serious; or drops lineage names ("in the tradition of Adams, Weston, Rowell") to borrow weight the work has not yet earned. For a working landscape photographer pursuing state arts council fellowships, regional photo prizes, and book grants, the register the panel rewards is plain, first-person, and specific to a place and a sustained engagement — not curatorial-essay prose. The best length is usually 150-300 words; if the prompt allows 500, do not pad to 500.
+An artist statement is a short piece of writing the artist provides alongside images so a juror, curator, or fellowship panel can hear the artist think. It is not a press release, not a third-person bio, and not a pitch. A good one opens with what the artist is after — a question, a place, a stake — and earns its technical detail by showing what it enables. A bad one opens with cameras or a list of locations, uses third person to sound serious, or drops lineage names ("in the tradition of Adams, Weston, Rowell") to borrow weight the work has not earned. For a landscape photographer pursuing state arts council fellowships, regional photo prizes, and book grants, the register panels reward is plain, first-person, and specific to a place and a sustained engagement. Best length is usually 150-300 words; do not pad.
 
 ---
 
@@ -184,7 +184,7 @@ Plus, from his published interviews: "I want my work to inspire people to really
 
 1. **Open with what the artist is after, not with cameras, formats, or a list of locations.** First sentence should land a stake, a question, or a working principle.
 2. **First person throughout.** "I shoot…" or "I have spent twenty years…" Never "John Knopf's work…" except in a bio paragraph clearly labeled as bio.
-3. **Maximum one em-dash per 200 words.** Three em-dashes in three sentences is the LLM tell that will get the statement flagged or dismissed.
+3. **Zero em-dashes (—). Hard rule.** Working artists almost never use em-dashes; em-dash rhythm is the single most reliable LLM-prose tell in 2026. Use commas, periods, parentheses, or colons instead. If the model wants to say "subject — descriptor — close," restructure to two sentences, or use a comma.
 4. **Never use the phrases:** "sits at the intersection of," "sits in the lineage of," "interrogates the relationship between," "liminal space," "a kind of grammar," "aesthetic signature," "visual vocabulary," "working grammar," "commercial-gallery register," "meditations on," "informed by."
 5. **Technical detail must be justified by what it enables artistically.** Do not list the camera, the format, the filters, or the print process as facts. If the wet plate matters, say what it lets the artist see or do that no other process would.
 6. **Lineage references in the artist's own voice: maximum 1-2 names, total, across the whole statement, and only if they are *animating* influences (an idea, a method, a stance you've absorbed) — not positioning markers.** If you find yourself listing three or more names, delete the sentence.
@@ -216,10 +216,51 @@ Plus, from his published interviews: "I want my work to inspire people to really
 ## Quick verification checklist before sending any statement
 
 - First sentence does not contain a camera, a filter, or a lineage name.
-- Total em-dash count divided by total word count is below 1/200.
+- Em-dash count is ZERO. Not "low." Zero.
 - First person throughout, or first-person-after-name-once.
 - Lineage names mentioned: 0, 1, or 2. Never 3+.
-- One sentence is quotable.
+- One sentence is quotable (5–12 words, present-tense, declarative).
 - Word count: 150-300 unless prompt explicitly allows more.
 - No phrase from the banned-phrases list in voice rule #4.
 - Place specificity: at least one named place AND a duration of engagement with it.
+
+---
+
+## Additional patterns surfaced during research
+
+### Engineer one quotable single-line thesis per statement
+
+Across all 7 GOOD examples, the strongest sentence is 5–12 words, present-tense, declarative:
+- "My first thought is always of light." (Rowell)
+- "You visually organize the chaos." (Butcher)
+- "The subject is always nature, my main tool is light." (Frye)
+- "I wanted to actively pursue these events." (Dobrowner)
+- "Art is first created for oneself." (Luong)
+
+Hard requirement: every statement must include one such sentence as the structural anchor. Build the surrounding paragraphs around it. This is the sentence the panel remembers.
+
+### Banned vocabulary (extension to voice rule #4)
+
+These words are saturated in the genre to the point of meaninglessness:
+- "vision" / "visionary"
+- "journey"
+- "passion" / "passionate"
+- "explore" / "exploration"
+- "capture" (use "photograph", "make", "see" instead)
+- "story" / "storytelling" (when used as a generic claim)
+
+### Two genres of artist writing — do not conflate
+
+There are two distinct artist-writing artifacts:
+1. **About / bio page** — third-person, biographical, career-marker dense ("Knopf has photographed for 20 years…"). Belongs on the gallery website. NOT what an artist statement is.
+2. **Artist statement / project statement / award statement** — first-person, animating, claim-driven. Goes in applications.
+
+The Drafter's `artist_statement` material must be the second genre. The current Drafter output produces the first dressed up as the second — that is the core voice failure. When in doubt, re-read the verbatim Caswell, Burtynsky, and Dobrowner statements above.
+
+### State-fellowship-specific pattern: place + threat
+
+Both Caswell (Maine Arts) and Butcher (NEA Medal) ground their statements in a specific place tied to ecological or civic loss:
+- Caswell: a Maine island; landscape "consumed by water and the rising ocean."
+- Butcher: the Everglades; conservation "for future generations."
+
+For state arts council fellowship statements, this **place + threat** pattern is structural. If the artist's AKB has conservation/civic intent, surface it through a SPECIFIC place the artist returns to (drawn from `bodies_of_work` or `home_base`), not a generic "the planet is beautiful" line. The specificity is what wins the panel.
