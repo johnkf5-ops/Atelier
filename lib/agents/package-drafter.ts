@@ -289,6 +289,39 @@ const NAME_PRIMACY_CONSTRAINT = `IDENTITY NAMING:
 - \`identity.legal_name\` is for tax / contract sections ONLY, and only when the template explicitly asks for "legal name (for tax/contract)".
 - If \`identity.artist_name\` and \`identity.legal_name\` differ, the cover letter's signature is artist_name; the legal name appears (if at all) only in an explicitly-labelled "Name for tax / W-9 purposes:" line.`;
 
+// WALKTHROUGH Note 24 (CRITICAL — safety): every biographical claim in
+// drafted material must be verifiable in the provided ARTIST_AKB JSON.
+// Hallucinated venues / dates / partnerships in drafts that go out under
+// the artist's name constitute misrepresentation to a funding body.
+// Applied to ALL Drafter prompts (statement / proposal / cover_letter /
+// rationale / master CV) — alongside FINGERPRINT_CONSTRAINT (visual claims)
+// and NAME_PRIMACY_CONSTRAINT (identity).
+const AKB_FACTS_ONLY_CONSTRAINT = `HARD CONSTRAINT — BIOGRAPHICAL FACTS MUST COME FROM AKB ONLY:
+
+Every claim you make about the artist's exhibitions, publications, awards, collections, representation, residencies, partnerships, commissions, dates, venues, project plans, monographs, or future commitments MUST be verifiable in the provided ARTIST_AKB JSON. Do NOT invent ANY of the following:
+- Exhibitions not listed in akb.exhibitions
+- Publications not listed in akb.publications
+- Awards not listed in akb.awards_and_honors
+- Gallery representation not listed in akb.representation
+- Collections not listed in akb.collections
+- Residencies, fellowships, or grants the artist has NOT received
+- Partnerships with named organizations, tribes, councils, or institutions not in akb
+- Specific future dates (e.g., "October 2026", "spring 2027 exhibition") UNLESS the AKB explicitly states them
+- Confirmed exhibitions, commissions, or publications that are not actually confirmed in the AKB
+- Curatorial or organizational credits beyond what's listed in akb.curatorial_and_organizational
+- Press, awards, or recognitions not in the AKB
+
+If the prompt asks you to be specific about WHY this opportunity, draw the specificity from:
+- akb.bodies_of_work for project subject and scope
+- akb.intent.aspirations for forward-looking commitments
+- akb.intent.statement for animating principles
+- akb.curatorial_and_organizational for community/civic credentials
+- The opportunity's own field (geographic alignment, category fit, jury alignment) — these are derivable from the opp data, not invented
+
+If the AKB does not contain a fact that would make a sentence specific, OMIT that sentence rather than invent the fact. A vaguer-but-true sentence beats a specific-but-false sentence every time. The drafted material will be submitted under the artist's name; false claims constitute misrepresentation to the funding body.
+
+When you cite a specific year, venue, partnership, or commitment, the corresponding fact MUST be present in the AKB. If you find yourself writing "[venue] in [year]" or "ongoing [relationship]" or "confirmed [event]" and you cannot point to the AKB field that supports it, delete the claim.`;
+
 // WALKTHROUGH Note 20: hard voice constraints applied to artist_statement +
 // cover_letter (any first-person, voice-bearing prose). Loaded as system text
 // so the model sees them BEFORE the few-shot examples.
@@ -376,7 +409,7 @@ const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: s
       '\n\n---\n\n' +
       STATEMENT_VOICE_CONSTRAINTS +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT + '\n\n---\n\n' + AKB_FACTS_ONLY_CONSTRAINT +
       '\n\n---\n\nYou are writing an artist statement for a specific opportunity application. The few-shot examples above are real winning statements — match THEIR voice, not the curatorial-essay or LLM-default register. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.',
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
 
@@ -405,7 +438,7 @@ Write the artist statement now. Describe the work as the fingerprint says it IS.
       '\n\n---\n\n' +
       PROPOSAL_VOICE_CONSTRAINTS +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT + '\n\n---\n\n' + AKB_FACTS_ONLY_CONSTRAINT +
       '\n\n---\n\nYou are writing a project proposal for a specific opportunity. The proposal type is given in the user message — use the matching template from the few-shot examples above (NOT the generic six-beat structure unless the type is "guggenheim-major-bespoke"). Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity\'s stated requirements are provided, follow their structure and word limits. No preamble, no markdown. Return plain text only.',
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
 
@@ -439,7 +472,7 @@ Write the project proposal now. Match the structural shape of the matching templ
       // on top of the inherited statement voice block.
       COVER_LETTER_VOICE_CONSTRAINTS +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT + "\n\n---\n\n" + AKB_FACTS_ONLY_CONSTRAINT +
       `\n\n---\n\nYou are writing a brief cover letter from the artist (${ctx.akb.identity.artist_name || 'the artist'}) to this opportunity's selectors. Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only — start with the salutation line, end with the artist's signed name.`,
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
 
@@ -515,6 +548,109 @@ const STATEMENT_BANNED_WORDS = [
   'capture',
 ];
 
+/**
+ * WALKTHROUGH Note 24 (CRITICAL — safety): deterministic fact-grounding
+ * check. Catches the most common hallucination patterns the model emits
+ * when prompted for opportunity-specific specificity:
+ *
+ * 1. YEARS not in AKB. Extracts every `\b20\d{2}\b` from the generated
+ *    text. Each year must either fall in the "near-term reference window"
+ *    (CURRENT_YEAR-1 through CURRENT_YEAR+2 — generated text legitimately
+ *    references "this cycle" and the upcoming submission window) OR
+ *    appear somewhere in the AKB JSON string. Years outside the window
+ *    that aren't in the AKB are hallucinations.
+ *
+ * 2. INVENTED COMMITMENTS / VENUES / PARTNERSHIPS. Extracts phrases that
+ *    look like specific commitments — "confirmed [X]", "ongoing partner-
+ *    ship with [X]", "exhibition at [X]" — and substring-checks the
+ *    captured noun phrase against the lowercased AKB JSON. If the phrase
+ *    doesn't appear in the AKB, it's flagged.
+ *
+ * Returns a list of issue strings (empty when clean). Designed to be
+ * appended to the existing voice-check `issues` arrays so the same
+ * one-shot revision pass can address voice + fact issues together.
+ */
+// Patterns capture the proper-noun phrase after the trigger. Optional
+// article ("the", "a", "an") is consumed first; the captured entity must
+// start with a capital letter and may continue with additional capital-
+// led words. Capture naturally terminates when the next word starts with
+// a lowercase letter (verb / preposition) — no greedy lookahead pitfalls.
+//
+// "exhibition at the Boulder City library" → captures "Boulder City"
+// "ongoing partnership with the Walker River Paiute Tribe is …" → captures "Walker River Paiute Tribe"
+// "exhibition at Mondoir Gallery in Las Vegas" → captures "Mondoir Gallery"
+const PROPER_NOUN = String.raw`(?:the\s+|a\s+|an\s+)?[A-Z][A-Za-z0-9']*(?:\s+[A-Z][A-Za-z0-9']*)*`;
+const FACT_CHECK_PATTERNS: Array<{ re: RegExp; label: string }> = [
+  { re: new RegExp(String.raw`\bconfirmed\s+(?:exhibition|publication|commission|residency|fellowship|award|acquisition|partnership|grant)\s+(?:at|by|with|for)\s+(${PROPER_NOUN})`, 'gi'), label: 'confirmed [thing] at/by/with/for' },
+  { re: new RegExp(String.raw`\bongoing\s+partnership\s+with\s+(${PROPER_NOUN})`, 'gi'), label: 'ongoing partnership with' },
+  { re: new RegExp(String.raw`\bexhibition\s+at\s+(${PROPER_NOUN})`, 'gi'), label: 'exhibition at' },
+  { re: new RegExp(String.raw`\bcommissioned\s+by\s+(${PROPER_NOUN})`, 'gi'), label: 'commissioned by' },
+];
+
+const COMMON_WORDS_AROUND_DATES = new Set([
+  'spring', 'summer', 'fall', 'autumn', 'winter',
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+]);
+
+function getCurrentYear(): number {
+  return new Date().getUTCFullYear();
+}
+
+export function checkFactGrounding(
+  text: string,
+  akbJsonString: string,
+): { ok: boolean; issues: string[] } {
+  const issues: string[] = [];
+  const akbLower = akbJsonString.toLowerCase();
+  const currentYear = getCurrentYear();
+  const yearWindowMin = currentYear - 1;
+  const yearWindowMax = currentYear + 2;
+
+  // 1. Year check.
+  const yearRe = /\b(20\d{2})\b/g;
+  const seenYears = new Set<number>();
+  let m: RegExpExecArray | null;
+  while ((m = yearRe.exec(text)) !== null) {
+    const year = Number(m[1]);
+    if (seenYears.has(year)) continue;
+    seenYears.add(year);
+    if (year >= yearWindowMin && year <= yearWindowMax) continue; // near-term reference window
+    if (akbJsonString.includes(String(year))) continue;
+    issues.push(`year "${year}" appears in the draft but is not in the AKB and falls outside the near-term reference window (${yearWindowMin}-${yearWindowMax}). If you cited a specific past or future year for an exhibition / publication / award / commitment, the AKB must support it.`);
+  }
+
+  // 2. Specific-commitment phrase check. For each captured noun phrase,
+  // require its HEAD NOUN (first 3+-char token, ignoring stopwords) to
+  // appear in the AKB JSON. Substring match against AKB — covers minor
+  // case + article differences. A captured "Walker River Paiute Tribe"
+  // is flagged because "walker" isn't in AKB; "Mondoir Gallery" is
+  // accepted because "mondoir" is.
+  const STOPWORDS = new Set(['the', 'and', 'for', 'with', 'from', 'into', 'onto', 'over', 'this', 'that', 'these', 'those', 'their', 'our']);
+  for (const { re, label } of FACT_CHECK_PATTERNS) {
+    re.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(text)) !== null) {
+      const phrase = match[1]?.trim();
+      if (!phrase || phrase.length < 3) continue;
+      const phraseLower = phrase.toLowerCase();
+      const tokens = phraseLower
+        .split(/\s+/)
+        .filter((t) => t.length > 2 && !STOPWORDS.has(t));
+      if (tokens.length === 0) continue;
+      // Skip generic season-prefix / month-prefix captures that aren't
+      // entity claims (e.g. "confirmed Spring 2026 publication cycle").
+      if (COMMON_WORDS_AROUND_DATES.has(tokens[0])) continue;
+      const headNoun = tokens[0];
+      if (!akbLower.includes(headNoun)) {
+        issues.push(`"${label} ${phrase}" appears in the draft but no matching entity ("${headNoun}") is in the AKB. Either remove the claim or replace with a true claim from akb.exhibitions / akb.awards_and_honors / akb.curatorial_and_organizational / akb.bodies_of_work / akb.intent.aspirations.`);
+      }
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
 export function checkStatementVoice(text: string): {
   ok: boolean;
   issues: string[];
@@ -537,8 +673,12 @@ export function checkStatementVoice(text: string): {
 
 async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   const first = await draftMaterial('artist_statement', ctx);
-  const check = checkStatementVoice(first);
-  if (check.ok) return first;
+  const voice = checkStatementVoice(first);
+  // WALKTHROUGH Note 24: combine voice + fact-grounding issues so the
+  // single revision turn addresses them together.
+  const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
+  const allIssues = [...voice.issues, ...facts.issues];
+  if (allIssues.length === 0) return first;
 
   // One-shot revision pass — feed the violations back as a follow-up turn.
   const { system } = PROMPTS.artist_statement(ctx);
@@ -555,7 +695,7 @@ async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
           { role: 'assistant', content: first },
           {
             role: 'user',
-            content: `Your draft violated the hard voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the statement now. Same opportunity, same facts, but fix every issue listed above. Return plain text only.`,
+            content: `Your draft violated the hard constraints. Specific issues:\n${allIssues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the statement now. Same opportunity, same facts, but fix every issue listed above. Return plain text only.`,
           },
         ],
       }),
@@ -625,8 +765,11 @@ export function checkProposalVoice(text: string): {
 
 async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   const first = await draftMaterial('project_proposal', ctx);
-  const check = checkProposalVoice(first);
-  if (check.ok) return first;
+  const voice = checkProposalVoice(first);
+  // WALKTHROUGH Note 24: bundle fact-grounding issues with voice issues.
+  const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
+  const allIssues = [...voice.issues, ...facts.issues];
+  if (allIssues.length === 0) return first;
 
   const { system } = PROMPTS.project_proposal(ctx);
   const client = getAnthropic();
@@ -642,7 +785,7 @@ async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
           { role: 'assistant', content: first },
           {
             role: 'user',
-            content: `Your draft violated the hard proposal voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the proposal now. Same opportunity, same template, but fix every issue listed above. End with a complete sentence. Return plain text only.`,
+            content: `Your draft violated the hard proposal constraints. Specific issues:\n${allIssues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the proposal now. Same opportunity, same template, but fix every issue listed above. End with a complete sentence. Return plain text only.`,
           },
         ],
       }),
@@ -751,12 +894,15 @@ export function checkCoverLetterVoice(
 
 async function draftCoverLetterWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   const first = await draftMaterial('cover_letter', ctx);
-  const check = checkCoverLetterVoice(
+  const voice = checkCoverLetterVoice(
     first,
     { name: ctx.opp.name },
     ctx.akb.identity.artist_name || '',
   );
-  if (check.ok) return first;
+  // WALKTHROUGH Note 24: bundle fact-grounding issues with voice issues.
+  const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
+  const allIssues = [...voice.issues, ...facts.issues];
+  if (allIssues.length === 0) return first;
 
   const { system } = PROMPTS.cover_letter(ctx);
   const client = getAnthropic();
@@ -772,7 +918,7 @@ async function draftCoverLetterWithVoiceCheck(ctx: DraftCtx): Promise<string> {
           { role: 'assistant', content: first },
           {
             role: 'user',
-            content: `Your draft violated the hard cover-letter voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the cover letter now. Same opportunity, same artist, but fix every issue listed above. Open with "Dear", body in first person throughout, name the opportunity by name with a specific reason for THIS cycle, sign with the artist's name only. Return plain text only.`,
+            content: `Your draft violated the hard cover-letter constraints. Specific issues:\n${allIssues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the cover letter now. Same opportunity, same artist, but fix every issue listed above. Open with "Dear", body in first person throughout, name the opportunity by name with a specific reason for THIS cycle, sign with the artist's name only. Return plain text only. Do not invent venues, dates, partnerships, or commitments — every specific factual claim must be in the AKB.`,
           },
         ],
       }),
@@ -833,7 +979,7 @@ Format the master CV now. Use the canonical section list and order. Always inclu
         model: MODEL_OPUS,
         max_tokens: 4000,
         thinking: { type: 'adaptive' },
-        system: cvSkill + '\n\n---\n\n' + MASTER_CV_SYSTEM,
+        system: cvSkill + '\n\n---\n\n' + MASTER_CV_SYSTEM + '\n\n---\n\n' + AKB_FACTS_ONLY_CONSTRAINT,
         messages: [{ role: 'user', content: userText }],
       }),
     { label: 'drafter.master_cv' },
@@ -970,9 +1116,33 @@ VOICE:
 - Each rationale must be DISTINCT — no two sentences should read the same.
 - If you have no honest reason for a given image, write "alternate from the same body — included for range" rather than padding.
 
+WALKTHROUGH Note 25 — NO LINEAGE NAME-DROPS in rationales. A per-image rationale is a brief observational note about THIS image's specific qualities and how those qualities map to the cohort's aesthetic signature — not a curator-essay sentence about lineage. Banned: any rationale that names a photographer (Adams, Lik, Rowell, Shore, Eggleston, Sugimoto, Frye, Butcher, Luong, Plant, Wall, Ratcliff, Dobrowner, Burtynsky, Crewdson, Weston, Porter, Misrach, etc.) as evidence the image fits. Describe the image's PROPERTIES (palette, crop, subject, composition, condition) and how they match the cohort, not a tradition or photographer.
+
+WALKTHROUGH Note 24 — DO NOT INVENT FACTS. Do not claim the image was published in, shown at, awarded by, or acquired by any institution unless that fact is supplied to you. Stick to observable visual properties + Rubric-cited fit. If you cannot honestly justify an image, use the "alternate from the same body" fallback above.
+
 OUTPUT STRICTLY JSON in this shape, no markdown fence, no preamble:
 { "rationales": [ { "image_id": 1, "rationale": "..." }, { "image_id": 6, "rationale": "..." } ] }
 Include EVERY image_id from the input. Order does not matter.`;
+
+// WALKTHROUGH Note 25: post-write check. Capitalized photographer surnames
+// inside a per-image rationale are a violation. Single \b word-bounded
+// match per surname; case-sensitive (lowercase common nouns like "wall"
+// or "porter" don't trigger). Returns the surnames found so the caller
+// can decide retry vs drop.
+const PHOTOGRAPHER_SURNAMES = [
+  'Adams', 'Lik', 'Rowell', 'Shore', 'Eggleston', 'Sugimoto', 'Frye',
+  'Butcher', 'Luong', 'Plant', 'Wall', 'Ratcliff', 'Dobrowner',
+  'Burtynsky', 'Crewdson', 'Weston', 'Porter', 'Misrach',
+];
+
+export function findRationaleLineageNameDrops(rationale: string): string[] {
+  const hits: string[] = [];
+  for (const name of PHOTOGRAPHER_SURNAMES) {
+    const re = new RegExp(`\\b${name}\\b`);
+    if (re.test(rationale)) hits.push(name);
+  }
+  return hits;
+}
 
 export async function generateSampleRationales(
   opp: Opportunity,
@@ -1016,9 +1186,14 @@ Return JSON only.`;
     const out = new Map<number, string>();
     if (Array.isArray(parsed?.rationales)) {
       for (const r of parsed.rationales) {
-        if (typeof r?.image_id === 'number' && typeof r?.rationale === 'string' && r.rationale.trim().length > 0) {
-          out.set(r.image_id, r.rationale.trim());
-        }
+        if (typeof r?.image_id !== 'number') continue;
+        if (typeof r?.rationale !== 'string' || r.rationale.trim().length === 0) continue;
+        const cleaned = r.rationale.trim();
+        // WALKTHROUGH Note 25: drop rationales containing photographer
+        // surname name-drops. Caller keeps the existing placeholder string
+        // for that image instead of writing a curator-essay rationale.
+        if (findRationaleLineageNameDrops(cleaned).length > 0) continue;
+        out.set(r.image_id, cleaned);
       }
     }
     return out;
