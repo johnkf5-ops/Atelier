@@ -514,3 +514,26 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 **Priority:** high. Anthropic 529s are common during hackathon hours (everyone hammering the same API). Without retry, we look like the system is broken when it's actually just transient upstream load. Shipping this makes Atelier resilient to peak-hour weather — which is exactly when judges will be touching it.
 
 ---
+
+## Note 12 — Run-status events UI shows the same timestamp on every event (batched-poll timestamp, not event timestamp)
+
+**Where:** `/runs/[id]` status page during a live run.
+
+**Symptom:** Events stream renders many events in a row all stamped with the same time (e.g., 11 events all showing `18:51:03`) even though the underlying events fired seconds apart. Verified against the DB — the actual `run_events.created_at` values for those events ranged across 01:50:13 → 01:51:36 UTC (about 80 seconds), but the UI rendered them all as the same wall-clock time. This makes the timeline impossible to read — you can't tell whether the agent is making progress (one event per second) or stalled (one event per minute) because every event looks like it just happened.
+
+**Root cause likely:** the polling client is using the timestamp of the POLL FETCH (when the events were pulled from `/api/runs/[id]/events`) instead of the per-event `created_at` value from each event row. So a poll that fetches 11 events at once stamps all 11 with the same fetch time.
+
+**Fix (real, not patch):**
+
+1. **Render each event with its own `_created_at` / `created_at`** from the event row, formatted in the user's local timezone. Do NOT use poll-fetch time.
+2. **Add elapsed-since-previous-event indicator** ("+3s", "+22s", "+1m 14s") between adjacent events so the user can see actual cadence at a glance.
+3. **Verify** with a smoke test that fetches an artificially-staggered set of events (created_at values at 0s, 5s, 30s) and asserts the UI renders all three distinct timestamps + correct deltas.
+4. **Bonus:** when a long gap (>30s) occurs between adjacent events, render a soft "still running…" affordance so the user knows the silence isn't a freeze.
+
+**Acceptance:** during a live run, the events feed shows a true wall-clock timestamp per event, with relative-deltas between them. A glance at the feed answers "how long ago did the last event happen" and "is the agent moving fast or slow."
+
+**File(s):** `app/(dashboard)/runs/[id]/page.tsx` or wherever the events feed renders, the polling hook that fetches events.
+
+**Priority:** medium. Not blocking the run, but makes the live-run UX feel broken (looks like everything happens at once) and undermines the "I can watch the agent work" demo moment.
+
+---
