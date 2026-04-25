@@ -163,4 +163,20 @@ John Knopf`;
     expect(r.ok).toBe(false);
     expect(r.issues.some((i) => /salutation must open with "Dear"|to whom it may concern/i.test(i))).toBe(true);
   });
+
+  // WALKTHROUGH Note 26: terminal-punctuation check. Belt-and-suspenders
+  // — cover letters can hit the same truncation pattern as statements +
+  // proposals when adaptive thinking exhausts the budget mid-sentence.
+  it('flags truncated cover letter (no terminal punctuation)', () => {
+    const text = `Dear Selection Committee,
+
+I am writing to submit my work for the Nevada Arts Council Fellowship cycle. I am a Las Vegas-based landscape photographer with twenty years on the lower Colorado, returning to the same canyons and washes I first walked in 2005.
+
+The Nevada Arts Council Fellowship would directly support the next phase of my long-form Colorado River project, currently entering its production stage. My founding role at FOTO has kept me close to the regional arts ecosystem, and the new work continues the river-centered practice that has defined the last decade.
+
+The work is anchored in a single stretch of the river, and the fellowship would underwrite the production phase of`;
+    const r = checkCoverLetterVoice(text, opp, ARTIST);
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => /terminal punctuation|truncated/.test(i))).toBe(true);
+  });
 });

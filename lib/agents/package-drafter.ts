@@ -492,10 +492,18 @@ Write the cover letter now. First-person throughout. Open with "Dear [name]," or
 // max_tokens because (a) state-fellowship + bespoke proposals can run to
 // ~750 words ≈ ~1000 output tokens, and (b) adaptive thinking eats into
 // the same budget. The Epson Pano regression at 63 words was the symptom.
-// CV is factual and bounded; statement and cover_letter are length-capped
-// in the prompt. 4000 protects the proposal without inflating the others.
+//
+// WALKTHROUGH Note 26: artist_statement bumped 3000 → 4000 to match
+// proposal headroom. The ILPOTY redraft regression cut a statement at
+// 138 words ending mid-sentence ("I work in the") — adaptive thinking
+// consumed enough of the 3000-token budget that the model's prose got
+// truncated even at the modest 150-300-word target.
+//
+// CV is factual and bounded; cover_letter is length-capped in the prompt
+// at 200-350 words and has not regressed. 4000 across the prose materials
+// keeps the budget consistent.
 const MAX_TOKENS_BY_TYPE: Record<MaterialType, number> = {
-  artist_statement: 3000,
+  artist_statement: 4000,
   project_proposal: 4000,
   cover_letter: 3000,
 };
@@ -668,6 +676,12 @@ export function checkStatementVoice(text: string): {
     const re = new RegExp(`\\b${word}\\b`, 'i');
     if (re.test(text)) issues.push(`banned word: "${word}" — use a concrete alternative`);
   }
+  // WALKTHROUGH Note 26: terminal-punctuation check. Mirrors checkProposalVoice.
+  // Catches the ILPOTY-style truncation where the model emits "I work in the"
+  // and runs out of budget. Allow ., !, ?, ", ', ), ] as terminals.
+  if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
+    issues.push('statement does not end with terminal punctuation — likely truncated mid-sentence; check max_tokens budget');
+  }
   return { ok: issues.length === 0, issues };
 }
 
@@ -687,7 +701,10 @@ async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
     () =>
       client.messages.create({
         model: MODEL_OPUS,
-        max_tokens: 3000,
+        // WALKTHROUGH Note 26: read from the table so revision matches the
+        // first-draft budget. Previously hardcoded 3000 — that was the
+        // truncation regression's enabling factor.
+        max_tokens: MAX_TOKENS_BY_TYPE.artist_statement,
         thinking: { type: 'adaptive' },
         system,
         messages: [
@@ -695,7 +712,7 @@ async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
           { role: 'assistant', content: first },
           {
             role: 'user',
-            content: `Your draft violated the hard constraints. Specific issues:\n${allIssues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the statement now. Same opportunity, same facts, but fix every issue listed above. Return plain text only.`,
+            content: `Your draft violated the hard constraints. Specific issues:\n${allIssues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the statement now. Same opportunity, same facts, but fix every issue listed above. End with a complete sentence — do not truncate mid-thought. Return plain text only.`,
           },
         ],
       }),
@@ -829,20 +846,23 @@ export function checkCoverLetterVoice(
   // 2. First-person body — strip the signature line(s) before checking
   // surname leakage. Signature is the trailing block after the close.
   const lines = text.split(/\r?\n/);
-  // Heuristic: drop the last 1-3 non-empty lines as the signature block.
-  // We only flag surname leakage above that.
+  // Heuristic: only treat the trailing line(s) as a signature block if
+  // they are SHORT (≤ 6 words). A signed name like "John Knopf" is 2
+  // words; "Yours sincerely, John Knopf" is 4 words. A truncated body
+  // fragment ("the fellowship would underwrite the production phase of")
+  // is many more words — we do NOT want to strip that as a "signature"
+  // because then the terminal-punctuation check below would falsely pass.
   let bodyEnd = lines.length;
-  let nonEmptyCount = 0;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (lines[i].trim().length > 0) {
-      nonEmptyCount++;
-      if (nonEmptyCount >= 2) {
-        bodyEnd = i;
-        break;
-      }
-    }
+  let stripped = 0;
+  for (let i = lines.length - 1; i >= 0 && stripped < 2; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed.length === 0) continue;
+    const wordCount = trimmed.split(/\s+/).filter((w) => w.length > 0).length;
+    if (wordCount > 6) break; // not a signature — stop stripping
+    bodyEnd = i;
+    stripped++;
   }
-  const body = lines.slice(0, bodyEnd).join('\n');
+  const body = lines.slice(0, bodyEnd).join('\n').trim();
 
   const surname = (artistName.trim().split(/\s+/).pop() || '').trim();
   if (surname.length > 1) {
@@ -887,6 +907,15 @@ export function checkCoverLetterVoice(
   const wordCount = text.split(/\s+/).filter((w) => w.length > 0).length;
   if (wordCount < 180 || wordCount > 380) {
     issues.push(`word count is ${wordCount}; target is 200-350 words.`);
+  }
+
+  // 8. WALKTHROUGH Note 26: terminal-punctuation check on the BODY only —
+  // the signature line ("John Knopf") legitimately has no terminal
+  // punctuation. We reuse the same body-vs-signature split as the
+  // surname check above: the body is everything before the trailing
+  // 2-line signature block.
+  if (body.length > 0 && !/[.!?"'\)\]]\s*$/.test(body)) {
+    issues.push('cover letter body does not end with terminal punctuation before the signature — likely truncated mid-sentence; check max_tokens budget');
   }
 
   return { ok: issues.length === 0, issues };

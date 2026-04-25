@@ -107,4 +107,21 @@ describe('checkStatementVoice', () => {
     const r = checkStatementVoice(text);
     expect(r.ok).toBe(true);
   });
+
+  // WALKTHROUGH Note 26: terminal-punctuation check. The ILPOTY redraft
+  // regression cut a statement at 138 words ending mid-sentence ("I work
+  // in the"). checkStatementVoice now flags any text not ending in
+  // [.!?"')] so the revision pass catches the truncation.
+  it('flags truncated text (no terminal punctuation)', () => {
+    const text = 'I am a working landscape photographer. My practice returns to a single river. I work in the';
+    const r = checkStatementVoice(text);
+    expect(r.ok).toBe(false);
+    expect(r.issues.some((i) => /terminal punctuation|truncated/.test(i))).toBe(true);
+  });
+
+  it('accepts statements ending in a closing quote or paren', () => {
+    const text = 'My first thought is always of light. The work is one long apprenticeship to a single river ("the river that taught me to see").';
+    const r = checkStatementVoice(text);
+    expect(r.ok).toBe(true);
+  });
 });

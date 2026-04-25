@@ -364,6 +364,20 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 26 — statement + cover-letter terminal-punctuation check + statement budget bump (truncation regression)
+
+The Notes 19-25 redraft of run 1's existing 10 matches surfaced one ship-blocker: the ILPOTY artist statement returned 138 words ending mid-sentence ("I work in the"). All 9 other statements completed cleanly. Same truncation class Note 21 already fixed for proposals — Note 20's `checkStatementVoice` was missing the terminal-punctuation check.
+
+**26-fix.1 — `checkStatementVoice` terminal-punctuation check.** Mirrors the `checkProposalVoice` pattern from Note 21: text must end with `[.!?"')]\s*$` or it's flagged as truncated. The voice-check pipeline's bounded one-shot revision pass picks up the issue and retries.
+
+**26-fix.2 — same check on `checkCoverLetterVoice` (belt-and-suspenders).** Cover letters can hit the same truncation pattern. The check runs against the BODY only — the signature line ("John Knopf" alone) legitimately has no terminal punctuation. Reuses the body-vs-signature split from the existing third-person-detection logic, but tightened: the signature heuristic now only strips trailing lines if they're SHORT (≤ 6 words). A long trailing prose fragment is not a signature, so it stays in the body and the truncation check fires correctly. Without that tightening, a truncated letter ending in 50 words of mid-sentence prose would be misclassified as "signature" and the truncation would pass the check.
+
+**26-fix.3 — `MAX_TOKENS_BY_TYPE.artist_statement` bumped 3000 → 4000.** The truncation likely happened on the revision call where adaptive thinking + the inherited prompt context exhausts the budget at the modest 150-300-word target. Matches `project_proposal`'s 4000 (Note 21 fix). The statement revision-pass max_tokens was also hardcoded to `3000`; now reads from `MAX_TOKENS_BY_TYPE.artist_statement` so first-draft and revision share one budget. Revision prompt also gained an explicit "End with a complete sentence — do not truncate mid-thought" instruction.
+
+**Tests.** 2 new statement smoke cases (truncated text flagged, statements ending in closing quote/paren accepted). 1 new cover-letter case (truncated letter without signature flagged). 148/148 total.
+
+`tsc --noEmit` clean, `pnpm check:copy` clean.
+
 ### Note 24 (CRITICAL — safety) + Note 25 — Drafter fact-grounding constraint + sample-rationale lineage ban
 
 The Drafter was hallucinating biographical facts under the artist's name — invented venues ("confirmed exhibition at Boulder City library"), invented partnerships ("ongoing partnership with Walker River Paiute Tribe"), invented dates ("third monograph in 2026"). Drafted material is submitted to funding bodies as the artist's own; false claims constitute misrepresentation, not a quality issue. Notes 20/21/23 prompts were asking for specificity, which the model interpreted as license to invent specific-sounding details when the AKB was thin. Existing `FINGERPRINT_CONSTRAINT` covered VISUAL claims; nothing covered BIOGRAPHICAL claims.
