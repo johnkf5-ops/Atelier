@@ -364,3 +364,17 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 16 — single-tenant abuse prevention before public demo
+
+Atelier ships on the builder's Anthropic key. A judge clicking "Start new run" twice burns $6–10 of API spend with zero added signal. Multi-tenant + BYO-key is post-hackathon scope, so this hardens the single-tenant demo at three layers — modal, IP gate, banner — without pretending to be auth.
+
+**Confirmation modal before starting a run.** `app/(dashboard)/runs/new/new-run-client.tsx` now has three states: idle / confirming / starting. Clicking "Start new run →" opens a fixed-overlay modal (backdrop blur, max-w-lg card, click-outside dismisses unless mid-start) that explains the run is on the builder's API key for the Built with Opus 4.7 hackathon, costs roughly $3–5 in Anthropic API calls, and asks the user not to start more than one run unless testing something specific. Two buttons: ghost Cancel / primary Start the run. The actual `/api/runs/start` POST only fires from the modal's confirm button — there is no path to a run from a single click.
+
+**Per-IP rate limit on `POST /api/runs/start`.** New table `rate_limits_run_start (ip, run_id, started_at)` in `lib/db/schema.sql` with `(ip, started_at DESC)` index. New helper `lib/db/queries/rate-limits.ts` exposes `countRecentRunsForIp(ip)`, `recordRunStart(ip, runId)`, `isRateLimited(count)`, plus constants (`WINDOW_SECONDS=86_400`, `MAX_RUNS_PER_WINDOW=1`). The route extracts the requesting IP via `x-forwarded-for` (left-most entry — Vercel's trustworthy header) → `x-real-ip` → `"unknown"`, then refuses with `429 {error: "Rate limited — please try again tomorrow, or fork the repo to run on your own API key."}` if the IP already has a successful run in the last 24h. `recordRunStart` is called *after* the `runs` row insert succeeds, so a 4xx body-parse / missing-fingerprint / missing-AKB rejection doesn't count against the IP. Local dev iteration unblocked via `ATELIER_BYPASS_RATE_LIMIT=true` in `.env.local` (skip the gate entirely; never set this in Vercel). EXPECTED_TABLES updated in three places (`lib/db/migrations.ts`, `scripts/reset-db.ts`, `tests/smoke/db-bootstrap.test.ts`) so bootstrap verification fails loudly if the table goes missing.
+
+**Dismissable demo banner in the global layout.** `app/_components/demo-banner.tsx` renders a thin amber strip above the sticky header reading *"Demo • Built with Opus 4.7 hackathon — running on the builder's portfolio + API key. View on GitHub."* with a link to the public repo and an `×` dismiss control. Dismissal persists in `localStorage` under `atelier:demo-banner-dismissed-v1` so it stays gone across navigations within the same browser. `no-print` so it doesn't bleed into the dossier print view.
+
+What this is *not*: auth, per-user accounts, BYO API key. Those are Path B post-hackathon. This batch is the minimum surface area to prevent accidental burn from a judge testing the live deploy.
+
+`tsc --noEmit` clean, 75/75 smoke tests pass, `pnpm check:copy` clean.
+

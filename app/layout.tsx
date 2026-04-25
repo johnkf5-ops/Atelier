@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Inter, Crimson_Pro } from 'next/font/google';
 import './globals.css';
+import DemoBanner from './_components/demo-banner';
 
 const inter = Inter({
   subsets: ['latin'],
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${inter.variable} ${crimson.variable}`}>
       <body>
+        <DemoBanner />
         <header className="border-b border-neutral-800/80 backdrop-blur sticky top-0 z-30 bg-[#0a0a0a]/85 no-print">
           <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
             <Link

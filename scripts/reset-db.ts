@@ -40,6 +40,7 @@ const EXPECTED_TABLES = [
   'dossiers',
   'run_opportunities',
   'untrusted_sources',
+  'rate_limits_run_start',
   '_migrations',
 ];
 

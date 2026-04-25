@@ -201,6 +201,18 @@ CREATE INDEX IF NOT EXISTS idx_run_opportunities_run_id ON run_opportunities(run
 -- from auto-discover, the source URL is recorded here so future runs of
 -- auto-discover skip it. Prevents the "delete this hallucination forever"
 -- treadmill where every re-ingest re-introduces the same wrong fact.
+-- WALKTHROUGH Note 16: per-IP successful-run gate so a judge can't
+-- accidentally trigger 50 runs from one device. Cleared by hand or via
+-- a future TTL job. One row per (ip, run_id) — counted by IP per 24h.
+CREATE TABLE IF NOT EXISTS rate_limits_run_start (
+  ip TEXT NOT NULL,
+  run_id INTEGER NOT NULL,
+  started_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  PRIMARY KEY (ip, run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_run_start_ip
+  ON rate_limits_run_start(ip, started_at DESC);
+
 CREATE TABLE IF NOT EXISTS untrusted_sources (
   user_id INTEGER NOT NULL REFERENCES users(id),
   url TEXT NOT NULL,
