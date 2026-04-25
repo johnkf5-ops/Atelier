@@ -562,6 +562,27 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 31 — Header tagline: "Atelier | Your Personal Art Director" (small UI)
+
+**Where:** site header (currently shows just "Atelier"). Affects every page in the dashboard layout + the document `<title>` tag for the browser tab.
+
+**Symptom:** the bare "Atelier" header gives a first-time visitor (judge) zero context on what the product is. They have to navigate to the dossier or read the demo banner to figure out it's an AI art director for working artists.
+
+**Fix:** update the header to read **"Atelier | Your Personal Art Director"**. Pipe separator (cleaner than em-dash for chrome). "Personal" warms the institutional "Art Director" framing without diluting it. Matches the SUMMARY.md product positioning ("AI art director for working visual artists") in spirit while staying terse for header use.
+
+Apply to:
+1. The header component (`components/header.tsx` or wherever the `<h1>Atelier</h1>` lives)
+2. The document `<title>` tag — `Atelier | Your Personal Art Director` so the browser tab + Google search snippets read consistently
+3. The PDF dossier cover page if it uses the bare "Atelier" wordmark
+
+**Acceptance:** every page header reads "Atelier | Your Personal Art Director". Browser tab title matches. No instances of bare "Atelier" left in chrome.
+
+**Files:** wherever the header tagline lives (likely `app/layout.tsx` or `components/header.tsx`), `app/layout.tsx` for `metadata.title`, possibly `lib/pdf/dossier.tsx` if the cover wordmark needs the tagline too.
+
+**Priority:** low — small UI polish. Bundle whenever convenient.
+
+---
+
 ## Note 30 — Send Rubric per-opp messages SEQUENTIALLY, not all-at-once. Note 29's queued-events pattern risks compaction at scale.
 
 **Where:** `lib/agents/rubric-matcher.ts` — `startRubricSession` currently calls `client.beta.sessions.events.send(sessionId, { events: [setup, ...allOppMessages] })` in one call. All 18 per-opp messages with all their image content blocks land in turn 1's context simultaneously.
