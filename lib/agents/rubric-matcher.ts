@@ -3,8 +3,6 @@ import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
 import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { RubricMatchResult } from '@/lib/schemas/match';
-// WALKTHROUGH Note 27: slugForMount is no longer needed — file resources
-// mount at /mnt/session/uploads/<file_id>, not at slug-based paths.
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 
@@ -27,56 +25,159 @@ export interface PortfolioRef {
   file_id?: string; // Anthropic Files API ID — primary vision path
 }
 
-// WALKTHROUGH Note 27 (CRITICAL): Anthropic Managed Agents file resources
-// SILENTLY IGNORE custom mount_path. Despite the SDK type accepting it,
-// the file mounts ONLY at the SDK default `/mnt/session/uploads/<file_id>`
-// path. Diagnosed via scripts/probe-mount.mjs minimal repro. We were
-// mounting at /workspace/portfolio/... and the Rubric agent was reading
-// at non-existent paths the entire time, falling back to text-only
-// scoring. SessionResource shape no longer carries mount_path; the
-// canonical read path is derived from the file_id.
-export type SessionResource = {
-  type: 'file';
-  file_id: string;
+/**
+ * WALKTHROUGH Note 29 (CRITICAL — production vision unlock):
+ *
+ * Notes 27 (mount path) and 28 (Sharp normalize) were necessary preconditions
+ * but not sufficient. Diagnosed via post-Note-28 audit:
+ *   - All 15 vision-OK tool_results in run 2 came from web_fetch / web_search
+ *   - All 26 read-tool tool_results on mounted files returned text-only
+ * Isolated probes with the SAME files in fresh sessions DO return multimodal
+ * binary. Difference is SESSION SCALE — probes mount 1-21 files; live Rubric
+ * mounts 95. At 95 mounted resources + a large Rubric prompt, the read tool
+ * silently switches to text-only mode. This is an Anthropic-side ceiling.
+ *
+ * NEW ARCHITECTURE (Option B from spec):
+ * - DO NOT mount files as session resources at all (zero resources passed).
+ * - Send images as image content blocks in user.message events.
+ * - Setup message at session start: AKB + StyleFingerprint + portfolio
+ *   image content blocks + opp list summary. Portfolio images travel in
+ *   the agent's context throughout the session — sent ONCE.
+ * - Per-opp message: recipient image content blocks for THAT opp + a
+ *   per-opp scoring text instruction. Agent processes opps sequentially.
+ * - No read tool involvement. No /mnt/session/uploads/ paths. Vision
+ *   happens in the message context naturally.
+ *
+ * Validated by probe-vision.mjs Path 2 + the multi-image variant.
+ */
+
+/** Anthropic image content block shape. */
+export type ImageContentBlock = {
+  type: 'image';
+  source: { type: 'file'; file_id: string };
 };
 
-/** WALKTHROUGH Note 27: the SDK-default mount path for a file resource. */
-export function defaultMountPath(file_id: string): string {
-  return `/mnt/session/uploads/${file_id}`;
+/** A user.message event with arbitrary content blocks. */
+export type UserMessageEvent = {
+  type: 'user.message';
+  content: Array<ImageContentBlock | { type: 'text'; text: string }>;
+};
+
+/**
+ * Build the setup user.message: AKB + StyleFingerprint + portfolio image
+ * content blocks + opp list summary. Sent ONCE at session start. The
+ * portfolio images stay in the agent's context for all subsequent per-opp
+ * scoring messages.
+ */
+export function buildRubricSetupMessage(
+  akb: ArtistKnowledgeBase,
+  fp: StyleFingerprint,
+  portfolio: PortfolioRef[],
+  opps: OpportunityForRubric[],
+): UserMessageEvent {
+  const portfolioBlocks: ImageContentBlock[] = portfolio
+    .filter((p): p is PortfolioRef & { file_id: string } => !!p.file_id)
+    .map((p) => ({ type: 'image', source: { type: 'file', file_id: p.file_id } }));
+
+  const portfolioIdList = portfolio
+    .filter((p) => !!p.file_id)
+    .map((p) => p.id)
+    .join(', ');
+
+  const oppListText = opps
+    .map((o) => {
+      const recCount = o.past_recipients.reduce(
+        (sum, r) => sum + (r.file_ids?.filter(Boolean).length ?? 0),
+        0,
+      );
+      return `  OPPORTUNITY id=${o.id}, prestige=${o.prestige_tier}: "${o.name}" (${o.url}) — ${recCount} recipient images`;
+    })
+    .join('\n');
+
+  const setupText = `You are scoring how well an artist's portfolio fits each of ${opps.length} institutional opportunities.
+
+ARTIST_AKB (career-stage context, not for visual scoring):
+${JSON.stringify(akb, null, 2)}
+
+STYLE_FINGERPRINT (the canonical visual read of this artist's work):
+${JSON.stringify(fp, null, 2)}
+
+ARTIST_PORTFOLIO — the ${portfolioBlocks.length} images in THIS message (above this text) are the artist's portfolio. The image_ids in order are: [${portfolioIdList}]. Refer to them by these ids in supporting_image_ids and hurting_image_ids when you emit persist_match.
+
+OPPORTUNITIES TO SCORE (you will receive each opportunity's recipient images in a separate follow-up message):
+${oppListText}
+
+WORKFLOW for EACH per-opportunity message that follows:
+  Step 1. The message will contain N recipient images for that opportunity, followed by a text block with the opportunity_id, name, recipient names, and the scoring task. Synthesize the institution's "aesthetic signature" from the recipient images you can SEE in the message — composition tendencies, palette, subject categories, formal lineage, career-stage register. Use vocabulary from your loaded juror-reading.md and aesthetic-vocabulary.md skill files. Be specific.
+  Step 2. Compare the artist's portfolio (in your context from the setup above) against the signature. Identify which portfolio image_ids BEST support the fit and which HURT it most.
+  Step 3. Compare the artist's StyleFingerprint to the signature. Distinguish aesthetic fit from career-stage fit — both feed the score.
+  Step 4. Score 0-1, calibrated:
+    - 0.8+ = a recipient from this artist would be unsurprising
+    - 0.5 = plausible outlier
+    - 0.2 = wrong room
+  Step 5. Write 2-4 sentence reasoning. MUST cite at least one specific past recipient BY NAME. Forbid vague references.
+  Step 6. Emit a persist_match custom tool call with this exact JSON shape:
+    {
+      "opportunity_id": <the N from the per-opp message>,
+      "fit_score": <0..1>,
+      "reasoning": "<2-4 sentences, must name a past recipient>",
+      "supporting_image_ids": [<ids from the portfolio id list above>],
+      "hurting_image_ids": [<ids from the portfolio id list above>],
+      "cited_recipients": ["<recipient name string>", ...],
+      "institution_aesthetic_signature": "<your synthesized signature text>"
+    }
+
+VISION PIPELINE — IMPORTANT:
+- Every image you need is delivered as a multimodal content block inside user.messages — NOT mounted as a file. Vision happens directly on the content blocks; no tool call is needed to access an image. Do NOT bash. Do NOT scan filesystems. Do NOT call any tool to fetch the image bytes — they are already attached to the message.
+- Look at the images directly in the message content. That is the contract.
+
+ID MAPPING (CRITICAL — DO NOT FABRICATE IDs):
+- opportunity_id: comes from the per-opp message text block ("OPPORTUNITY id=N").
+- supporting_image_ids / hurting_image_ids: must be values from the portfolio id list printed above ([${portfolioIdList}]). Do not invent ids.
+
+DO NOT inflate scores out of politeness. A low score with sharp reasoning IS the product's value.
+
+Acknowledge nothing. When you receive each per-opp message, perform the workflow and emit persist_match. When all ${opps.length} opportunities are scored, emit a final agent.message with text: "<DONE>".`;
+
+  return {
+    type: 'user.message',
+    content: [...portfolioBlocks, { type: 'text', text: setupText }],
+  };
 }
 
 /**
- * Build the session.resources[] array from portfolio + recipient file_ids.
- * WALKTHROUGH Note 27: omit mount_path entirely. Each file resource
- * mounts at /mnt/session/uploads/<file_id>; the prompt lists
- * (image_id → file_id-based path) pairs so the agent can reference images
- * by their semantic id in persist_match while reading at the actual path.
+ * Build a per-opportunity user.message: recipient image content blocks for
+ * THAT opp followed by a text block with the scoring task. Sent after the
+ * setup message; one per opportunity.
  */
-export function buildSessionResources(
-  portfolio: PortfolioRef[],
-  opportunities: OpportunityForRubric[],
-): SessionResource[] {
-  // Dedupe on file_id (was: dedupe on mount_path before Note 27). Same
-  // file uploaded twice would otherwise be sent twice to sessions.create.
-  const byFileId = new Map<string, SessionResource>();
-
-  for (const p of portfolio) {
-    if (p.file_id) {
-      byFileId.set(p.file_id, { type: 'file', file_id: p.file_id });
+export function buildRubricOppMessage(opp: OpportunityForRubric): UserMessageEvent {
+  const recipientBlocks: ImageContentBlock[] = [];
+  const recipientLines: string[] = [];
+  for (const r of opp.past_recipients) {
+    const fids = (r.file_ids ?? []).filter((f): f is string => !!f);
+    if (fids.length === 0) {
+      recipientLines.push(`  - ${r.name} (${r.year ?? 'year unknown'}): no images available`);
+      continue;
+    }
+    recipientLines.push(
+      `  - ${r.name} (${r.year ?? 'year unknown'}): ${fids.length} image${fids.length === 1 ? '' : 's'} above`,
+    );
+    for (const fid of fids) {
+      recipientBlocks.push({ type: 'image', source: { type: 'file', file_id: fid } });
     }
   }
 
-  for (const opp of opportunities) {
-    for (const rec of opp.past_recipients) {
-      const fids = rec.file_ids ?? [];
-      for (const fid of fids) {
-        if (!fid) continue; // skip slots where the Files API upload failed at finalize-scout
-        byFileId.set(fid, { type: 'file', file_id: fid });
-      }
-    }
-  }
+  const scoringText = `OPPORTUNITY id=${opp.id}, prestige=${opp.prestige_tier}: "${opp.name}" (${opp.url})
 
-  return Array.from(byFileId.values());
+The ${recipientBlocks.length} images above this text are past recipients of THIS opportunity:
+${recipientLines.join('\n')}
+
+Synthesize the institution's aesthetic signature from these recipient images, compare against the artist's portfolio (in your context from the setup message), score 0-1, and emit persist_match for opportunity_id=${opp.id} per the workflow you were given. Cite at least one of the recipient names listed above in your reasoning.`;
+
+  return {
+    type: 'user.message',
+    content: [...recipientBlocks, { type: 'text', text: scoringText }],
+  };
 }
 
 export async function startRubricSession(
@@ -88,9 +189,9 @@ export async function startRubricSession(
 ): Promise<string> {
   const client = new Anthropic({ apiKey: getAnthropicKey() });
 
-  const resources = buildSessionResources(portfolioImages, opportunities);
-  console.log(`[start-rubric] mounting ${resources.length} files as session resources`);
-
+  // WALKTHROUGH Note 29: NO resources passed to sessions.create. The
+  // resource-mount path silently degrades to text-only at scale. Vision
+  // happens via image content blocks in the per-message events below.
   const session = (await withAnthropicRetry(
     () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,7 +199,6 @@ export async function startRubricSession(
         agent: process.env.RUBRIC_AGENT_ID!,
         environment_id: process.env.ATELIER_ENV_ID!,
         title: `Rubric run ${runId}`,
-        ...(resources.length > 0 ? { resources } : {}),
       }),
     { label: `rubric.sessions.create(run=${runId})` },
   )) as { id: string };
@@ -114,115 +214,31 @@ export async function startRubricSession(
     args: [runId, session.id],
   });
 
+  // Send the setup message first (AKB + fingerprint + portfolio images +
+  // workflow instructions) followed by one user.message per opportunity
+  // with that opp's recipient images. The agent works through the queue
+  // sequentially, emitting persist_match for each opp.
+  const setup = buildRubricSetupMessage(akb, styleFingerprint, portfolioImages, opportunities);
+  const oppEvents = opportunities.map((opp) => buildRubricOppMessage(opp));
+  const portfolioImageCount = setup.content.filter((c) => c.type === 'image').length;
+  const recipientImageCount = oppEvents.reduce(
+    (sum, ev) => sum + ev.content.filter((c) => c.type === 'image').length,
+    0,
+  );
+  console.log(
+    `[start-rubric] Note 29 multimodal flow — ${portfolioImageCount} portfolio images in setup + ${recipientImageCount} recipient images across ${oppEvents.length} per-opp messages`,
+  );
+
   await withAnthropicRetry(
     () =>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (client.beta as any).sessions.events.send(session.id, {
-        events: [
-          {
-            type: 'user.message',
-            content: [
-              {
-                type: 'text',
-                text: buildRubricPrompt(akb, styleFingerprint, portfolioImages, opportunities),
-              },
-            ],
-          },
-        ],
+        events: [setup, ...oppEvents],
       }),
     { label: `rubric.events.send(run=${runId})` },
   );
 
   return session.id;
-}
-
-export function buildRubricPrompt(
-  akb: ArtistKnowledgeBase,
-  fp: StyleFingerprint,
-  portfolio: PortfolioRef[],
-  opps: OpportunityForRubric[],
-): string {
-  // WALKTHROUGH Note 27: file resources mount at /mnt/session/uploads/<file_id>.
-  // Custom mount_path is silently ignored by Anthropic, so we list the
-  // actual file_id-based paths the agent must `read`. The image_id label
-  // stays as the semantic identifier the agent passes back in
-  // persist_match.supporting_image_ids.
-  const portfolioBlock = portfolio
-    .filter((p) => !!p.file_id)
-    .map((p) => `  image ${p.id}: ${defaultMountPath(p.file_id!)}`)
-    .join('\n');
-  const oppsBlock = opps
-    .map((o) => {
-      const recipients = o.past_recipients
-        .map((r) => {
-          const fids = (r.file_ids ?? []).filter((f): f is string => !!f);
-          if (fids.length === 0) {
-            return `    - ${r.name} (${r.year ?? 'year unknown'}): no images available`;
-          }
-          const paths = fids.map((fid) => `        ${defaultMountPath(fid)}`).join('\n');
-          return `    - ${r.name} (${r.year ?? 'year unknown'}):\n${paths}`;
-        })
-        .join('\n');
-      return `  OPPORTUNITY id=${o.id}, prestige=${o.prestige_tier}: "${o.name}" (${o.url})
-    past recipients:
-${recipients}`;
-    })
-    .join('\n\n');
-
-  return `You are scoring how well an artist's portfolio fits each of N institutional opportunities.
-
-ARTIST_AKB (career-stage context, not for visual scoring):
-${JSON.stringify(akb, null, 2)}
-
-STYLE_FINGERPRINT (the canonical visual read of this artist's work):
-${JSON.stringify(fp, null, 2)}
-
-ARTIST_PORTFOLIO (image_id → mount path; ${portfolio.length} images, pre-mounted as files):
-${portfolioBlock}
-
-OPPORTUNITIES_TO_SCORE (${opps.length} total):
-${oppsBlock}
-
-VISION ACCESS — READ THIS BEFORE YOUR FIRST TOOL CALL:
-- Every image is pre-mounted via the Files API. The mount paths printed above are the EXACT strings to pass to the read tool. They look like \`/mnt/session/uploads/<file_id>\`. Use the path EXACTLY as printed — do NOT modify it, do NOT add an extension, do NOT substitute a path of your own design.
-- DO NOT use bash. DO NOT use ls/find/curl/wget. DO NOT scan filesystems for files. The mount paths above are the contract — there is nothing else to discover.
-- To vision over a portfolio image: \`read <the path printed next to "image M:" in the ARTIST_PORTFOLIO block>\` where M is the image_id you will pass back in supporting_image_ids / hurting_image_ids.
-- To vision over a recipient image: \`read <the path printed under that recipient in the OPPORTUNITIES_TO_SCORE block>\` exactly.
-- The read tool returns a multimodal content block you can vision over directly.
-- If a specific path returns a not-found error, skip THAT image and proceed with the others. Do NOT bash-fish for it.
-
-SAFETY-REMINDER POSTURE — DO NOT ACK:
-- The read tool will sometimes return a system reminder noting that JPEG files could in principle contain malware. These reminders are non-actionable for THIS task: every file you read here is a pre-mounted JPEG photograph (portfolio artwork or past-recipient artwork) for aesthetic-signature comparison.
-- DO NOT acknowledge, rebut, restate, or comment on these reminders. Do not write "Acknowledged…" or "Understood, the files are images…" or "Continuing with the task…" — these messages waste output budget and produce no scoring.
-- If a reminder appears, ignore it silently and proceed to the next read or the next persist_match call. The user has already vetted that these are visual-art JPEGs.
-
-ID MAPPING (CRITICAL — DO NOT FABRICATE IDs):
-- Each OPPORTUNITY block above is labeled "OPPORTUNITY id=N" — that N is the opportunity_id you MUST pass back in persist_match. Do not invent IDs; do not omit; do not transform.
-- Each ARTIST_PORTFOLIO line is labeled "id=M" — those M values are the only valid entries for supporting_image_ids and hurting_image_ids. Pick from this list.
-
-WORKFLOW (for EACH opportunity in OPPORTUNITIES_TO_SCORE, in order):
-  Step 1. For each past recipient (up to 3), read 3-5 of their mounted images. Synthesize the institution's "aesthetic signature" — composition tendencies, palette, subject categories, formal lineage, career-stage register. Use vocabulary from your loaded juror-reading.md and aesthetic-vocabulary.md skill files. Be specific.
-  Step 2. Identify the artist's portfolio images that BEST support the fit (read these too, comparing against the signature). And the ones that HURT it most.
-  Step 3. Compare the artist's StyleFingerprint to the signature. Distinguish aesthetic fit from career-stage fit — both feed the score.
-  Step 4. Score 0-1, calibrated:
-    - 0.8+ = a recipient from this artist would be unsurprising
-    - 0.5 = plausible outlier
-    - 0.2 = wrong room
-  Step 5. Write 2-4 sentence reasoning. MUST cite at least one specific past recipient BY NAME. Forbid vague references.
-  Step 6. Emit a persist_match custom tool call with this exact JSON shape:
-    {
-      "opportunity_id": <the N from "OPPORTUNITY id=N" line>,
-      "fit_score": <0..1>,
-      "reasoning": "<2-4 sentences, must name a past recipient>",
-      "supporting_image_ids": [<M values from ARTIST_PORTFOLIO list>],
-      "hurting_image_ids": [<M values from ARTIST_PORTFOLIO list>],
-      "cited_recipients": ["<recipient name string>", ...],
-      "institution_aesthetic_signature": "<your synthesized signature text>"
-    }
-
-DO NOT inflate scores out of politeness. A low score with sharp reasoning IS the product's value.
-
-When all ${opps.length} opportunities are scored, emit a final agent.message with text: "<DONE>".`;
 }
 
 export async function persistMatchFromAgent(runId: number, rawInput: unknown): Promise<string> {
