@@ -35,6 +35,11 @@ export type DossierMatch = {
   cv_formatted: string | null;
   cover_letter: string | null;
   work_samples: WorkSample[];
+  // WALKTHROUGH Note 33-fix.8 — populated when the opportunity declared a
+  // hard format requirement (panoramic, square, etc.) and the auto-
+  // selected samples could not fully satisfy it. Surfaced above the
+  // samples grid so the user knows manual review is required.
+  format_mismatch_warning: string | null;
   logo_url: string | null;
 };
 
@@ -495,6 +500,14 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
           a per-image rationale. Most applications limit to 10–20 images — these are the ones
           that best fit this institution&rsquo;s working rubric.
         </MaterialExplainer>
+        {match.format_mismatch_warning && (
+          <div className="rounded border border-amber-700/60 bg-amber-950/40 p-3 text-sm text-amber-200">
+            <div className="text-xs uppercase tracking-wide text-amber-400 mb-1">
+              Manual review recommended
+            </div>
+            {match.format_mismatch_warning}
+          </div>
+        )}
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
           {match.work_samples.map((s, i) => (
             <div

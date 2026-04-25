@@ -33,7 +33,8 @@ async function main() {
   const matchRow = (
     await db.execute({
       sql: `SELECT rm.id, rm.run_id, rm.opportunity_id, rm.fit_score, rm.composite_score,
-                   rm.reasoning, rm.supporting_image_ids, o.name as opp_name, o.raw_json,
+                   rm.reasoning, rm.supporting_image_ids, rm.hurting_image_ids,
+                   o.name as opp_name, o.raw_json,
                    r.user_id, r.akb_version_id, r.style_fingerprint_id
             FROM run_matches rm
             JOIN opportunities o ON o.id = rm.opportunity_id
@@ -52,6 +53,7 @@ async function main() {
         composite_score: number | null;
         reasoning: string;
         supporting_image_ids: string | null;
+        hurting_image_ids: string | null;
         opp_name: string;
         raw_json: string;
         user_id: number;
@@ -80,7 +82,7 @@ async function main() {
 
   const portfolio = (
     await db.execute({
-      sql: `SELECT id, thumb_url, filename, exif_json FROM portfolio_images WHERE user_id = ? ORDER BY ordinal ASC`,
+      sql: `SELECT id, thumb_url, filename, exif_json, width, height FROM portfolio_images WHERE user_id = ? ORDER BY ordinal ASC`,
       args: [matchRow.user_id],
     })
   ).rows as unknown as Array<{
@@ -88,6 +90,8 @@ async function main() {
     thumb_url: string;
     filename: string;
     exif_json: string | null;
+    width: number | null;
+    height: number | null;
   }>;
 
   // Clear any prior drafted_packages for this match so we re-run clean.
@@ -104,6 +108,7 @@ async function main() {
     composite_score: matchRow.composite_score,
     reasoning: matchRow.reasoning,
     supporting_image_ids: matchRow.supporting_image_ids,
+    hurting_image_ids: matchRow.hurting_image_ids,
     raw_json: matchRow.raw_json,
   };
   await draftPackageForMatch(row, akb, fingerprint, portfolio);

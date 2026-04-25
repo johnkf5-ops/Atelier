@@ -8,6 +8,12 @@ import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { Opportunity } from '@/lib/schemas/opportunity';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 import { parseLooseJson, extractText } from './json-parse';
+import {
+  parseFormatConstraints,
+  imageMatchesFormat,
+  hasAnyFormatConstraint,
+  type FormatConstraints,
+} from '@/lib/drafter/format-constraints';
 
 // Used when skills/artist-statement-voice.md etc. haven't landed yet.
 // Short but deliberate — prevents silent quality degradation if §4.6 timing slips.
@@ -1448,11 +1454,31 @@ export type WorkSample = {
   rationale: string;
 };
 
+export type WorkSampleSelection = {
+  samples: WorkSample[];
+  /**
+   * WALKTHROUGH Note 33-fix.8 — surfaced to the dossier UI when the
+   * opportunity page text declared a hard format requirement and the
+   * artist's portfolio could not supply the target count of matching
+   * images. Tells the user "your auto-selected samples are best-fit
+   * aesthetically; please review and replace before submitting" rather
+   * than silently shipping wrong-aspect images as the recommended set.
+   */
+  format_mismatch_warning: string | null;
+};
+
 type PortfolioImage = {
   id: number;
   thumb_url: string;
   filename: string;
   exif_json: string | null;
+  // WALKTHROUGH Note 33-fix.8 — used by format-constraint matching in
+  // selectWorkSamples to filter candidates by aspect ratio / orientation
+  // when the opportunity page text declares a hard format requirement
+  // (panoramic, square, portrait, etc.). Nullable because legacy rows
+  // and pre-Note-7 uploads may not carry dimensions.
+  width: number | null;
+  height: number | null;
 };
 
 export function selectWorkSamples(
@@ -1460,7 +1486,8 @@ export function selectWorkSamples(
   hurtingIds: number[],
   portfolio: PortfolioImage[],
   target: number,
-): WorkSample[] {
+  formatConstraints: FormatConstraints = { notes: [] },
+): WorkSampleSelection {
   const byId = new Map(portfolio.map((p) => [p.id, p]));
   // WALKTHROUGH Note 33-fix.7 — the Rubric Matcher emits hurting_image_ids
   // for every opportunity (the portfolio frames it explicitly flagged as
@@ -1472,35 +1499,65 @@ export function selectWorkSamples(
   // it on the work-sample axis the same way we honor it on the
   // included/filtered-out axis.
   const hurtingSet = new Set(hurtingIds);
+  const formatActive = hasAnyFormatConstraint(formatConstraints);
+  // WALKTHROUGH Note 33-fix.8 — when the opportunity declares a hard
+  // format constraint (panoramic, square, etc.) the Rubric's
+  // supporting_image_ids may include images that fit AESTHETICALLY but
+  // not FORMAT-WISE (e.g. Epson Pano: id=41 alley fit the saturated
+  // palette but is 1.33 aspect, not 2:1). Format-aware selection demotes
+  // those to "format-marginal" rationale rather than dropping them
+  // entirely (the user may want to know they were considered) and
+  // PREFERS format-matching images from the rest of the portfolio for
+  // backfill. If insufficient format-matching images exist, the warning
+  // surfaces to the dossier UI.
+  const matchesFormat = (p: PortfolioImage): boolean =>
+    !formatActive || imageMatchesFormat(p.width, p.height, formatConstraints);
+  const effectiveTarget = formatConstraints.maxImages
+    ? Math.min(target, formatConstraints.maxImages)
+    : target;
 
-  // Priority 1: Rubric-supplied supporting IDs (curated for this opportunity's aesthetic).
-  const supportingChosen = supportingIds
+  // Priority 1: Rubric-supplied supporting IDs that ALSO match format.
+  // Aesthetically-supporting but format-failing images get held back and
+  // appended at the end with a "format-marginal" rationale (so the user
+  // can see what the Rubric thought aesthetically without inflating the
+  // submission with non-conforming frames).
+  const supportingResolved = supportingIds
     .map((id) => byId.get(id))
-    .filter((p): p is PortfolioImage => !!p)
-    .slice(0, target);
+    .filter((p): p is PortfolioImage => !!p);
+  const supportingFormatMatch = supportingResolved.filter(matchesFormat);
+  const supportingFormatFail = formatActive
+    ? supportingResolved.filter((p) => !matchesFormat(p))
+    : [];
 
-  if (supportingChosen.length >= target) {
-    return supportingChosen.slice(0, target).map((p) => ({
-      portfolio_image_id: p.id,
-      thumb_url: p.thumb_url,
-      filename: p.filename,
-      rationale:
-        "cited as supporting the institution's aesthetic signature in the Rubric Matcher's reasoning",
-    }));
-  }
-
-  // Priority 2: backfill with even-spaced sample from remainder, EXCLUDING
-  // both already-chosen supporting IDs AND Rubric-flagged hurting IDs.
-  const usedIds = new Set(supportingChosen.map((p) => p.id));
-  const remaining = portfolio.filter((p) => !usedIds.has(p.id) && !hurtingSet.has(p.id));
-  const backfillCount = target - supportingChosen.length;
-  const step = remaining.length > 0 ? remaining.length / backfillCount : 0;
-  const backfill = Array.from({ length: backfillCount }, (_, i) => remaining[Math.floor(i * step)]).filter(
-    (p): p is PortfolioImage => !!p,
+  // Priority 2: backfill with even-spaced sample from remainder,
+  // EXCLUDING already-chosen, hurting, and (when format-active) any
+  // image that fails the format constraint.
+  const usedIds = new Set(supportingFormatMatch.map((p) => p.id));
+  const remainingPool = portfolio.filter(
+    (p) => !usedIds.has(p.id) && !hurtingSet.has(p.id) && matchesFormat(p),
   );
 
-  return [
-    ...supportingChosen.map((p) => ({
+  const supportingTake = supportingFormatMatch.slice(0, effectiveTarget);
+  const backfillCount = Math.max(0, effectiveTarget - supportingTake.length);
+  const step = remainingPool.length > 0 ? remainingPool.length / Math.max(1, backfillCount) : 0;
+  const backfill =
+    backfillCount > 0
+      ? Array.from({ length: backfillCount }, (_, i) => remainingPool[Math.floor(i * step)]).filter(
+          (p): p is PortfolioImage => !!p,
+        )
+      : [];
+
+  // If format-active and we still couldn't fill the target, append the
+  // format-marginal supporting frames (held back above) with an honest
+  // rationale, then build the warning string.
+  let formatMarginalAppended: PortfolioImage[] = [];
+  if (formatActive && supportingTake.length + backfill.length < effectiveTarget) {
+    const need = effectiveTarget - supportingTake.length - backfill.length;
+    formatMarginalAppended = supportingFormatFail.slice(0, need);
+  }
+
+  const samples: WorkSample[] = [
+    ...supportingTake.map((p) => ({
       portfolio_image_id: p.id,
       thumb_url: p.thumb_url,
       filename: p.filename,
@@ -1512,7 +1569,36 @@ export function selectWorkSamples(
       filename: p.filename,
       rationale: "additional representative work from the artist's broader portfolio",
     })),
+    ...formatMarginalAppended.map((p) => ({
+      portfolio_image_id: p.id,
+      thumb_url: p.thumb_url,
+      filename: p.filename,
+      rationale:
+        "format-marginal: matches the institution's aesthetic register per Rubric reasoning, but does not meet the category's stated format requirements (review before submitting)",
+    })),
   ];
+
+  // Build the warning. Three escalating cases:
+  //   (1) format-active AND zero format-matching images exist anywhere
+  //       in the portfolio → strongest warning, manual selection required
+  //   (2) format-active AND fewer than target format-matching images
+  //       exist → moderate warning, count surfaced
+  //   (3) format-active AND the Rubric supporting IDs all failed format
+  //       (so format-marginal frames had to be appended) → soft warning
+  let warning: string | null = null;
+  if (formatActive) {
+    const totalFormatMatching = portfolio.filter(matchesFormat).length;
+    const constraintNote = formatConstraints.notes.join('; ');
+    if (totalFormatMatching === 0) {
+      warning = `${constraintNote}. No images in your portfolio match this requirement based on dimensions; the auto-selected samples below are best-fit aesthetically but DO NOT meet the category format. Manual selection required before submitting.`;
+    } else if (totalFormatMatching < effectiveTarget) {
+      warning = `${constraintNote}. Only ${totalFormatMatching} image${totalFormatMatching === 1 ? '' : 's'} in your portfolio match this format; the remaining ${effectiveTarget - totalFormatMatching} sample${effectiveTarget - totalFormatMatching === 1 ? ' is' : 's are'} format-marginal. Review before submitting.`;
+    } else if (formatMarginalAppended.length > 0) {
+      warning = `${constraintNote}. The Rubric Matcher's supporting images include ${formatMarginalAppended.length} that do not meet the category format; they appear at the end of the sample list as format-marginal. Review before submitting.`;
+    }
+  }
+
+  return { samples, format_mismatch_warning: warning };
 }
 
 /**
@@ -1567,7 +1653,14 @@ export function findRationaleLineageNameDrops(rationale: string): string[] {
 export async function generateSampleRationales(
   opp: Opportunity,
   rubricReasoning: string,
-  images: Array<{ id: number; filename: string; exif_subject?: string | null }>,
+  images: Array<{
+    id: number;
+    filename: string;
+    exif_subject?: string | null;
+    width?: number | null;
+    height?: number | null;
+    aspect_label?: string | null;
+  }>,
 ): Promise<Map<number, string>> {
   if (images.length === 0) return new Map();
   const client = getAnthropic();
@@ -1576,12 +1669,15 @@ export async function generateSampleRationales(
 RUBRIC REASONING (why this opportunity was scored a fit):
 ${rubricReasoning}
 
-IMAGES TO RATIONALIZE (write one sentence per image, distinct from the others):
+IMAGES TO RATIONALIZE (write one sentence per image, distinct from the others). Each image carries dimensions + an aspect_label so you DO NOT have to guess the format. Reference the actual aspect_label when format matters; never claim an image "would need re-cropping" if the aspect_label says it already meets the category requirement.
 ${JSON.stringify(
   images.map((i) => ({
     image_id: i.id,
     filename: i.filename,
     exif_subject: i.exif_subject ?? null,
+    width: i.width ?? null,
+    height: i.height ?? null,
+    aspect_label: i.aspect_label ?? null,
   })),
   null,
   2,
@@ -1663,7 +1759,10 @@ export async function draftPackageForMatch(
     /* generic template path */
   }
 
-  const workSamples = selectWorkSamples(supportingIds, hurtingIds, portfolio, 12);
+  const formatConstraints = parseFormatConstraints(oppRequirementsText, opp.name);
+  const selection = selectWorkSamples(supportingIds, hurtingIds, portfolio, 12, formatConstraints);
+  const workSamples = selection.samples;
+  const formatMismatchWarning = selection.format_mismatch_warning;
 
   // WALKTHROUGH Note 19b: replace the placeholder rationale strings with
   // per-image-per-opportunity reasoning grounded in this match's Rubric
@@ -1679,7 +1778,29 @@ export async function draftPackageForMatch(
         /* malformed exif — skip */
       }
     }
-    return { id: ws.portfolio_image_id, filename: ws.filename, exif_subject: exifSubject };
+    // WALKTHROUGH Note 33-fix.8 — pass dimensions + a precomputed aspect
+    // label into the rationale generator so it stops guessing at format
+    // eligibility (the prior version was emitting "would need re-cropping"
+    // on Epson Pano samples that actually were 2:1+ panoramas, because
+    // it had no dimension data and was guessing from filename alone).
+    let aspectLabel: string | null = null;
+    if (p?.width && p?.height && p.width > 0 && p.height > 0) {
+      const a = p.width / p.height;
+      if (Math.abs(a - 1.0) <= 0.05) aspectLabel = `square ${p.width}x${p.height} (1:1)`;
+      else if (a >= 2.99) aspectLabel = `extra-wide panorama ${p.width}x${p.height} (~${a.toFixed(2)}:1)`;
+      else if (a >= 1.99) aspectLabel = `panorama ${p.width}x${p.height} (~${a.toFixed(2)}:1, meets 2:1 minimum)`;
+      else if (a >= 1.4) aspectLabel = `wide horizontal ${p.width}x${p.height} (~${a.toFixed(2)}:1, below 2:1 panoramic threshold)`;
+      else if (a >= 1.05) aspectLabel = `horizontal ${p.width}x${p.height} (~${a.toFixed(2)}:1)`;
+      else aspectLabel = `vertical / portrait ${p.width}x${p.height} (~${a.toFixed(2)}:1)`;
+    }
+    return {
+      id: ws.portfolio_image_id,
+      filename: ws.filename,
+      exif_subject: exifSubject,
+      width: p?.width ?? null,
+      height: p?.height ?? null,
+      aspect_label: aspectLabel,
+    };
   });
   const rationaleMap = await generateSampleRationales(opp, row.reasoning, rationaleImages);
   for (const ws of workSamples) {
@@ -1692,6 +1813,14 @@ export async function draftPackageForMatch(
   // + EXIF subject if any) and its rationale. The Drafter uses this to keep
   // statement / proposal / cover-letter prose consistent with the submitted
   // image set instead of describing the artist's whole practice.
+  // Note 33-fix.8 — when the opportunity has a hard format requirement and
+  // the auto-selection couldn't fully satisfy it, prepend the warning so
+  // the Drafter frames the prose honestly (e.g. "I am submitting one
+  // 2:1 panorama and three wide-aspect frames" rather than "twelve
+  // panoramic frames" when only one is actually pano).
+  const formatWarningPreamble = formatMismatchWarning
+    ? `\n\nFORMAT_NOTE for this opportunity: ${formatMismatchWarning}\nWrite the prose honestly with respect to this constraint — do not claim the submitted set meets a category format the dimensions show it does not.`
+    : '';
   const workSampleSummary = workSamples
     .map((ws, i) => {
       const p = portfolio.find((q) => q.id === ws.portfolio_image_id);
@@ -1742,7 +1871,7 @@ export async function draftPackageForMatch(
     oppType,
     proposalType,
     oppRequirementsText,
-    workSampleSummary,
+    workSampleSummary: workSampleSummary + formatWarningPreamble,
   };
 
   const artist_statement = await draftStatementWithVoiceCheck(ctx);
@@ -1771,7 +1900,7 @@ export async function draftPackageForMatch(
       project_proposal,
       cv_formatted,
       cover_letter,
-      JSON.stringify(workSamples),
+      JSON.stringify({ samples: workSamples, format_mismatch_warning: formatMismatchWarning }),
     ],
   });
 }
@@ -1824,7 +1953,7 @@ export async function draftPackages(
 
   const portfolio = (
     await db.execute({
-      sql: `SELECT id, thumb_url, filename, exif_json FROM portfolio_images WHERE user_id = ? ORDER BY ordinal ASC`,
+      sql: `SELECT id, thumb_url, filename, exif_json, width, height FROM portfolio_images WHERE user_id = ? ORDER BY ordinal ASC`,
       args: [userId],
     })
   ).rows as unknown as PortfolioImage[];

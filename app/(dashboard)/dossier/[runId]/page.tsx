@@ -6,6 +6,29 @@ import DossierView, { type DossierMatch, type DossierFilteredOut } from './dossi
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+type WorkSampleEntry = {
+  portfolio_image_id: number;
+  thumb_url: string;
+  filename: string;
+  rationale: string;
+};
+
+function parseWorkSamples(raw: string | null): { samples: WorkSampleEntry[]; warning: string | null } {
+  if (!raw) return { samples: [], warning: null };
+  try {
+    const parsed = JSON.parse(raw) as
+      | WorkSampleEntry[]
+      | { samples?: WorkSampleEntry[]; format_mismatch_warning?: string | null };
+    if (Array.isArray(parsed)) return { samples: parsed, warning: null };
+    return {
+      samples: Array.isArray(parsed.samples) ? parsed.samples : [],
+      warning: parsed.format_mismatch_warning ?? null,
+    };
+  } catch {
+    return { samples: [], warning: null };
+  }
+}
+
 export default async function DossierPage({ params }: { params: Promise<{ runId: string }> }) {
   await ensureDbReady();
   const { runId } = await params;
@@ -134,14 +157,11 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
       project_proposal: m.project_proposal,
       cv_formatted: m.cv_formatted,
       cover_letter: m.cover_letter,
-      work_samples: m.work_sample_selection_json
-        ? (JSON.parse(m.work_sample_selection_json) as Array<{
-            portfolio_image_id: number;
-            thumb_url: string;
-            filename: string;
-            rationale: string;
-          }>)
-        : [],
+      // WALKTHROUGH Note 33-fix.8 — work_sample_selection_json is now a
+      // {samples, format_mismatch_warning} wrapper. Older rows may still
+      // be a bare array; handle both shapes for backwards compatibility.
+      work_samples: parseWorkSamples(m.work_sample_selection_json).samples,
+      format_mismatch_warning: parseWorkSamples(m.work_sample_selection_json).warning,
       logo_url: logoMap[m.opportunity_id] ?? null,
     };
   });
