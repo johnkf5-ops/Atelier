@@ -27,7 +27,7 @@ Atelier is the tool that removes the wall.
 A web app that:
 
 1. Reads your portfolio with vision and produces a structured aesthetic fingerprint.
-2. Builds a durable Artist Knowledge Base from your public web data and a short text interview that targets exactly the gaps the public data couldn't fill.
+2. Builds a durable Artist Knowledge Base through a short gap-driven structured interview that walks a priority-tiered field list and only asks for what's missing.
 3. Runs a long synchronous pipeline that scouts current open calls, scores each one for aesthetic fit against the actual past recipients, drops the bad fits with specific reasoning, and drafts the application materials for the ones that remain — in the institutional voice each opportunity expects.
 4. Hands you a Career Dossier — printable PDF and web view — that names what to apply to, what to skip, and why.
 
@@ -53,9 +53,9 @@ The orchestration is a long synchronous pipeline. Six specialist agents move in 
         │                  │                         ▼
         ▼                  │                  Package Drafter
    Knowledge Extractor   ──┤                         │
-   (URL ingest +           │                         ▼
-    interview +            │                   Orchestrator
-    gap detection)         │                         │
+   (gap-driven             │                         ▼
+    interview;             │                   Orchestrator
+    Auto-Discover beta)    │                         │
         │                  │                         ▼
         ▼                  │                   Career Dossier
    Artist Knowledge       ─┘                   (web + PDF)
@@ -114,6 +114,8 @@ Early demo runs scored every opportunity at sixty-plus and recommended applying 
 ### Managed Agents is the right surface for long agentic work on a serverless deploy
 
 Vercel's sixty-second function timeout is a hard architectural constraint. The Scout phase regularly runs eight to fifteen minutes. The Rubric phase runs twelve to twenty. Standing up a worker tier somewhere — Cloud Run, a long-lived Node process — was the alternative. Managed Agents made the entire app deploy to Vercel: the agent loop runs on Anthropic's infrastructure, our Vercel routes kick off a session and poll for events, and the long phase survives the function timeout because no long-lived connection lives on our infrastructure. That's a structural simplification that matters for a one-person team.
+
+The interesting part isn't that the timeout problem went away; the interesting part is what the session model lets you compose on top of it. Three patterns we ended up leaning on hard. **Sequential per-opportunity dispatch** — the Rubric session goes idle between opportunities; on each browser poll, the run-poll terminal-detection path checks the DB for the next unscored opportunity and dispatches a fresh `user.message` for it; the agent works that one, calls a `persist_match` custom tool, idles again, and the loop continues. State lives in the DB, not in the session. **Custom-tool round-trip** — every `persist_opportunity` and `persist_match` arrives as an `agent.custom_tool_use` event with a corresponding `requires_action` idle; the run-poll handler picks it up, runs the persistence, and posts a `user.custom_tool_result` event back so the agent resumes. The session becomes a long-running negotiation between Claude's reasoning and our durable storage, with neither side blocking the other. **Image content blocks at session scale** — instead of mounting recipient images as session resources (which silently fails the `read` tool above ~95 files), every per-opportunity message ships its cohort as `{type:'image', source:{type:'file', file_id}}` blocks, the documented multimodal pattern, which engages vision regardless of session size. None of these are exotic on their own. Together they make a multi-hour agentic workflow that's auditable, resumable, and serverless-deployable.
 
 ### The undocumented Files API behaviors cost the most time
 

@@ -11,7 +11,7 @@
 
 ---
 
-Upload your portfolio, build a Knowledge Base from public web data and a short interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
+Upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
 
 ---
 
@@ -19,7 +19,7 @@ Upload your portfolio, build a Knowledge Base from public web data and a short i
 
 Every working fine-art photographer in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, public-art commissions, photo-book prizes — and most of those applications go to opportunities they were never going to win. Discovery is scattered across forty-plus aggregators and foundation websites. Fit is opaque: photographers apply blind to programs whose past recipients worked in completely different aesthetic territory. And every package needs a tailored statement, proposal, CV, cover letter, and work-sample selection — six to ten hours per submission, even with templates. The same photographer can spend forty hours preparing an application for a program they had a three-percent chance of winning.
 
-Atelier is the tool that removes the writing wall. It reads your portfolio with vision, ingests your public record, interviews you to fill the gaps, then runs a long synchronous pipeline that scouts current open calls, scores each one for aesthetic fit against past recipients, drops the bad fits with specific reasoning, and drafts the materials for the ones that remain in the institutional voice each opportunity expects. The artifact at the end is a Career Dossier — printable PDF and web view — that names what to apply to, what to skip, and why.
+Atelier is the tool that removes the writing wall. It reads your portfolio with vision, builds a structured Artist Knowledge Base through a short gap-driven interview, then runs a long synchronous pipeline that scouts current open calls, scores each one for aesthetic fit against past recipients, drops the bad fits with specific reasoning, and drafts the materials for the ones that remain in the institutional voice each opportunity expects. The artifact at the end is a Career Dossier — printable PDF and web view — that names what to apply to, what to skip, and why.
 
 It is built for mid-career US fine-art photographers with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user — the moat is photography-domain depth, not breadth across every medium.
 
@@ -29,8 +29,7 @@ This is **version one of a real product** that will live past the hackathon. Ate
 
 ## Demo
 
-- Live deploy → [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)
-- Demo video → *TBD*
+Live deploy → [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)
 
 ---
 
@@ -56,9 +55,9 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
         │                  │                         ▼
         ▼                  │                  Package Drafter
    Knowledge Extractor   ──┤                         │
-   (URL ingest +           │                         ▼
-    interview +            │                   Orchestrator
-    gap detection)         │                         │
+   (gap-driven             │                         ▼
+    interview;             │                   Orchestrator
+    Auto-Discover beta)    │                         │
         │                  │                         ▼
         ▼                  │                   Career Dossier
    Artist Knowledge       ─┘                   (web + PDF)
