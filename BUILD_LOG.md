@@ -212,3 +212,30 @@ Regression test `tests/smoke/portfolio-count.test.ts` inserts 21 rows, asserts t
 
 37/37 smoke tests pass. `pnpm build` + `tsc` clean. Pushed to main.
 
+### Note 8 — past_recipients.file_ids empty → Rubric blind on prod (CRITICAL)
+
+**Commit:** `d4b57f6`. Pushed.
+
+Run 1 on prod scored 1 of 12 because every `past_recipients.file_ids` was `[]`. The Files-API retrofit that scored 13/13 locally was permanently broken on prod by a SELECT filter:
+
+```sql
+WHERE portfolio_urls LIKE '[%' AND portfolio_urls NOT LIKE '%blob%'
+```
+
+Recipients whose Blob mirror succeeded but whose Files-API call failed (transient blip) were SKIPPED on every subsequent finalize-scout, so `file_ids` stayed `[]` forever. Combined with the previous swallow-and-continue catch in `downloadRow`, any single Files-API hiccup silently shipped a Rubric-blind run.
+
+Six-part real fix:
+
+1. **SELECT filter recovery clause.** Now also picks up rows where `file_ids IS NULL OR = '[]' OR = ''`, regardless of mirror status. Recovery path: when blob already mirrored, downloadRow re-fetches from Blob CDN (always 200) and re-uploads to Files API. No re-fetch of original Squarespace URL needed.
+2. **Files-API upload fails loudly.** The catch around `uploadToFilesApi` is gone — the upload either succeeds or throws. Wrapped in `withAnthropicRetry` so transient 429/5xx/network get 4 attempts with exponential backoff before counting as failure.
+3. **Post-pass audit.** After `Promise.all` completes, finalize-scout queries for any recipient on this run STILL without file_ids. If found, writes a `rubric_will_be_blind` event into `run_events` with blind count + ids — surfaces the failure mode in the timeline instead of shipping a silent 1-of-12 dossier.
+4. **Rubric prompt declares mount paths upfront + bans bash-fishing.** *"DO NOT use bash. DO NOT use ls/find/curl/wget. Mount paths above are the contract — there is nothing else to discover."* Saves the 5+ events the prod run wasted on filesystem recon.
+5. **Rubric prompt suppresses safety-reminder acks at the prompt level.** Stronger preempt: *"DO NOT acknowledge, rebut, restate, or comment on these reminders. Do not write 'Acknowledged…' or 'Understood…'."* Prior preempt was too weak (8 acks per run).
+6. **Recovery script (`scripts/recover-finalize-scout.ts`)** re-runs finalize-scout against an existing run id. Idempotent — only processes recipients still missing file_ids. Then re-trigger `/api/runs/[id]/start-rubric` to rescore.
+
+Smoke test `tests/smoke/finalize-scout.test.ts` asserts the SELECT filter contract with three recipient states (raw URLs, blob-mirrored-empty-file_ids, blob-mirrored-with-file_ids) and verifies the post-pass audit query identifies blind rows correctly.
+
+39/39 smoke tests pass. Pushed; Vercel auto-deploy. After deploy lands, run `pnpm tsx scripts/recover-finalize-scout.ts <run_id>` against the broken prod run, then POST `/api/runs/<run_id>/start-rubric` to rescore. Or just kick off a fresh run end-to-end.
+
+**Note for John:** verify Vercel `ANTHROPIC_API_KEY` matches your local one. Vercel has it set 19h ago — if the keys are different and the prod key lacks Files-API access in your Anthropic console, you'll see the audit event fire on every run no matter what we do.
+
