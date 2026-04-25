@@ -6,7 +6,7 @@ import {
   type OpportunityForRubric,
   type PortfolioRef,
 } from '@/lib/agents/rubric-matcher';
-import { uploadToFilesApi } from '@/lib/anthropic-files';
+import { uploadVisionReadyImage } from '@/lib/anthropic-files';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 import { withApiErrorHandling } from '@/lib/api/response';
@@ -60,9 +60,14 @@ export const POST = withApiErrorHandling(
             console.warn(`[start-rubric] portfolio thumb fetch failed ${p.id} → ${res.status}`);
             return p;
           }
-          const buf = Buffer.from(await res.arrayBuffer());
-          const contentType = res.headers.get('content-type') ?? 'image/jpeg';
-          const fileId = await uploadToFilesApi(buf, `portfolio_${p.id}.jpg`, contentType);
+          // WALKTHROUGH Note 28: portfolio bytes from Vercel Blob carry
+          // color profiles / progressive encoding / metadata that Anthropic's
+          // vision pipeline cannot decode. uploadVisionReadyImage normalizes
+          // through Sharp (rotate + resize + baseline JPEG) so the Rubric
+          // agent's read tool returns multimodal content instead of "Output
+          // could not be decoded as text".
+          const rawBuf = Buffer.from(await res.arrayBuffer());
+          const fileId = await uploadVisionReadyImage(rawBuf, `portfolio_${p.id}.jpg`);
           return { ...p, file_id: fileId };
         } catch (err) {
           console.warn(`[start-rubric] portfolio Files API upload failed ${p.id}: ${(err as Error).message}`);

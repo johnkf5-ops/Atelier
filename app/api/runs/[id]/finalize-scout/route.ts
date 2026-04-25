@@ -1,9 +1,10 @@
 import pLimit from 'p-limit';
 import { put } from '@vercel/blob';
 import { waitUntil } from '@vercel/functions';
-import sharp from 'sharp';
+// WALKTHROUGH Note 28: sharp call moved into lib/anthropic-files.ts
+// normalizeForVision helper. finalize-scout no longer imports sharp directly.
 import { ensureDbReady, getDb } from '@/lib/db/client';
-import { uploadToFilesApi } from '@/lib/anthropic-files';
+import { uploadToFilesApi, normalizeForVision } from '@/lib/anthropic-files';
 import { withApiErrorHandling } from '@/lib/api/response';
 
 export const runtime = 'nodejs';
@@ -170,28 +171,20 @@ async function downloadRow(
       }
       const buf = Buffer.from(await res.arrayBuffer());
 
-      // Try Sharp preprocessing for the thumbnail; if Sharp can't read the
-      // format (rare WebP/AVIF/HEIC variants), fall back to uploading the
-      // raw bytes — Anthropic Files API accepts JPEG/PNG/WebP/GIF natively.
-      let uploadBuf: Buffer;
-      let uploadCt: string;
-      let uploadExt: string;
-      try {
-        uploadBuf = await sharp(buf)
-          .rotate()
-          .resize(1024, 1024, { fit: 'inside' })
-          .jpeg({ quality: 85 })
-          .toBuffer();
-        uploadCt = 'image/jpeg';
-        uploadExt = 'jpg';
-      } catch (sharpErr) {
+      // WALKTHROUGH Note 28: route through the shared normalizeForVision
+      // helper in lib/anthropic-files.ts. Single source of truth for the
+      // Sharp normalize step that makes the bytes vision-ready. The same
+      // bytes are then mirrored to Vercel Blob below and uploaded to the
+      // Files API — both must use the normalized buffer.
+      const norm = await normalizeForVision(buf, ct);
+      if (norm.usedFallback) {
         console.warn(
-          `[finalize-scout] sharp failed, uploading raw bytes url=${url} reason=${(sharpErr as Error).message}`,
+          `[finalize-scout] sharp fallback url=${url} (recipient=${row.name}, opp=${row.opportunity_id}) — vision may fail`,
         );
-        uploadBuf = buf;
-        uploadCt = ct.startsWith('image/') ? ct : 'image/jpeg';
-        uploadExt = uploadCt.split('/')[1]?.split(';')[0] || 'jpg';
       }
+      const uploadBuf = norm.buf;
+      const uploadCt = norm.contentType;
+      const uploadExt = norm.extension;
 
       const safeName = row.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
       const idx = blobUrls.length;
