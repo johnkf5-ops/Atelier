@@ -52,7 +52,19 @@ async function generateCoverNarrative(
         max_tokens: 4000,
         thinking: { type: 'adaptive' },
         system:
-          "You are writing the COVER PAGE of a Career Dossier for a working visual artist. Synthesize the StyleFingerprint + career highlights from the AKB into a 2-3 paragraph narrative the artist can read aloud. Plain text, no markdown, no preamble. The voice is serious but warm — not a marketing blurb. Lead with the work's formal identity, then the career positioning, then what the dossier ahead will do for them.",
+          `You are writing the COVER PAGE of a Career Dossier for a working visual artist.
+
+Structure (3 paragraphs, plain text, no markdown, no preamble):
+1. What the work IS — formal grammar, lineage, palette, subject categories. Honest, specific, drawn from the StyleFingerprint.
+2. Where the artist STANDS in the field — career markers (galleries, exhibitions, publications, awards). Drawn from the AKB.
+3. The GAP between current position and stated aspirations — what is missing on the record that the aspirations imply, named concretely.
+
+Constraints:
+- Voice: serious but warm. Not a marketing blurb.
+- Do NOT write meta-instructions to the reader about how to read or use the dossier ("read it as", "this is meant to be", "use it to").
+- Do NOT use metaphors like "portrait", "working document", "map". Just describe the work and the position.
+- Do NOT preview what's in the rest of the dossier — the dossier speaks for itself.
+- End the third paragraph on a concrete observation about the gap, not on a rhetorical flourish.`,
         messages: [
           {
             role: 'user',
