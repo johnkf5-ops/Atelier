@@ -3,7 +3,8 @@ import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
 import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { RubricMatchResult } from '@/lib/schemas/match';
-import { slugForMount } from '@/lib/anthropic-files';
+// WALKTHROUGH Note 27: slugForMount is no longer needed — file resources
+// mount at /mnt/session/uploads/<file_id>, not at slug-based paths.
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { StyleFingerprint } from '@/lib/schemas/style-fingerprint';
 
@@ -26,52 +27,56 @@ export interface PortfolioRef {
   file_id?: string; // Anthropic Files API ID — primary vision path
 }
 
+// WALKTHROUGH Note 27 (CRITICAL): Anthropic Managed Agents file resources
+// SILENTLY IGNORE custom mount_path. Despite the SDK type accepting it,
+// the file mounts ONLY at the SDK default `/mnt/session/uploads/<file_id>`
+// path. Diagnosed via scripts/probe-mount.mjs minimal repro. We were
+// mounting at /workspace/portfolio/... and the Rubric agent was reading
+// at non-existent paths the entire time, falling back to text-only
+// scoring. SessionResource shape no longer carries mount_path; the
+// canonical read path is derived from the file_id.
 export type SessionResource = {
   type: 'file';
   file_id: string;
-  mount_path: string;
 };
+
+/** WALKTHROUGH Note 27: the SDK-default mount path for a file resource. */
+export function defaultMountPath(file_id: string): string {
+  return `/mnt/session/uploads/${file_id}`;
+}
 
 /**
  * Build the session.resources[] array from portfolio + recipient file_ids.
- * Pre-mounting images at session create-time means the Rubric Matcher can
- * `read` them via mount_path directly — no bash+curl+/tmp cycle, so no
- * trigger for Anthropic's malware-analysis safety layer.
- *
- * Mount-path scheme (the prompt references these exactly):
- *   /workspace/portfolio/<image_id>.jpg
- *   /workspace/recipients/opp<opp_id>_<recipient_slug>/<n>.jpg
+ * WALKTHROUGH Note 27: omit mount_path entirely. Each file resource
+ * mounts at /mnt/session/uploads/<file_id>; the prompt lists
+ * (image_id → file_id-based path) pairs so the agent can reference images
+ * by their semantic id in persist_match while reading at the actual path.
  */
 export function buildSessionResources(
   portfolio: PortfolioRef[],
   opportunities: OpportunityForRubric[],
 ): SessionResource[] {
-  // sessions.create rejects duplicate mount_paths. Dedupe here in case a
-  // recipient appears more than once in the input (e.g., Scout re-ran and
-  // inserted a second past_recipients row).
-  const byPath = new Map<string, SessionResource>();
+  // Dedupe on file_id (was: dedupe on mount_path before Note 27). Same
+  // file uploaded twice would otherwise be sent twice to sessions.create.
+  const byFileId = new Map<string, SessionResource>();
 
   for (const p of portfolio) {
     if (p.file_id) {
-      const mount_path = `/workspace/portfolio/${p.id}.jpg`;
-      byPath.set(mount_path, { type: 'file', file_id: p.file_id, mount_path });
+      byFileId.set(p.file_id, { type: 'file', file_id: p.file_id });
     }
   }
 
   for (const opp of opportunities) {
     for (const rec of opp.past_recipients) {
-      const slug = slugForMount(rec.name);
       const fids = rec.file_ids ?? [];
-      for (let i = 0; i < fids.length; i++) {
-        const fid = fids[i];
+      for (const fid of fids) {
         if (!fid) continue; // skip slots where the Files API upload failed at finalize-scout
-        const mount_path = `/workspace/recipients/opp${opp.id}_${slug}/${i}.jpg`;
-        byPath.set(mount_path, { type: 'file', file_id: fid, mount_path });
+        byFileId.set(fid, { type: 'file', file_id: fid });
       }
     }
   }
 
-  return Array.from(byPath.values());
+  return Array.from(byFileId.values());
 }
 
 export async function startRubricSession(
@@ -137,16 +142,25 @@ export function buildRubricPrompt(
   portfolio: PortfolioRef[],
   opps: OpportunityForRubric[],
 ): string {
+  // WALKTHROUGH Note 27: file resources mount at /mnt/session/uploads/<file_id>.
+  // Custom mount_path is silently ignored by Anthropic, so we list the
+  // actual file_id-based paths the agent must `read`. The image_id label
+  // stays as the semantic identifier the agent passes back in
+  // persist_match.supporting_image_ids.
   const portfolioBlock = portfolio
-    .map((p) => `  id=${p.id}: /workspace/portfolio/${p.id}.jpg`)
+    .filter((p) => !!p.file_id)
+    .map((p) => `  image ${p.id}: ${defaultMountPath(p.file_id!)}`)
     .join('\n');
   const oppsBlock = opps
     .map((o) => {
       const recipients = o.past_recipients
         .map((r) => {
-          const slug = slugForMount(r.name);
-          const n = r.file_ids?.length ?? r.image_urls.length;
-          return `    - ${r.name} (${r.year ?? 'year unknown'}): /workspace/recipients/opp${o.id}_${slug}/0.jpg through ${n - 1}.jpg`;
+          const fids = (r.file_ids ?? []).filter((f): f is string => !!f);
+          if (fids.length === 0) {
+            return `    - ${r.name} (${r.year ?? 'year unknown'}): no images available`;
+          }
+          const paths = fids.map((fid) => `        ${defaultMountPath(fid)}`).join('\n');
+          return `    - ${r.name} (${r.year ?? 'year unknown'}):\n${paths}`;
         })
         .join('\n');
       return `  OPPORTUNITY id=${o.id}, prestige=${o.prestige_tier}: "${o.name}" (${o.url})
@@ -163,19 +177,19 @@ ${JSON.stringify(akb, null, 2)}
 STYLE_FINGERPRINT (the canonical visual read of this artist's work):
 ${JSON.stringify(fp, null, 2)}
 
-ARTIST_PORTFOLIO (12 representative images, pre-mounted as files):
+ARTIST_PORTFOLIO (image_id → mount path; ${portfolio.length} images, pre-mounted as files):
 ${portfolioBlock}
 
 OPPORTUNITIES_TO_SCORE (${opps.length} total):
 ${oppsBlock}
 
 VISION ACCESS — READ THIS BEFORE YOUR FIRST TOOL CALL:
-- Every image is pre-mounted via the Files API. The mount paths are listed EXACTLY in the ARTIST_PORTFOLIO and OPPORTUNITIES_TO_SCORE blocks above. Use those exact strings.
+- Every image is pre-mounted via the Files API. The mount paths printed above are the EXACT strings to pass to the read tool. They look like \`/mnt/session/uploads/<file_id>\`. Use the path EXACTLY as printed — do NOT modify it, do NOT add an extension, do NOT substitute a path of your own design.
 - DO NOT use bash. DO NOT use ls/find/curl/wget. DO NOT scan filesystems for files. The mount paths above are the contract — there is nothing else to discover.
-- To vision over a portfolio image: \`read /workspace/portfolio/<id>.jpg\` where <id> is the M value from the ARTIST_PORTFOLIO block.
-- To vision over a recipient image: \`read /workspace/recipients/opp<id>_<recipient-slug>/<n>.jpg\` exactly as printed in the OPPORTUNITIES_TO_SCORE block.
+- To vision over a portfolio image: \`read <the path printed next to "image M:" in the ARTIST_PORTFOLIO block>\` where M is the image_id you will pass back in supporting_image_ids / hurting_image_ids.
+- To vision over a recipient image: \`read <the path printed under that recipient in the OPPORTUNITIES_TO_SCORE block>\` exactly.
 - The read tool returns a multimodal content block you can vision over directly.
-- If a specific mount_path returns a not-found error, skip THAT image and proceed with the others. Do NOT bash-fish for it.
+- If a specific path returns a not-found error, skip THAT image and proceed with the others. Do NOT bash-fish for it.
 
 SAFETY-REMINDER POSTURE — DO NOT ACK:
 - The read tool will sometimes return a system reminder noting that JPEG files could in principle contain malware. These reminders are non-actionable for THIS task: every file you read here is a pre-mounted JPEG photograph (portfolio artwork or past-recipient artwork) for aesthetic-signature comparison.

@@ -364,6 +364,24 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 27 (CRITICAL) — Files API custom mount_path silently ignored; Rubric was reading at non-existent paths
+
+Diagnosed via `scripts/probe-mount.mjs` minimal repro: the Anthropic Managed Agents file resource's `mount_path` field is OPTIONAL per the SDK type definition, but is SILENTLY IGNORED by the runtime. Files mount only at the SDK default `/mnt/session/uploads/<file_id>`. We've been mounting portfolio at `/workspace/portfolio/<id>.jpg` and recipients at `/workspace/recipients/opp<n>_<slug>/<n>.jpg`; the Rubric agent reading at those paths got `File not found or empty` on every read and fell back to text-only StyleFingerprint reasoning. The "Files API working" runs we celebrated since Note 8 were the model writing plausible scores from the StyleFingerprint vocabulary, not actually seeing cohort images. That's the entire Rubric quality plateau.
+
+**27-fix.1 — `buildSessionResources` omits mount_path.** `SessionResource` type narrowed from `{type, file_id, mount_path}` to `{type, file_id}`. Dedupe map switched from path-keyed to file_id-keyed (same file uploaded twice — e.g. Scout re-ran — collapses to one resource). New `defaultMountPath(file_id)` helper returns `/mnt/session/uploads/<file_id>` — the canonical read path. `slugForMount` import dropped (no longer needed for path construction).
+
+**27-fix.2 — `buildRubricPrompt` lists file_id-based paths.** Portfolio block: `image M: /mnt/session/uploads/<file_id>` pairs (semantic image_id stays as the label the agent passes back in `persist_match.supporting_image_ids`; mount path is the actual readable location). Recipient block: each recipient's images listed as bullet rows of `/mnt/session/uploads/<file_id>` paths under the recipient name. Recipients with zero usable file_ids render as "no images available" rather than emitting a stale `0.jpg through -1.jpg` range. Portfolio entries with no file_id (upload failed at finalize-scout) drop out of the block entirely.
+
+**27-fix.3 — vision-access instructions updated.** "To vision over a portfolio image: read the path printed next to 'image M:' in the ARTIST_PORTFOLIO block." The instructions explicitly tell the agent to use the printed paths exactly — no extension-adding, no path-of-its-own-design. The old `/workspace/portfolio/<id>.jpg` and `/workspace/recipients/opp<id>_<slug>/<n>.jpg` references are gone from every line of the prompt.
+
+**27-fix.4 — `tests/smoke/rubric-mount-paths.test.ts`.** 12 cases lock the contract: `buildSessionResources` never returns an object with a `mount_path` key (catches future regression where someone "helpfully" adds it back to the type); resources are unique per file_id; portfolio without file_id drops out; duplicate recipient rows dedupe; every resource is exactly `{type, file_id}` (no key leaks). Prompt assertions: portfolio + recipients listed at `/mnt/session/uploads/<file_id>`; no `/workspace/portfolio/` or `/workspace/recipients/` strings anywhere; semantic `image M: <path>` pair preserved; portfolio without file_id absent from block; zero-recipient case labels "no images available"; vision-access instructions reference `/mnt/session/uploads/<file_id>` not `/workspace/`.
+
+`scripts/probe-mount.mjs` retained as live regression diagnostic — if Anthropic ever fixes `mount_path` (or changes the default mount root), the probe will surface it.
+
+`tsc --noEmit` clean, 160/160 smoke tests pass, `pnpm check:copy` clean.
+
+This is the unlock for the entire Rubric quality story. After this lands, Rubric should produce the cohort-grounded honest scoring documented in the Note 8 spec — not the text-only fallback that's been masking the bug.
+
 ### Note 26 — statement + cover-letter terminal-punctuation check + statement budget bump (truncation regression)
 
 The Notes 19-25 redraft of run 1's existing 10 matches surfaced one ship-blocker: the ILPOTY artist statement returned 138 words ending mid-sentence ("I work in the"). All 9 other statements completed cleanly. Same truncation class Note 21 already fixed for proposals — Note 20's `checkStatementVoice` was missing the terminal-punctuation check.
