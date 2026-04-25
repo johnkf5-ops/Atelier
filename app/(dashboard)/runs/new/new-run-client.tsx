@@ -5,11 +5,23 @@ import { useRouter } from 'next/navigation';
 import { fetchJson } from '@/lib/api/fetch-client';
 import { Button } from '@/app/_components/ui';
 
+type Aggressiveness = 'conservative' | 'standard' | 'wide';
+
+const AGGRESSIVENESS: Record<
+  Aggressiveness,
+  { label: string; count: number; sub: string }
+> = {
+  conservative: { label: 'Conservative', count: 15, sub: '~15 opportunities — tight slate' },
+  standard: { label: 'Standard', count: 25, sub: '~25 opportunities — recommended' },
+  wide: { label: 'Wide net', count: 40, sub: '~40 opportunities — longer tail to triage' },
+};
+
 export default function NewRunClient() {
   const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('standard');
 
   async function onStart() {
     setStarting(true);
@@ -17,7 +29,9 @@ export default function NewRunClient() {
     const r = await fetchJson<{ run_id: number }>('/api/runs/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
+      body: JSON.stringify({
+        target_opportunity_count: AGGRESSIVENESS[aggressiveness].count,
+      }),
       timeoutMs: 60_000,
     });
     if (!r.ok) {
@@ -29,7 +43,42 @@ export default function NewRunClient() {
   }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
+      <div className="space-y-2">
+        <div className="text-xs uppercase tracking-wide text-neutral-500">
+          Aggressiveness
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          {(Object.keys(AGGRESSIVENESS) as Aggressiveness[]).map((k) => {
+            const opt = AGGRESSIVENESS[k];
+            const selected = aggressiveness === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setAggressiveness(k)}
+                className={`text-left rounded-lg border p-3 transition ${
+                  selected
+                    ? 'border-neutral-300 bg-neutral-100 text-neutral-900'
+                    : 'border-neutral-800 bg-neutral-950 text-neutral-300 hover:border-neutral-700'
+                }`}
+              >
+                <div className="text-sm font-medium">{opt.label}</div>
+                <div
+                  className={`text-xs mt-0.5 ${selected ? 'text-neutral-700' : 'text-neutral-500'}`}
+                >
+                  {opt.sub}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-neutral-500">
+          Sets how wide a slate Atelier will assemble. Standard fits most artists; choose Wide net
+          if you have time to triage more options.
+        </p>
+      </div>
+
       <Button
         type="button"
         variant="primary"

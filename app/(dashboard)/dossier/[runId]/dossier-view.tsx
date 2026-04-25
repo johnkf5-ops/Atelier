@@ -37,6 +37,7 @@ export type DossierMatch = {
 
 export type DossierFilteredOut = {
   name: string;
+  url: string | null;
   blurb: string;
   fit_score: number;
 };
@@ -199,9 +200,20 @@ export default function DossierView({
                   key={m.id}
                   className={`rounded border ${isOpen ? 'border-neutral-600' : 'border-neutral-800'} bg-neutral-950 overflow-hidden`}
                 >
-                  <button
+                  {/* Header is a div + onClick (not <button>) so the Apply
+                      anchor below can be a real <a> without nesting violations.
+                      Click anywhere in the header (except Apply) toggles. */}
+                  <div
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setExpanded(isOpen ? null : m.id)}
-                    className="w-full text-left flex items-start gap-4 px-4 py-4 hover:bg-neutral-900 transition"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setExpanded(isOpen ? null : m.id);
+                      }
+                    }}
+                    className="w-full text-left flex items-start gap-4 px-4 py-4 hover:bg-neutral-900 transition cursor-pointer"
                   >
                     <div className="flex-shrink-0 w-12 h-12 rounded overflow-hidden bg-neutral-800 flex items-center justify-center">
                       {m.logo_url ? (
@@ -229,14 +241,25 @@ export default function DossierView({
                         )}
                       </div>
                     </div>
-                    <div className="flex-shrink-0">
+                    <div className="flex-shrink-0 flex items-center gap-2">
                       <span
                         className={`inline-block px-2 py-1 text-[11px] uppercase tracking-wide rounded border ${tier.className}`}
                       >
                         {tier.label}
                       </span>
+                      {m.url && (
+                        <a
+                          href={m.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 px-3 py-1 text-xs rounded border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 hover:border-emerald-400/60 transition no-print"
+                        >
+                          Apply <span aria-hidden="true">→</span>
+                        </a>
+                      )}
                     </div>
-                  </button>
+                  </div>
 
                   {/* "Why this fit?" disclosure on the COLLAPSED card so users
                       can read the Rubric reasoning without expanding into the
@@ -263,6 +286,11 @@ export default function DossierView({
 
                   {isOpen && (
                     <div className="border-t border-neutral-800 px-4 py-4 space-y-4">
+                      <p className="text-xs text-neutral-400 italic leading-relaxed border-l-2 border-neutral-700 pl-3">
+                        These drafts are starting points. Edit before submitting — your voice
+                        matters. Atelier&rsquo;s job is to remove the writing wall, not write
+                        under your name.
+                      </p>
                       <Tabs
                         value={tabByMatch[m.id] ?? 'statement'}
                         onChange={(t) => setTabByMatch((c) => ({ ...c, [m.id]: t }))}
@@ -309,9 +337,22 @@ export default function DossierView({
           {filteredOpen && (
             <div className="space-y-2 pl-2">
               {filteredOut.map((f, i) => (
-                <div key={i} className="text-sm text-neutral-300 border-l-2 border-neutral-800 pl-3 py-1">
-                  <span className="text-neutral-500 mr-2">{f.name}:</span>
-                  {f.blurb}
+                <div
+                  key={i}
+                  className="text-sm text-neutral-300 border-l-2 border-neutral-800 pl-3 py-1 flex items-baseline gap-2 flex-wrap"
+                >
+                  <span className="text-neutral-500">{f.name}:</span>
+                  <span className="flex-1 min-w-0">{f.blurb}</span>
+                  {f.url && (
+                    <a
+                      href={f.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-emerald-300 hover:text-emerald-200 underline shrink-0 no-print"
+                    >
+                      Apply →
+                    </a>
+                  )}
                 </div>
               ))}
             </div>
@@ -363,6 +404,14 @@ function Tabs({
   );
 }
 
+function MaterialExplainer({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-xs text-neutral-400 leading-relaxed bg-neutral-900/60 border border-neutral-800 rounded px-3 py-2">
+      {children}
+    </p>
+  );
+}
+
 function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId: number }) {
   if (tab === 'reasoning') {
     return (
@@ -381,6 +430,11 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
         <h4 className="text-xs uppercase tracking-wide text-neutral-500">
           Work sample selection — {match.work_samples.length} images
         </h4>
+        <MaterialExplainer>
+          The portfolio images Atelier suggests submitting for <em>this</em> opportunity, with
+          a per-image rationale. Most applications limit to 10–20 images — these are the ones
+          that best fit this institution&rsquo;s working rubric.
+        </MaterialExplainer>
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
           {match.work_samples.map((s, i) => (
             <div
@@ -424,8 +478,36 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
           ? 'cv_formatted'
           : 'cover_letter';
 
+  const explainer =
+    tab === 'statement' ? (
+      <>
+        Your practice in your own voice. Most applications ask for 250–500 words — paste into
+        the &ldquo;Statement of Practice&rdquo; or &ldquo;Artist Statement&rdquo; field. Grounded
+        in your portfolio analysis and Knowledge Base; edit to taste before submitting.
+      </>
+    ) : tab === 'proposal' ? (
+      <>
+        Used when an opportunity asks <em>what would you do with this funding or residency.</em>{' '}
+        Paste into the &ldquo;Project Description&rdquo; or &ldquo;Proposal&rdquo; field. Edit
+        the dates and locations to match what you can actually commit to.
+      </>
+    ) : tab === 'cv' ? (
+      <>
+        Your formal exhibition + publication record. Most applications either accept a paste{' '}
+        <em>or</em> ask for a PDF upload — use the Download .docx button below for that.
+        Already formatted to the institution&rsquo;s expected style.
+      </>
+    ) : (
+      <>
+        Used as the email body or letter-style intro. Most applications either include a
+        &ldquo;cover letter&rdquo; field or expect this as the body of your submission email.
+        Lead with this.
+      </>
+    );
+
   return (
     <div className="space-y-3">
+      <MaterialExplainer>{explainer}</MaterialExplainer>
       <div className="flex items-center gap-3 no-print">
         <button
           onClick={() => navigator.clipboard.writeText(text)}

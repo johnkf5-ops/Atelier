@@ -8,6 +8,7 @@ const config: RunConfig = {
   window_end: '2026-10-24',
   budget_usd: 500,
   max_travel_miles: null,
+  target_opportunity_count: 25,
 };
 
 function opp(overrides: Partial<Opportunity> = {}): Opportunity {

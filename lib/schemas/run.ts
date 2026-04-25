@@ -6,6 +6,10 @@ export const RunConfig = z.object({
   budget_usd: z.number().default(0), // 0 = no entry-fee penalty
   max_travel_miles: z.number().nullable().default(null), // null = no residency travel cap
   eligibility_overrides: z.record(z.string(), z.unknown()).optional(),
+  // WALKTHROUGH Note 17c: user-configurable target opportunity count.
+  // Standard = 25; Scout's prompt reads this and emits a ±5 range so the
+  // agent has slight slack on either side of the target.
+  target_opportunity_count: z.number().int().min(5).max(80).default(25),
 });
 export type RunConfig = z.infer<typeof RunConfig>;
 

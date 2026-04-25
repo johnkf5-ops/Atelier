@@ -84,14 +84,19 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
 
   const filteredRows = (
     await db.execute({
-      sql: `SELECT o.name, rm.filtered_out_blurb, rm.fit_score
+      sql: `SELECT o.name, o.url, rm.filtered_out_blurb, rm.fit_score
             FROM run_matches rm
             JOIN opportunities o ON o.id = rm.opportunity_id
             WHERE rm.run_id = ? AND rm.included = 0 AND rm.filtered_out_blurb IS NOT NULL
             ORDER BY rm.fit_score DESC`,
       args: [runIdNum],
     })
-  ).rows as unknown as Array<{ name: string; filtered_out_blurb: string; fit_score: number }>;
+  ).rows as unknown as Array<{
+    name: string;
+    url: string | null;
+    filtered_out_blurb: string;
+    fit_score: number;
+  }>;
 
   // Logos (cached) — resolve in parallel
   const logoMap: Record<number, string | null> = {};
@@ -141,6 +146,7 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
 
   const filtered: DossierFilteredOut[] = filteredRows.map((f) => ({
     name: f.name,
+    url: f.url,
     blurb: f.filtered_out_blurb,
     fit_score: f.fit_score,
   }));

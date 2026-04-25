@@ -73,6 +73,7 @@ RUN_CONFIG:
 - window: ${config.window_start} to ${config.window_end}
 - budget_usd: ${config.budget_usd} (0 = no fee cap)
 - max_travel_miles: ${config.max_travel_miles ?? 'unlimited'}
+- target_opportunity_count: ${config.target_opportunity_count} (the slate you're aiming for)
 
 STEP 0 — ARCHETYPE INFERENCE (do this BEFORE any web_search):
 Read the AKB + StyleFingerprint and synthesize a private list of 5–8 opportunity archetypes that genuinely fit this specific artist. An archetype is a category of funding/selection institution (e.g., "state arts council", "nature photography competition", "museum acquisition prize", "public art commission", "book publisher open submission", "conservation-themed editorial grant"). DO NOT use a fixed taxonomy — reason from the artist's:
@@ -123,9 +124,9 @@ Then \`read /tmp/x.jpg\`.
 If web_fetch fails on a source (404, anti-scraping, paywall), skip it and continue.
 
 HARD CAPS for this run:
-- 12–20 distinct opportunities total
+- ${Math.max(5, config.target_opportunity_count - 5)}–${config.target_opportunity_count + 5} distinct opportunities total (target: ${config.target_opportunity_count})
 - At least 4 distinct archetypes represented in the final slate — no single archetype may exceed 40% of the slate
-- Stop adding new sources once you reach 20 opportunities`;
+- Stop adding new sources once you reach ${config.target_opportunity_count + 5} opportunities`;
 }
 
 export async function persistOpportunityFromAgent(runId: number, rawInput: unknown): Promise<string> {
