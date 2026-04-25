@@ -562,6 +562,71 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 32 — Drafted statements vary STRUCTURE but repeat BODY CONTENT across opportunities
+
+**Where:** `lib/agents/package-drafter.ts` artist_statement system prompt + per-opportunity tailoring (Note 20-fix.3). Same pattern likely affects proposals and cover letters — audit them after the statement fix.
+
+**Symptom:** audited 6 included statements from the demo run. Individually each is sharp (first-person, opens with stake/principle, real quotable lines: *"I plan everything around the minute the light turns"*, *"I photograph the picturesque on purpose"*, *"The panoramic frame is where I do my actual seeing"*). But across the SET they read as the same statement reshuffled:
+
+- **Locations canonical reel** ("Antelope Canyon, Delicate Arch, the Palouse, Hawaiian waterfalls, Amsterdam, Lisbon, Dubai") appears in 5 of 6 statements
+- **Gear/technique canonical reel** ("Hasselblad / Phase One / Zone System / graduated ND / Fuji Flex") appears in 5 of 6 statements
+- **Same closing line** (*"The planet is a beautiful place..."*) appears in 6 of 6 statements
+- **Same lineage namedrop** (Adams, Rowell, Galen Rowell) appears in 4 of 6 statements
+
+The opening sentences vary genuinely — opp-specific lead. But after the opening, the bodies converge on the same locations + gear + closing. From a reader perspective (John reviewing his own dossier OR a juror who reads >1 of these): "different statements" reads as "one statement reshuffled."
+
+**Why this happens:** the current Drafter prompt tells the model to be opportunity-specific and to draw facts from AKB. The model interprets "draw facts from AKB" as "include the canonical facts" → every statement pulls in the location list + gear list + closing line as the structural backbone. The opp-specific differentiation only happens at the opening, then the model defaults to the safe canonical body.
+
+**Fix — per-material content differentiation:**
+
+### 32-fix.1 — Add `EMPHASIS_BY_OPPORTUNITY_TYPE` to artist statement prompt
+
+Different opportunity types should LEAD with different facets of the practice and SKIP others. Add an explicit per-type emphasis table to the artist_statement system prompt. Examples:
+
+- **state-fellowship** (NEA, NYSCA, state arts councils): lead with regional/place commitment + civic-conservation angle. Skip international gear name-dropping.
+- **landscape-prize** (ILPOTY, NLPA, OPOTY, NANPA): lead with the specific body of work + return-visit project structure. Mention technique only if load-bearing for that body.
+- **photo-book** (Aperture, Lucie): lead with monograph readiness + book-object decisions. Skip the gear list entirely.
+- **museum-acquisition**: lead with conceptual through-line + project structure. Aspirational tone.
+- **general-prize** (IPA, FAPA, TIFA, HIPA): lead with the formal discipline + the working philosophy. Skip the full location reel; pick 2-3 most representative for the prize's category.
+- **panoramic-specific** (Epson Pano): lead with the format choice + why panoramic is the artist's actual seeing. Skip locations that aren't panoramic-native.
+
+### 32-fix.2 — Hard cap on canonical reels in the prompt
+
+Add explicit constraints to STATEMENT_VOICE_CONSTRAINTS:
+
+- *"Do NOT list more than 3 specific locations in a single sentence. The full canonical location list is in the AKB; the statement should select 2-3 most relevant for THIS opportunity, not enumerate all 8."*
+- *"Do NOT list more than 2 pieces of gear/technique in a single sentence. The full technique list is for the CV; the statement justifies technique only when it serves the opportunity's specific evaluation criteria."*
+- *"The phrase 'the planet is a beautiful place' (or any near-paraphrase) may appear in AT MOST 2 of every 6 statements drafted in a single dossier. The model is producing this as a default closing — vary the close per opp type instead."*
+
+### 32-fix.3 — Cross-dossier content-similarity check
+
+A cross-document deterministic linter that runs AFTER all 6 statements are drafted (in the orchestrator phase, not per-Drafter call). For the set of statements:
+- Compute Jaccard token-bag similarity between every pair of statements
+- If average similarity > 0.50, flag in run_events as `dossier_content_repetition_warning`
+- If two specific statements have similarity > 0.75, mark them for re-draft with the offending overlap content explicitly excluded in the retry prompt
+
+Alternative simpler version: regex-count canonical phrases across the 6 statements. If the same phrase ("planet is a beautiful place", "Antelope Canyon", "Hasselblad and Phase One") appears in >3 of 6, that's a soft warning the prompt isn't differentiating enough.
+
+### 32-fix.4 — Apply same audit + fix to PROPOSALS and COVER LETTERS
+
+The same content-repetition pattern probably affects the other two materials. Audit on the same dossier:
+- Read 6 proposals, count canonical reel appearances (locations / gear / closing line / career markers)
+- Read 6 cover letters, same audit
+- Apply matching per-type emphasis + canonical-reel cap to those prompts
+
+### Acceptance for Note 32
+
+- A fresh dossier with 6+ statements: each statement uses 2-3 of the 8 canonical locations, NOT all 8. Different statements emphasize different locations per opp type.
+- Closing lines: maximum 2 of 6 use the "planet is a beautiful place" formulation. Others find their own close.
+- Same audit on proposals and cover letters.
+- Cross-dossier average Jaccard token similarity below 0.50 between any pair of same-material drafts.
+
+**Files:** `lib/agents/package-drafter.ts` (statement + proposal + cover-letter prompts get per-type emphasis tables + canonical-reel caps), possibly `lib/agents/orchestrator.ts` (cross-dossier similarity check), `tests/smoke/drafter-cross-dossier-similarity.test.ts` (new).
+
+**Priority:** medium-high — the dossier reads as competent but not distinctive. Judges reading 2+ statements in the same submission will notice the canonical-reel pattern. Should ship before final demo recording.
+
+---
+
 ## Note 31 — Header tagline: "Atelier | Your Personal Art Director" (small UI)
 
 **Where:** site header (currently shows just "Atelier"). Affects every page in the dashboard layout + the document `<title>` tag for the browser tab.
