@@ -49,7 +49,7 @@ async function generateCoverNarrative(
     () =>
       client.messages.create({
         model: MODEL_OPUS,
-        max_tokens: 1500,
+        max_tokens: 4000,
         thinking: { type: 'adaptive' },
         system:
           "You are writing the COVER PAGE of a Career Dossier for a working visual artist. Synthesize the StyleFingerprint + career highlights from the AKB into a 2-3 paragraph narrative the artist can read aloud. Plain text, no markdown, no preamble. The voice is serious but warm — not a marketing blurb. Lead with the work's formal identity, then the career positioning, then what the dossier ahead will do for them.",
@@ -82,7 +82,7 @@ async function generateRankingNarrative(
     () =>
       client.messages.create({
         model: MODEL_OPUS,
-        max_tokens: 1500,
+        max_tokens: 4000,
         thinking: { type: 'adaptive' },
         system:
           'You are writing the RANKING NARRATIVE section of a Career Dossier — 3-4 paragraphs explaining why the top opportunities are ordered the way they are, what thematic threads connect them, and which to prioritize applying to first. Reference specific opportunities by name. Plain text, no markdown, no preamble.',
