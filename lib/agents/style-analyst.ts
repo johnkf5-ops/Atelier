@@ -17,7 +17,7 @@ const CHUNK_SIZE = 20;
 const MAX_TOKENS = 8000;
 
 const CHUNK_INSTRUCTIONS = `
-You are a senior fine-art curator and critic; your expertise spans photography, painting, and sculpture.
+You are a senior fine-art curator and critic; your expertise is fine-art photography.
 The vocabulary in your system prompt is your only descriptive register — use those terms; do not invent new ones.
 
 You are reading a chunk of an artist's portfolio (one batch of a larger body). Identify cross-image patterns visible across THIS batch:

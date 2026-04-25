@@ -1,6 +1,6 @@
 # Atelier — Architecture
 
-*An AI art director for working visual artists.*
+*An AI art director for working photographers.*
 
 [![Built with Claude Opus 4.7](https://img.shields.io/badge/Built_with-Claude_Opus_4.7-C15F3C?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
 [![Managed Agents](https://img.shields.io/badge/Managed_Agents-managed--agents--2026--04--01-1f2937?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
@@ -9,7 +9,7 @@
 
 ---
 
-This document describes how Atelier is built. Atelier is a single-user-per-deploy Next.js app that turns a visual artist's portfolio into a Career Dossier — ranked grant / residency / competition opportunities and submission-ready application materials. The submission for the Cerebral Valley × Anthropic *Built with Opus 4.7* hackathon. The implementation runs six specialist agents on Anthropic's API: four direct `messages.create` agents and two Managed Agents on the `agent_toolset_20260401` toolset. Long-running runs survive Vercel's 60-second function timeout via a poll-pull-on-read pattern: state lives in Turso (LibSQL), the browser polls a thin Next.js route, and that route reads new events from Anthropic and persists them on every poll.
+This document describes how Atelier is built. Atelier is a single-user-per-deploy Next.js app that turns a fine-art photographer's portfolio into a Career Dossier — ranked grant / residency / competition opportunities and submission-ready application materials. The submission for the Cerebral Valley × Anthropic *Built with Opus 4.7* hackathon. The implementation runs six specialist agents on Anthropic's API: four direct `messages.create` agents and two Managed Agents on the `agent_toolset_20260401` toolset. Long-running runs survive Vercel's 60-second function timeout via a poll-pull-on-read pattern: state lives in Turso (LibSQL), the browser polls a thin Next.js route, and that route reads new events from Anthropic and persists them on every poll.
 
 The rest of this document is in the order a reader new to the codebase would want it: system shape, stack rationale, the agents, the data flow per run phase, the long-running pattern, the database, the Anthropic-integration patterns, the image-content-block multimodal pattern that makes Rubric work, the skill files, the structural decisions documented in [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md), and finally the Path B (multi-tenant) hooks.
 

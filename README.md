@@ -1,6 +1,6 @@
 # Atelier
 
-*An AI art director for working visual artists.*
+*An AI art director for working photographers.*
 
 [![Built with Claude Opus 4.7](https://img.shields.io/badge/Built_with-Claude_Opus_4.7-C15F3C?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
 [![Cerebral Valley × Anthropic Hackathon](https://img.shields.io/badge/Cerebral_Valley_%C3%97_Anthropic-Built_with_Opus_4.7-1f2937?style=flat-square)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
@@ -17,11 +17,11 @@ Upload your portfolio, build a Knowledge Base from public web data and a short i
 
 ## What it is
 
-Every working visual artist in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, public-art commissions — and most of those applications go to opportunities they were never going to win. Discovery is scattered across forty-plus aggregators and foundation websites. Fit is opaque: artists apply blind to programs whose past recipients worked in completely different aesthetic territory. And every package needs a tailored statement, proposal, CV, cover letter, and work-sample selection — six to ten hours per submission, even with templates. The same artist can spend forty hours preparing an application for a program they had a three-percent chance of winning.
+Every working fine-art photographer in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, public-art commissions, photo-book prizes — and most of those applications go to opportunities they were never going to win. Discovery is scattered across forty-plus aggregators and foundation websites. Fit is opaque: photographers apply blind to programs whose past recipients worked in completely different aesthetic territory. And every package needs a tailored statement, proposal, CV, cover letter, and work-sample selection — six to ten hours per submission, even with templates. The same photographer can spend forty hours preparing an application for a program they had a three-percent chance of winning.
 
 Atelier is the tool that removes the writing wall. It reads your portfolio with vision, ingests your public record, interviews you to fill the gaps, then runs a long synchronous pipeline that scouts current open calls, scores each one for aesthetic fit against past recipients, drops the bad fits with specific reasoning, and drafts the materials for the ones that remain in the institutional voice each opportunity expects. The artifact at the end is a Career Dossier — printable PDF and web view — that names what to apply to, what to skip, and why.
 
-It is built for mid-career US visual artists with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user.
+It is built for mid-career US fine-art photographers with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user — the moat is photography-domain depth, not breadth across every medium.
 
 ---
 

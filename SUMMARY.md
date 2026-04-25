@@ -1,20 +1,20 @@
 # Atelier — Summary
 
-*An AI art director for working visual artists.*
+*An AI art director for working photographers.*
 
 ---
 
 ## The problem
 
-Every working visual artist in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, public-art commissions. Most of those applications go to opportunities they were never going to win.
+Every working fine-art photographer in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, photo-book prizes, public-art commissions. Most of those applications go to opportunities they were never going to win.
 
 Three things make that bleed worse than it should be:
 
-**Discovery is scattered.** Open calls live across forty-plus aggregators, foundation websites, residency directories, and competition pages. Nobody maintains a clean index. Artists either pay a subscription that surfaces a fraction of what's out there, or they piece it together by hand and miss the deadlines that matter.
+**Discovery is scattered.** Open calls live across forty-plus aggregators, foundation websites, residency directories, and competition pages. Nobody maintains a clean index. Photographers either pay a subscription that surfaces a fraction of what's out there, or they piece it together by hand and miss the deadlines that matter.
 
-**Fit is opaque.** Programs publish past recipients but rarely articulate what unifies them aesthetically. Artists apply blind to programs whose past awardees worked in completely different aesthetic territory — different palette, different subject grammar, different conceptual frame — then receive a form rejection and learn nothing from it.
+**Fit is opaque.** Programs publish past recipients but rarely articulate what unifies them aesthetically. Photographers apply blind to programs whose past awardees worked in completely different aesthetic territory — different palette, different subject grammar, different conceptual frame — then receive a form rejection and learn nothing from it.
 
-**The packages take six to ten hours each.** Statement, project proposal, CV, cover letter, work-sample selection. Even with templates the institutional-voice tax is real: a grant statement is not a residency statement is not a gallery cover letter, and the applications that win are the ones tuned to the specific program. The same artist can spend forty hours preparing an application for a program they had a three-percent chance of winning, and the writing tax means they often don't apply at all.
+**The packages take six to ten hours each.** Statement, project proposal, CV, cover letter, work-sample selection. Even with templates the institutional-voice tax is real: a grant statement is not a residency statement is not a gallery cover letter, and the applications that win are the ones tuned to the specific program. The same photographer can spend forty hours preparing an application for a program they had a three-percent chance of winning, and the writing tax means they often don't apply at all.
 
 I'm a working landscape photographer. I have been inside this economy for fifteen years. I have never applied to a single grant, residency, or fellowship — because writing about my own work is the wall.
 
@@ -84,7 +84,7 @@ The earlier shape — mounting all images as session resources and asking the ag
 
 The other piece that took serious engineering: building the Artist Knowledge Base.
 
-Most working artists are not very googlable, and most cannot write well about their own work. The Extractor handles both. It runs a search → rank → top-K → fetch pipeline against the URLs the artist seeds (personal site, gallery bios, press mentions) and against any other URLs it discovers along the way. Pages that don't render server-side or that block the user agent get a snippet fallback so the structured data isn't entirely lost.
+Most working fine-art photographers are not very googlable, and most cannot write well about their own work. The Extractor handles both. It runs a search → rank → top-K → fetch pipeline against the URLs the artist seeds (personal site, gallery bios, press mentions) and against any other URLs it discovers along the way. Pages that don't render server-side or that block the user agent get a snippet fallback so the structured data isn't entirely lost.
 
 Every fact written to the AKB carries a `source_url` and an `extracted_quote`. Every candidate fact passes through an identity-anchor check — the same name belonging to a different artist never enters the record. Then a gap-detection pass identifies which AKB fields are still empty, and a structured text interview targets exactly those gaps. The output is a versioned Artist Knowledge Base that's reusable across every future run. Onboard once.
 
@@ -136,7 +136,7 @@ The first run I did with Atelier on my own portfolio surfaced six included oppor
 
 I'm going to apply to all six.
 
-That's the test the system has to pass for every artist who uses it. Not "did the agent loop complete." Not "did vision engage." Did the artist read the dossier and decide to apply.
+That's the test the system has to pass for every photographer who uses it. Not "did the agent loop complete." Not "did vision engage." Did the photographer read the dossier and decide to apply.
 
 ---
 
