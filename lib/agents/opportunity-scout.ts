@@ -98,10 +98,22 @@ STEP 3 — ELIGIBILITY FILTER
 Apply hard eligibility filters from the AKB (citizenship, medium, career_stage). Drop opportunities the artist is plainly ineligible for. Note what you filtered and why.
 
 STEP 4 — PAST RECIPIENTS
-For each surviving opportunity: locate past recipients (last 3 years). For each recipient, locate their portfolio page (their personal site OR an institutional bio). Extract up to 5 representative portfolio image URLs per recipient (max 3 recipients per opportunity).
+For each surviving opportunity: locate past recipients (last 3 years). For each recipient, find their portfolio page (personal site, gallery rep page, or institutional archive) and extract up to 5 representative portfolio image URLs per recipient (max 3 recipients per opportunity).
+
+CRITICAL — image_urls MUST be DIRECT IMAGE FILE URLs, not homepages or gallery pages:
+- ✅ GOOD: \`https://photographer.com/portfolio/photo-001.jpg\`
+- ✅ GOOD: \`https://cdn.gallery.com/works/2024/abc123.webp\`
+- ✅ GOOD: \`https://institutionalarchive.org/images/recipient/work-3.png\`
+- ❌ BAD: \`https://photographer.com/\` (homepage — has no image)
+- ❌ BAD: \`https://photographer.com/portfolio\` (HTML page, not an image)
+- ❌ BAD: \`https://gallery.com/artists/jane-doe\` (artist landing page, HTML)
+
+To find direct image URLs: web_fetch the portfolio/gallery PAGE first, then extract <img src="..."> URLs from the HTML, OR look for "Open image in new tab" / right-click-image-address style URLs that end in .jpg / .png / .webp / .avif. If a personal site is a JS-rendered SPA where you can't see image URLs, use Google image search ("[recipient name] photographer") and extract direct image URLs from the search results page instead.
+
+If you genuinely cannot find ANY direct image URLs for a recipient after honest effort, OMIT that recipient entirely — do NOT submit them with image_urls=[] or with a homepage URL as a placeholder. A recipient with zero usable images is worse than no recipient at all (it pollutes the cohort the Rubric Matcher scores against).
 
 STEP 5 — EMIT
-Emit one persist_opportunity custom tool call per opportunity. Pass the full structured Opportunity object PLUS a 'past_recipient_image_urls' array of objects: { recipient_name, year, image_urls: string[] }.
+Emit one persist_opportunity custom tool call per opportunity. Pass the full structured Opportunity object PLUS a 'past_recipient_image_urls' array of objects: { recipient_name, year, image_urls: string[] }. Each image_urls entry must end in .jpg/.jpeg/.png/.webp/.avif/.gif (or be a known image-hosting CDN URL with no extension that demonstrably returns image bytes).
 
 STEP 6 — COMPLETE
 After all archetypes have been worked, emit a final agent.message with text: "<DONE>".
@@ -174,10 +186,36 @@ export async function persistOpportunityFromAgent(runId: number, rawInput: unkno
     args: [runId, opportunityId],
   });
 
-  // Filter LLM-incomplete recipient entries (Phase 2.12 lesson): only keep ones with a name + ≥1 url.
-  const validRecipients = data.past_recipient_image_urls.filter(
-    (rec) => rec.recipient_name && rec.recipient_name.length > 0 && rec.image_urls && rec.image_urls.length > 0,
-  );
+  // Filter LLM-incomplete recipient entries: only keep ones with a name + ≥1
+  // url. ALSO filter URLs that are obviously not direct images (homepages,
+  // gallery landing pages) — Scout has a documented tendency to slip these
+  // through despite the prompt requiring direct image URLs. The download
+  // pipeline rejects non-image content-types, so persisting homepage URLs
+  // produces empty file_ids which leaves the Rubric blind on that opportunity.
+  const IMAGE_EXT_RE = /\.(jpe?g|png|webp|avif|gif|tiff?|bmp)(\?|#|$)/i;
+  const isLikelyImageUrl = (u: string): boolean => {
+    if (IMAGE_EXT_RE.test(u)) return true;
+    // CDN paths with /image|/media|/uploads|/cdn segments are typically OK
+    // even without an extension.
+    if (/\/(image|media|upload|cdn|asset|file)s?\//i.test(u)) return true;
+    return false;
+  };
+  const validRecipients = data.past_recipient_image_urls
+    .map((rec) => ({
+      ...rec,
+      image_urls: (rec.image_urls ?? []).filter(isLikelyImageUrl),
+    }))
+    .filter(
+      (rec) => rec.recipient_name && rec.recipient_name.length > 0 && rec.image_urls.length > 0,
+    );
+
+  const droppedByUrlFilter =
+    data.past_recipient_image_urls.length - validRecipients.length;
+  if (droppedByUrlFilter > 0) {
+    console.warn(
+      `[scout] persist_opportunity opp="${data.name}": dropped ${droppedByUrlFilter} recipients due to non-image-url filter`,
+    );
+  }
 
   for (const rec of validRecipients) {
     // ON CONFLICT: if existing row has Blob URLs (from a prior run), preserve them;
