@@ -354,7 +354,7 @@ When you cite a specific year, venue, partnership, or commitment, the correspond
 const STATEMENT_VOICE_CONSTRAINTS = `HARD VOICE CONSTRAINTS — every constraint is non-negotiable. If you find yourself violating any, restructure the sentence:
 
 1. ZERO em-dashes. Hard rule. No "—" anywhere in the output. If you want a pause, use a comma, period, parentheses, or colon. Em-dash rhythm is the single most reliable LLM-prose tell in 2026 — working artists almost never use em-dashes.
-2. FIRST PERSON throughout. "I have spent…", "I return to…", "My main tool is…". Never write "Knopf's practice…" or "the artist's work…" except in a clearly-labeled bio paragraph. Opening with the artist's name is fine ONLY if the next clause transitions to first person.
+2. FIRST PERSON throughout. "I have spent…", "I return to…", "My main tool is…". Never write "[Surname]'s practice…" or "the artist's work…" except in a clearly-labeled bio paragraph. Opening with the photographer's name is fine ONLY if the next clause transitions to first person.
 3. OPEN WITH STAKE OR QUESTION OR WORKING PRINCIPLE — never with cameras, formats, locations, or a list of places. The first sentence must land an animating idea.
 4. BANNED PHRASES (hard list — do not produce any of these):
    - "sits at the intersection of"
@@ -404,13 +404,13 @@ PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if 
 // markers, and an opportunity-specific "why this, why now" sentence.
 const COVER_LETTER_VOICE_CONSTRAINTS = `COVER LETTER STRUCTURAL RULES (in addition to the voice constraints above):
 
-1. FIRST PERSON THROUGHOUT. The cover letter is personal correspondence FROM the artist TO the panel. Write "I submit…", "I am a Las Vegas-based landscape photographer…", "I was included in…". NEVER "Knopf submits…", "Knopf is…", "Knopf was…". The artist's surname appears ONLY as the typed signature at the bottom.
+1. FIRST PERSON THROUGHOUT. The cover letter is personal correspondence FROM the photographer TO the panel. Write "I submit…", "I am a [city]-based photographer working in [body of work / register from AKB]…", "I was included in…". NEVER use the photographer's surname plus a verb ("[Surname] submits…", "[Surname] is…", "[Surname] was…"). The surname appears ONLY as the typed signature at the bottom.
 
 2. SALUTATION. Open with "Dear [Name]," or "Dear Selection Committee,". NEVER bare "Selection Committee" or "To Whom It May Concern". If the opportunity record names a juror or panel chair, address them by name and title ("Dear Dr. [Name],").
 
 3. NO LINEAGE PARAGRAPH. Lineage lives in the artist statement. The panel reads the statement separately. Banned: any sentence listing two or more named photographers as influences (Adams + Rowell + Lik + Butcher + Luong rolls). Banned: phrases "lineage of", "in the tradition of", "the work sits in", "commercial-gallery register", "destination-landscape tradition".
 
-4. SELECTIVE CAREER MARKERS. Pick the 1-3 career markers MOST RELEVANT to THIS specific opportunity. Geographic fit → pull the geographic-relevant credit (Mondoir Dubai for Dubai-region opps; Las Vegas gallery program for Nevada opps). Register fit → pull the lineage-aligned credits without listing them all. Civic / community / curatorial relevance → pull FOTO founder + curatorial credits. Do NOT paste the full reel of "Mondoir 2025 + Venice 2022 + Art Basel 2022 + NFT cohorts + monographs" in every letter.
+4. SELECTIVE CAREER MARKERS. Pick the 1-3 career markers from the AKB MOST RELEVANT to THIS specific opportunity, then drop the rest. Geographic fit → pull a credit from akb.exhibitions whose location overlaps the opportunity's region. Register fit → pull credits from akb.exhibitions / akb.publications whose institutions align with the opportunity's aesthetic register. Civic / community / curatorial relevance → pull from akb.curatorial_and_organizational. Do NOT paste the full career reel into every letter — every letter dumps a different 1-3 markers tuned to the specific opportunity.
 
 5. SPECIFIC TO THIS OPPORTUNITY. The letter MUST contain at least one sentence naming a specific reason for THIS opportunity at THIS time — not generic "this is the right venue for this work." Examples: "I am writing in advance of the upcoming third monograph deadline because [opp] would directly support its publication"; "the cohort recognized in [opp]'s last cycle includes work I have studied closely"; "the [specific category] is the right home for the [specific body of work]".
 
@@ -431,7 +431,7 @@ const COVER_LETTER_VOICE_CONSTRAINTS = `COVER LETTER STRUCTURAL RULES (in additi
 
 PRE-SUBMIT SELF-CHECK (silently revise if any fails):
 - Salutation includes "Dear" and ends with comma.
-- Body uses first person throughout. Zero instances of "Knopf" in any body sentence (signature only).
+- Body uses first person throughout. Zero instances of the photographer's surname in any body sentence (signature only).
 - No sentence names two or more photographers as influences.
 - One sentence specifically references this opportunity by name + a specific reason for this cycle.
 - Word count 200-350 (signature line excluded from the count).
@@ -722,17 +722,18 @@ export function checkFactGrounding(
  *     (Hasselblad, Phase One, Canon, Nikon, Fuji Flex, ND filter, Zone
  *     System, large-format film, drum scan, etc.).
  */
-const CANONICAL_LOCATION_LEXICON = [
-  // Common landscape-photo locations from John's audited canonical reel
-  // plus other heavy hitters. Match case-sensitive to avoid false positives.
-  // One canonical form per location — no "Palouse" + "the Palouse" double-count.
+// WALKTHROUGH Note 33 — universal landscape-photo destination canon. Atelier
+// is built for working photographers; these are places that recur in
+// landscape-photo bodies of work across the field, not one specific
+// photographer's travel reel. Augmented at runtime via extractAkbLocations()
+// with the locations THIS photographer has actually worked in (from their
+// own bodies_of_work / home_base / exhibitions). Match is case-sensitive +
+// substring (`includes`), one canonical form per place.
+const CANONICAL_PHOTO_DESTINATIONS = [
   'Antelope Canyon',
   'Delicate Arch',
   'Palouse',
   'Hawaii',
-  'Amsterdam',
-  'Lisbon',
-  'Dubai',
   'Yosemite',
   'Sierra Nevada',
   'Death Valley',
@@ -742,13 +743,13 @@ const CANONICAL_LOCATION_LEXICON = [
   'Patagonia',
   'Iceland',
   'Norway',
-  'Faroe',
-  'Tuscany',
   'Banff',
-  'Lake Powell',
   'Grand Canyon',
   'Half Dome',
 ];
+// Universal large-format / fine-art photography gear vocabulary. Photo canon,
+// not one photographer's specific kit — every working fine-art photographer
+// is checking their drafts against this baseline.
 const GEAR_LEXICON = [
   'Hasselblad',
   'Phase One',
@@ -772,8 +773,38 @@ const GEAR_LEXICON = [
   '8x10',
   'Linhof',
   'Schneider',
-  'IQ4',
 ];
+
+/**
+ * WALKTHROUGH Note 33: per-photographer location extractor. Pulls
+ * Capitalized place tokens from the AKB's bodies_of_work[*].description,
+ * home_base.city, and exhibitions[*].location so the canonical-reel cap
+ * operates on THIS photographer's actual reel, not just the universal
+ * photo-canon baseline. Returns deduped, length-2+ tokens.
+ */
+export function extractAkbLocations(akb: ArtistKnowledgeBase): string[] {
+  const out = new Set<string>();
+  const PROPER_PHRASE = /\b[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*/g;
+  const sources: string[] = [];
+  if (akb.identity?.home_base?.city) sources.push(akb.identity.home_base.city);
+  for (const b of akb.bodies_of_work ?? []) {
+    if (b.description) sources.push(b.description);
+    if (b.title) sources.push(b.title);
+  }
+  for (const e of akb.exhibitions ?? []) {
+    if (e.location) sources.push(e.location);
+    if (e.venue) sources.push(e.venue);
+  }
+  for (const text of sources) {
+    PROPER_PHRASE.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = PROPER_PHRASE.exec(text)) !== null) {
+      const phrase = m[0].trim();
+      if (phrase.length >= 2) out.add(phrase);
+    }
+  }
+  return [...out];
+}
 
 function splitIntoSentences(text: string): string[] {
   return text
@@ -782,10 +813,15 @@ function splitIntoSentences(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function countLocationsInSentence(sentence: string): number {
+export function countLocationsInSentence(sentence: string, extraLocations: string[] = []): number {
   let count = 0;
-  for (const loc of CANONICAL_LOCATION_LEXICON) {
-    if (sentence.includes(loc)) count++;
+  const seen = new Set<string>();
+  for (const loc of [...CANONICAL_PHOTO_DESTINATIONS, ...extraLocations]) {
+    if (seen.has(loc)) continue;
+    if (sentence.includes(loc)) {
+      count++;
+      seen.add(loc);
+    }
   }
   return count;
 }
@@ -799,10 +835,10 @@ export function countGearInSentence(sentence: string): number {
   return count;
 }
 
-export function checkCanonicalReelCaps(text: string): string[] {
+export function checkCanonicalReelCaps(text: string, extraLocations: string[] = []): string[] {
   const issues: string[] = [];
   for (const s of splitIntoSentences(text)) {
-    const locs = countLocationsInSentence(s);
+    const locs = countLocationsInSentence(s, extraLocations);
     if (locs > 3) {
       issues.push(
         `sentence has ${locs} location names ("${s.slice(0, 80)}…") — cap is 3 per sentence. Pick the 2-3 most relevant for THIS opportunity.`,
@@ -911,7 +947,7 @@ export function checkContentVariation(
   };
 }
 
-export function checkStatementVoice(text: string): {
+export function checkStatementVoice(text: string, extraLocations: string[] = []): {
   ok: boolean;
   issues: string[];
 } {
@@ -934,14 +970,16 @@ export function checkStatementVoice(text: string): {
   if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
     issues.push('statement does not end with terminal punctuation — likely truncated mid-sentence; check max_tokens budget');
   }
-  // WALKTHROUGH Note 32: per-sentence canonical-reel caps.
-  issues.push(...checkCanonicalReelCaps(text));
+  // WALKTHROUGH Note 32 + 33: per-sentence canonical-reel caps. Universal
+  // photo-destination canon merged with this photographer's AKB-derived
+  // locations so the cap operates on THEIR reel, not a hardcoded list.
+  issues.push(...checkCanonicalReelCaps(text, extraLocations));
   return { ok: issues.length === 0, issues };
 }
 
 async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   const first = await draftMaterial('artist_statement', ctx);
-  const voice = checkStatementVoice(first);
+  const voice = checkStatementVoice(first, extractAkbLocations(ctx.akb));
   // WALKTHROUGH Note 24: combine voice + fact-grounding issues so the
   // single revision turn addresses them together.
   const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
@@ -999,7 +1037,7 @@ const PROPOSAL_BANNED_WORDS = STATEMENT_BANNED_WORDS;
 
 const LINEAGE_NAME_PARAGRAPH = /\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b.*\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b.*\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b/i;
 
-export function checkProposalVoice(text: string): {
+export function checkProposalVoice(text: string, extraLocations: string[] = []): {
   ok: boolean;
   issues: string[];
 } {
@@ -1031,15 +1069,16 @@ export function checkProposalVoice(text: string): {
   if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
     issues.push('proposal does not end with terminal punctuation — likely truncated; check max_tokens budget');
   }
-  // WALKTHROUGH Note 32: per-sentence canonical-reel caps (same audit
-  // applies to proposals as to statements per 32-fix.4).
-  issues.push(...checkCanonicalReelCaps(text));
+  // WALKTHROUGH Note 32 + 33: per-sentence canonical-reel caps with the
+  // AKB-derived per-photographer location list merged into the universal
+  // photo-destination canon.
+  issues.push(...checkCanonicalReelCaps(text, extraLocations));
   return { ok: issues.length === 0, issues };
 }
 
 async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   const first = await draftMaterial('project_proposal', ctx);
-  const voice = checkProposalVoice(first);
+  const voice = checkProposalVoice(first, extractAkbLocations(ctx.akb));
   // WALKTHROUGH Note 24: bundle fact-grounding issues with voice issues.
   const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
   const allIssues = [...voice.issues, ...facts.issues];
@@ -1074,7 +1113,7 @@ async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
  * Note 20/21 — deterministic linter + bounded one-shot revision pass.
  * Cover-letter-specific checks layered on top of the inherited statement
  * lints: salutation must include "Dear", body must be first-person (no
- * "Knopf submits/is/was/has" in the body), no lineage paragraph (3+ named
+ * "[Surname] submits/is/was/has" in the body), no lineage paragraph (3+ named
  * photographers in one paragraph), opportunity name must appear at least
  * once, length 200-350 words excluding the signature line.
  *
@@ -1091,6 +1130,7 @@ export function checkCoverLetterVoice(
   text: string,
   opp: { name: string },
   artistName: string,
+  extraLocations: string[] = [],
 ): { ok: boolean; issues: string[] } {
   const issues: string[] = [];
 
@@ -1104,8 +1144,8 @@ export function checkCoverLetterVoice(
   // surname leakage. Signature is the trailing block after the close.
   const lines = text.split(/\r?\n/);
   // Heuristic: only treat the trailing line(s) as a signature block if
-  // they are SHORT (≤ 6 words). A signed name like "John Knopf" is 2
-  // words; "Yours sincerely, John Knopf" is 4 words. A truncated body
+  // they are SHORT (≤ 6 words). A signed name like "Jane Doe" is 2
+  // words; "Yours sincerely, Jane Doe" is 4 words. A truncated body
   // fragment ("the fellowship would underwrite the production phase of")
   // is many more words — we do NOT want to strip that as a "signature"
   // because then the terminal-punctuation check below would falsely pass.
@@ -1167,7 +1207,7 @@ export function checkCoverLetterVoice(
   }
 
   // 8. WALKTHROUGH Note 26: terminal-punctuation check on the BODY only —
-  // the signature line ("John Knopf") legitimately has no terminal
+  // the signature line (the photographer's typed name) legitimately has no terminal
   // punctuation. We reuse the same body-vs-signature split as the
   // surname check above: the body is everything before the trailing
   // 2-line signature block.
@@ -1175,9 +1215,10 @@ export function checkCoverLetterVoice(
     issues.push('cover letter body does not end with terminal punctuation before the signature — likely truncated mid-sentence; check max_tokens budget');
   }
 
-  // WALKTHROUGH Note 32: per-sentence canonical-reel caps (32-fix.4 — same
-  // audit applies to cover letters). Run on body, not signature.
-  issues.push(...checkCanonicalReelCaps(body));
+  // WALKTHROUGH Note 32 + 33: per-sentence canonical-reel caps run on body,
+  // not signature. AKB-derived per-photographer locations merged into the
+  // universal photo-destination canon.
+  issues.push(...checkCanonicalReelCaps(body, extraLocations));
 
   return { ok: issues.length === 0, issues };
 }
@@ -1188,6 +1229,7 @@ async function draftCoverLetterWithVoiceCheck(ctx: DraftCtx): Promise<string> {
     first,
     { name: ctx.opp.name },
     ctx.akb.identity.artist_name || '',
+    extractAkbLocations(ctx.akb),
   );
   // WALKTHROUGH Note 24: bundle fact-grounding issues with voice issues.
   const facts = checkFactGrounding(first, JSON.stringify(ctx.akb));
