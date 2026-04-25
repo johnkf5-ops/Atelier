@@ -52,6 +52,56 @@ async function readSkill(filename: string, fallback: string): Promise<string> {
 
 export type MaterialType = 'artist_statement' | 'project_proposal' | 'cv' | 'cover_letter';
 
+/**
+ * WALKTHROUGH Note 20: opportunity-type classifier used to load
+ * per-type tailoring guidance into the artist-statement prompt. Pure
+ * function — name regex first (most specific), then award.type +
+ * prestige_tier as fallback. Order matters; first match wins.
+ */
+export type OppType =
+  | 'state-fellowship'
+  | 'landscape-prize'
+  | 'photo-book'
+  | 'museum-acquisition'
+  | 'general-prize';
+
+const STATE_FELLOWSHIP_PATTERNS = [
+  /\bstate\b.*\b(arts? council|commission|fellowship|grant)\b/i,
+  /\bnyfa\b|\bnysca\b|\bnea\b|\bmaine arts\b|\bnevada arts\b|\bcalifornia arts\b/i,
+  /\b(arts council|arts commission)\b.*\b(fellowship|grant|individual artist)\b/i,
+];
+const LANDSCAPE_PRIZE_PATTERNS = [
+  /\b(ilpoty|opoty|nlpa|tpoty|np[oa]ty|critical mass|aperture portfolio prize|landscape photographer of the year|outdoor photographer|nature photographer|hamdan)\b/i,
+  /\blandscape\b.*\b(prize|award|competition)\b/i,
+];
+const PHOTO_BOOK_PATTERNS = [
+  /\b(first book|monograph|book prize|book award|aperture.*book|anamorphosis|lucie.*book|photobook)\b/i,
+];
+const MUSEUM_ACQUISITION_PATTERNS = [
+  /\b(museum acquisition|curatorial review|museum collection)\b/i,
+];
+
+export function classifyOpportunityType(opp: Opportunity): OppType {
+  const name = opp.name ?? '';
+  if (STATE_FELLOWSHIP_PATTERNS.some((r) => r.test(name))) return 'state-fellowship';
+  if (PHOTO_BOOK_PATTERNS.some((r) => r.test(name))) return 'photo-book';
+  if (MUSEUM_ACQUISITION_PATTERNS.some((r) => r.test(name))) return 'museum-acquisition';
+  if (LANDSCAPE_PRIZE_PATTERNS.some((r) => r.test(name))) return 'landscape-prize';
+  // Fallback by award.type + prestige_tier — coarser, but better than nothing.
+  if (/fellowship|grant/i.test(opp.award.type) && /regional|mid|emerging/i.test(opp.award.prestige_tier)) {
+    return 'state-fellowship';
+  }
+  return 'general-prize';
+}
+
+const TAILORING_BY_TYPE: Record<OppType, string> = {
+  'state-fellowship': `STATE-FELLOWSHIP TAILORING: Lead with the artist's relationship to a specific state, region, or place from their AKB (home_base, bodies_of_work). State arts council panels fund artists committed to working in their state. The "place + threat" pattern (a specific landscape tied to ecological or civic loss) is structural here when the AKB supports it. Avoid international-ambition framing.`,
+  'landscape-prize': `LANDSCAPE-PRIZE TAILORING: Lead with PROJECT structure, not biography. These panels want a body of work, not greatest hits. Frame as: "I have been working on X subject for Y years, returning to Z places, because A." Treat the statement as a project description, not a portfolio overview.`,
+  'photo-book': `PHOTO-BOOK TAILORING: Emphasize sequencing, editorial through-line, and book-readiness. Reference project arc, scope, working title (if in AKB), approximate image count. Make clear the artist has thought about the work as a book — not a stack of prints.`,
+  'museum-acquisition': `MUSEUM-ACQUISITION TAILORING: Emphasize project structure and conceptual through-line. Articulate the through-line in a single sentence. Curators fund the project, not the photographs. Close the gap between "catalogue of beautiful locations" and "sustained, structured body of work."`,
+  'general-prize': `GENERAL-PRIZE TAILORING: Lean into the specific prize category. Match ambition to the scale of the opportunity. Avoid grand-vision framing for an open-call competition.`,
+};
+
 type DraftCtx = {
   akb: ArtistKnowledgeBase;
   opp: Opportunity;
@@ -59,6 +109,8 @@ type DraftCtx = {
   voiceSkill: string;
   proposalSkill: string;
   cvSkill: string;
+  examplesSkill: string; // WALKTHROUGH Note 20 — real-statement few-shot
+  oppType: OppType;
   oppRequirementsText: string;
 };
 
@@ -87,14 +139,65 @@ const NAME_PRIMACY_CONSTRAINT = `IDENTITY NAMING:
 - \`identity.legal_name\` is for tax / contract sections ONLY, and only when the template explicitly asks for "legal name (for tax/contract)".
 - If \`identity.artist_name\` and \`identity.legal_name\` differ, the cover letter's signature is artist_name; the legal name appears (if at all) only in an explicitly-labelled "Name for tax / W-9 purposes:" line.`;
 
+// WALKTHROUGH Note 20: hard voice constraints applied to artist_statement +
+// cover_letter (any first-person, voice-bearing prose). Loaded as system text
+// so the model sees them BEFORE the few-shot examples.
+const STATEMENT_VOICE_CONSTRAINTS = `HARD VOICE CONSTRAINTS — every constraint is non-negotiable. If you find yourself violating any, restructure the sentence:
+
+1. ZERO em-dashes. Hard rule. No "—" anywhere in the output. If you want a pause, use a comma, period, parentheses, or colon. Em-dash rhythm is the single most reliable LLM-prose tell in 2026 — working artists almost never use em-dashes.
+2. FIRST PERSON throughout. "I have spent…", "I return to…", "My main tool is…". Never write "Knopf's practice…" or "the artist's work…" except in a clearly-labeled bio paragraph. Opening with the artist's name is fine ONLY if the next clause transitions to first person.
+3. OPEN WITH STAKE OR QUESTION OR WORKING PRINCIPLE — never with cameras, formats, locations, or a list of places. The first sentence must land an animating idea.
+4. BANNED PHRASES (hard list — do not produce any of these):
+   - "sits at the intersection of"
+   - "sits in the lineage of"
+   - "interrogates the relationship between"
+   - "liminal space"
+   - "a kind of grammar"
+   - "aesthetic signature"
+   - "visual vocabulary"
+   - "working grammar"
+   - "commercial-gallery register"
+   - "meditations on"
+   - "informed by"
+   - "vision" / "visionary"
+   - "journey"
+   - "passion" / "passionate"
+   - "explore" / "exploration"
+   - "capture" (use "photograph", "make", "see")
+   - "story" / "storytelling" (when used as a generic claim about what the work does)
+5. LINEAGE NAME-DROPS: maximum 1–2 names total across the whole statement, and only if they are animating influences (an idea, a method, a stance the artist has absorbed). Never 3+. If you cite Adams + Rowell + Butcher, delete the sentence — that is positioning, not photographing.
+6. TECHNICAL DETAIL must be justified by what it enables artistically. Don't list cameras, ND filters, print processes, or Zone System as bare facts. If wet-plate matters, say what it lets the artist see or do.
+7. ONE QUOTABLE SENTENCE. Engineer one 5-12-word, present-tense, declarative sentence as the structural anchor. Build the surrounding paragraphs around it. Examples from real winners: "My first thought is always of light." / "You visually organize the chaos." / "I wanted to actively pursue these events."
+8. PLACE SPECIFICITY OVER PLACE LISTS. "I have returned to the same canyon every spring for nine years" beats "I have photographed in Arizona, Utah, Wyoming, Montana, and South Dakota." A list of states reads as a travel log; a return reads as a project.
+9. NO PUBLICATION CREDITS inside the statement. National Geographic, TIME, etc. belong in a bio paragraph. They are not part of the statement of intent.
+10. NO ABSTRACT VIRTUE STACKING (no "reverence, rigor, commitment" trios). Replace with one concrete behavior that demonstrates the virtue.
+11. LENGTH: 150-300 words. The panel reads dozens of statements per session; brevity is generosity. If the prompt caps at 500, write 280.
+
+PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if any check fails):
+- Em-dash count is exactly zero.
+- First person throughout (or first-person-after-name-once).
+- First sentence does NOT contain a camera brand, print format, lineage name, or place list.
+- Lineage names total: 0, 1, or 2 — never 3+.
+- One sentence is 5-12 words, present-tense, declarative.
+- No banned phrase from constraint #4 appears.
+- Word count is 150-300.`;
+
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
     system:
-      ctx.voiceSkill +
+      // The few-shot examples skill goes FIRST — it's the ground truth the
+      // voice constraints + fingerprint guard are pointing at.
+      ctx.examplesSkill +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
-      "\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. 300-500 words. No preamble, no markdown. Return plain text only.",
+      STATEMENT_VOICE_CONSTRAINTS +
+      '\n\n---\n\n' +
+      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT +
+      '\n\n---\n\nYou are writing an artist statement for a specific opportunity application. The few-shot examples above are real winning statements — match THEIR voice, not the curatorial-essay or LLM-default register. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.',
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
+
+OPPORTUNITY_TYPE: ${ctx.oppType}
+
+${TAILORING_BY_TYPE[ctx.oppType]}
 
 STYLE_FINGERPRINT (ground truth for visual claims):
 ${JSON.stringify(ctx.fingerprint, null, 2)}
@@ -102,7 +205,7 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB (ground truth for biographical + career claims):
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the artist statement now. Describe the work as the fingerprint says it IS.`,
+Write the artist statement now. Describe the work as the fingerprint says it IS. This statement MUST differ meaningfully from a statement written for a different opportunity type — if you find yourself writing the same opening, structure, or closing as you would for any other opportunity, restructure.`,
   }),
   project_proposal: (ctx) => ({
     system:
@@ -138,6 +241,11 @@ Format the CV now.`,
     system:
       ctx.voiceSkill +
       '\n\n---\n\n' +
+      // WALKTHROUGH Note 20: same zero-em-dash + banned-phrase discipline as
+      // the artist statement. Cover letters are first-person voice-bearing
+      // prose — the same LLM tells apply.
+      STATEMENT_VOICE_CONSTRAINTS +
+      '\n\n---\n\n' +
       FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
       "\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity's selectors. 200-300 words. Named addressee if the opportunity has a known director; else \"Selection Committee\". Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}
@@ -167,6 +275,88 @@ async function draftMaterial(type: MaterialType, ctx: DraftCtx): Promise<string>
   );
   const text = resp.content.find((b) => b.type === 'text')?.text ?? '';
   return text.trim();
+}
+
+/**
+ * WALKTHROUGH Note 20: post-write voice check on the artist statement.
+ * If the model emits any em-dash or banned phrase, we ask it to revise once.
+ * No infinite loop — bounded to a single retry to keep cost predictable.
+ * Soft fallback: if the second attempt still fails, return it anyway (the
+ * statement is still readable; we'd rather ship imperfect than nothing).
+ */
+const STATEMENT_BANNED_PHRASES = [
+  'sits at the intersection of',
+  'sits in the lineage of',
+  'interrogates the relationship between',
+  'liminal space',
+  'a kind of grammar',
+  'aesthetic signature',
+  'visual vocabulary',
+  'working grammar',
+  'commercial-gallery register',
+  'meditations on',
+  'informed by',
+];
+const STATEMENT_BANNED_WORDS = [
+  'visionary',
+  'vision',
+  'journey',
+  'passion',
+  'passionate',
+  'explore',
+  'exploration',
+  'capture',
+];
+
+export function checkStatementVoice(text: string): {
+  ok: boolean;
+  issues: string[];
+} {
+  const issues: string[] = [];
+  if (text.includes('—')) {
+    const count = (text.match(/—/g) || []).length;
+    issues.push(`${count} em-dash(es) found — use commas, periods, or parentheses instead. Hard rule: zero em-dashes.`);
+  }
+  const lower = text.toLowerCase();
+  for (const phrase of STATEMENT_BANNED_PHRASES) {
+    if (lower.includes(phrase)) issues.push(`banned phrase: "${phrase}"`);
+  }
+  for (const word of STATEMENT_BANNED_WORDS) {
+    const re = new RegExp(`\\b${word}\\b`, 'i');
+    if (re.test(text)) issues.push(`banned word: "${word}" — use a concrete alternative`);
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
+  const first = await draftMaterial('artist_statement', ctx);
+  const check = checkStatementVoice(first);
+  if (check.ok) return first;
+
+  // One-shot revision pass — feed the violations back as a follow-up turn.
+  const { system } = PROMPTS.artist_statement(ctx);
+  const client = getAnthropic();
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: 3000,
+        thinking: { type: 'adaptive' },
+        system,
+        messages: [
+          { role: 'user', content: PROMPTS.artist_statement(ctx).user },
+          { role: 'assistant', content: first },
+          {
+            role: 'user',
+            content: `Your draft violated the hard voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the statement now. Same opportunity, same facts, but fix every issue listed above. Return plain text only.`,
+          },
+        ],
+      }),
+    { label: `drafter-artist_statement-revise` },
+  );
+  const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
+  // Soft fallback — if the revision still fails, return whichever is closer.
+  return revised.length > 0 ? revised : first;
 }
 
 export type WorkSample = {
@@ -372,15 +562,33 @@ export async function draftPackageForMatch(
     if (r) ws.rationale = r;
   }
 
-  const [voiceSkill, proposalSkill, cvSkill] = await Promise.all([
+  const [voiceSkill, proposalSkill, cvSkill, examplesSkill] = await Promise.all([
     readSkill('artist-statement-voice.md', DEFAULT_VOICE_SKILL),
     readSkill('project-proposal-structure.md', DEFAULT_PROPOSAL_SKILL),
     readSkill('cv-format-by-institution.md', DEFAULT_CV_SKILL),
+    // WALKTHROUGH Note 20: real-statement few-shot reference. Falls back to a
+    // brief inline note if the file is missing — but it should always be
+    // present (committed).
+    readSkill(
+      'artist-statement-real-examples.md',
+      'Real artist statement examples not loaded — write in plain first-person voice, open with stake/question, zero em-dashes.',
+    ),
   ]);
 
-  const ctx: DraftCtx = { akb, opp, fingerprint, voiceSkill, proposalSkill, cvSkill, oppRequirementsText };
+  const oppType = classifyOpportunityType(opp);
+  const ctx: DraftCtx = {
+    akb,
+    opp,
+    fingerprint,
+    voiceSkill,
+    proposalSkill,
+    cvSkill,
+    examplesSkill,
+    oppType,
+    oppRequirementsText,
+  };
 
-  const artist_statement = await draftMaterial('artist_statement', ctx);
+  const artist_statement = await draftStatementWithVoiceCheck(ctx);
   const project_proposal = await draftMaterial('project_proposal', ctx);
   const cv_formatted = await draftMaterial('cv', ctx);
   const cover_letter = await draftMaterial('cover_letter', ctx);
