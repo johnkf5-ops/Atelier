@@ -359,3 +359,75 @@ Possible causes:
 **File(s):** `lib/agents/finalize-scout.ts` or `app/api/runs/[id]/finalize-scout/route.ts` (recipient downloader), `lib/agents/rubric-matcher.ts` (system prompt), `tests/smoke/finalize-scout.test.ts` (new), possibly `lib/files-api/upload.ts` (whatever wrapper for Anthropic Files API uploads). Also re-verify Vercel env var `ANTHROPIC_API_KEY` matches local — if different keys with different Files-API capabilities, that's a separate issue to surface to John.
 
 ---
+
+## Note 9 — Reproducible seed script: `pnpm seed:demo` to skip onboarding and jump straight to a runnable state
+
+**Where:** development workflow / debugging loop.
+
+**Symptom:** Every time we ship a fix that requires re-testing the run/Rubric/Drafter/dossier path, John has to redo the entire onboarding from scratch — upload 21 photos, run Style Analyst (~60s + risk of crash), run auto-discover (~60s + risk of getting wrong facts), do the gap-detection interview (~5–10 min of typing), review AKB. That's 15+ minutes of repetitive input PER iteration, and 80% of it tests parts of the product that already work. The debug loop on the actually-broken phases is brutally slow.
+
+**Fix (real, structural — this becomes a permanent dev tool, not a hackathon hack):**
+
+Build two complementary scripts:
+
+### `pnpm seed:export` (run when in a "good" state to lock it in)
+
+Captures the current Turso DB state into fixture files for later re-seeding. Inputs: nothing — reads from whatever DB the local `.env.local` points at. Writes:
+
+- `fixtures/portfolio/*.jpg` — downloads every blob URL referenced by `portfolio_images` for the default user, saves locally
+- `fixtures/portfolio.manifest.json` — list of {filename, original_blob_url, file_size, sha256, ordinal, kept} for each image
+- `fixtures/akb.json` — the latest `akb_versions` row's data JSON
+- `fixtures/style-fingerprint.json` — the latest `style_fingerprints` row's data JSON
+- `fixtures/extractor-turns.jsonl` — interview history (optional, for completeness)
+- Prints a summary: "Exported N portfolio images, AKB vM (K facts), fingerprint vN, K interview turns. Run `pnpm seed:demo` to restore this state."
+
+### `pnpm seed:demo [--target local|prod]`
+
+Restores the fixture state into a clean DB. Defaults to local. Requires `--target prod` AND a confirmation prompt to seed prod (prevents accidents). Steps:
+
+1. Read fixtures from `fixtures/`. If missing, exit with "Run `pnpm seed:export` first against a known-good state."
+2. Run `db:reset` against the target DB (uses existing `ATELIER_IS_RESETTABLE_DB` guardrail — same protection model).
+3. Insert the default user row (id=1).
+4. For each fixture image: upload to Vercel Blob (target's blob token), capture new blob_url + blob_pathname, insert into `portfolio_images` using the canonical writer (Note 7's `lib/db/queries/portfolio.ts`).
+5. Insert `style_fingerprints` row with fixture JSON.
+6. Insert `akb_versions` row with fixture JSON.
+7. (Optional) Insert `extractor_turns` rows from the JSONL fixture.
+8. Verify: query the DB, assert portfolio count matches fixture count, assert AKB version exists, assert fingerprint exists. Report: "Seeded [target]: N portfolio images, AKB vM, fingerprint vN. Visit /runs/new to start a run."
+
+### Fixture file management
+
+- Add `fixtures/portfolio/*.jpg` to `.gitignore` (John's copyrighted photos must not be in the public repo).
+- Add `fixtures/portfolio/.gitkeep` so the directory exists.
+- Add `fixtures/portfolio/README.md` explaining: "Run `pnpm seed:export` once your local DB has a portfolio you want to lock in. Photos are gitignored — never commit copyrighted work."
+- For CI: provide `fixtures/portfolio.ci.json` with picsum.photos URLs as a generic fallback so smoke tests can seed a non-copyrighted demo state.
+- Commit `fixtures/akb.example.json` and `fixtures/style-fingerprint.example.json` as schema examples (anonymized — placeholder names/locations/affiliations) so a fresh contributor knows the shape without needing John's real data.
+
+### Cross-target safety
+
+- `seed:demo` without `--target` defaults to local. Logs the target Turso URL host (not token) before proceeding.
+- `seed:demo --target prod` requires the env var `ATELIER_IS_RESETTABLE_PROD=true` (separate flag from the local one) AND types a confirmation prompt ("Type the prod Turso host name to confirm reset: ___"). Belt-and-suspenders.
+- Never auto-detect target. Explicit only.
+
+### Companion: `pnpm seed:demo:run-only`
+
+Half-step variant: assumes the demo state is already seeded, just kicks off a fresh run via curl/internal call and tails the events. Lets John iterate ONLY on the run/Rubric/Drafter loop without even hitting the UI for the start-run click. Optional but useful.
+
+**Acceptance:**
+- John runs `pnpm seed:export` once against his current good local state (post-walkthrough). Fixtures land in `fixtures/`.
+- John runs `pnpm seed:demo` against a wiped local DB. ~30 seconds later, /runs/new shows "Portfolio: 21 images, Style fingerprint: vN, Knowledge Base: vM, Start Run enabled."
+- John runs `pnpm seed:demo --target prod` (with explicit env var + confirmation). Same result on prod.
+- Fixture files are gitignored for the photos, committed for the example/schema versions.
+- A new contributor can clone the repo, run `pnpm seed:demo` with the example fixtures, and have a working seeded state without needing John's data.
+
+**Why this is real, not a bandaid:**
+- It's a permanent dev tool — every future engineer working on Atelier needs this.
+- It accelerates EVERY future debug loop on the run/Rubric/Drafter/dossier path by 10–15 minutes per iteration.
+- It enables CI integration tests (smoke tests can seed a known state, run an actual end-to-end pipeline, assert on the dossier output).
+- It removes the temptation to skip testing because "it'll take too long to redo the onboarding."
+- It separates "is the onboarding flow broken?" from "is the run flow broken?" so we can debug them independently.
+
+**Priority:** high. Should ship between Note 8 and Note 3 — it'll accelerate the verification of every fix that follows.
+
+**File(s):** `scripts/seed-export.ts` (new), `scripts/seed-demo.ts` (new), `package.json` scripts (`seed:export`, `seed:demo`, `seed:demo:run-only`), `fixtures/` (new directory with .gitignore + README + examples), `.env.example` updates for the new `ATELIER_IS_RESETTABLE_PROD` flag.
+
+---
