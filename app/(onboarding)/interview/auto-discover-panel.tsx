@@ -107,6 +107,8 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
       .filter(Boolean);
 
     try {
+      // SSE stream — response.body is read as a ReadableStream, not JSON.
+      // eslint-disable-next-line no-restricted-syntax
       const res = await fetch('/api/extractor/auto-discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -193,18 +195,23 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
     setIngestSummary(null);
     try {
       const urls = result.discovered.filter((e) => checked.has(e.url)).map((e) => e.url);
-      const res = await fetch('/api/extractor/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls, source: 'auto-discover' }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const j = (await res.json()) as {
+      const { fetchJson } = await import('@/lib/api/fetch-client');
+      const r = await fetchJson<{
         sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
         changed_fields: string[];
         saved: { id: number } | null;
-      };
-      setIngestSummary(j);
+      }>('/api/extractor/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls, source: 'auto-discover' }),
+        timeoutMs: 300_000,
+      });
+      if (!r.ok) {
+        setErrorMsg(r.error);
+        setStatus('error');
+        return;
+      }
+      setIngestSummary(r.data);
       setStatus('complete');
       onIngested();
     } catch (err) {

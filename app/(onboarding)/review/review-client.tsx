@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
+import { fetchJson } from '@/lib/api/fetch-client';
 
 type Akb = Record<string, unknown> & {
   identity: {
@@ -77,20 +78,24 @@ export default function ReviewClient() {
   const [validation, setValidation] = useState<{ valid: boolean; issues: { path: string; message: string }[] } | null>(null);
 
   const refreshValidation = async () => {
-    const v = await fetch('/api/akb/validate', { cache: 'no-store' }).then((r) => r.json());
-    setValidation({ valid: !!v.valid, issues: v.issues ?? [] });
+    const v = await fetchJson<{ valid?: boolean; issues?: { path: string; message: string }[] }>(
+      '/api/akb/validate',
+      { cache: 'no-store' },
+    );
+    if (v.ok) setValidation({ valid: !!v.data.valid, issues: v.data.issues ?? [] });
   };
 
   useEffect(() => {
     (async () => {
       const [a, f] = await Promise.all([
-        fetch('/api/akb/current').then((r) => r.json()),
-        fetch('/api/style-analyst/run').then((r) => r.json()),
+        fetchJson<{ akb: Record<string, unknown> | null }>('/api/akb/current'),
+        fetchJson<{ fingerprint: StyleFp }>('/api/style-analyst/run'),
       ]);
-      const normalized = a.akb ? normalizeAkbForForm(a.akb as Record<string, unknown>) : null;
+      const akbRaw = a.ok ? a.data.akb : null;
+      const normalized = akbRaw ? normalizeAkbForForm(akbRaw) : null;
       setAkb(normalized);
       setDraft(normalized);
-      setFp(f.fingerprint ?? null);
+      setFp(f.ok ? f.data.fingerprint ?? null : null);
       refreshValidation();
     })();
   }, []);
@@ -107,19 +112,21 @@ export default function ReviewClient() {
     setSaving(true);
     setStatus(null);
     try {
-      const res = await fetch('/api/akb/manual-edit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ patch: dirtyPatch }),
-      });
-      const j = await res.json();
-      if (j.error) {
-        setStatus(`error: ${j.error}`);
+      const r = await fetchJson<{ akb: Record<string, unknown>; changed?: string[] }>(
+        '/api/akb/manual-edit',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patch: dirtyPatch }),
+        },
+      );
+      if (!r.ok) {
+        setStatus(`error: ${r.error}`);
       } else {
-        const normalized = normalizeAkbForForm(j.akb as Record<string, unknown>);
+        const normalized = normalizeAkbForForm(r.data.akb);
         setAkb(normalized);
         setDraft(normalized);
-        setStatus(`saved · changed: ${j.changed?.join(', ') || 'nothing'}`);
+        setStatus(`saved · changed: ${r.data.changed?.join(', ') || 'nothing'}`);
         refreshValidation();
       }
     } finally {

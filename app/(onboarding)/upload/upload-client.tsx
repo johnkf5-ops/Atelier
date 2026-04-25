@@ -124,7 +124,7 @@ export default function UploadClient() {
   });
 
   async function onDelete(id: number) {
-    await fetch(`/api/portfolio/${id}`, { method: 'DELETE' });
+    await fetchJson<{ deleted: number }>(`/api/portfolio/${id}`, { method: 'DELETE' });
     setImages((cur) => cur.filter((i) => i.id !== id));
     // If this image was part of an open scrape-review batch, drop it from
     // both tracking sets so the Confirm/Discard counter stays honest.
@@ -150,7 +150,7 @@ export default function UploadClient() {
       const oldIdx = cur.findIndex((i) => i.id === Number(e.active.id));
       const newIdx = cur.findIndex((i) => i.id === Number(e.over!.id));
       const reordered = arrayMove(cur, oldIdx, newIdx);
-      fetch('/api/portfolio/reorder', {
+      void fetchJson('/api/portfolio/reorder', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ order: reordered.map((i) => i.id) }),
@@ -176,6 +176,8 @@ export default function UploadClient() {
     const newKeep = new Set<number>();
 
     try {
+      // SSE stream — response.body is a ReadableStream, not JSON.
+      // eslint-disable-next-line no-restricted-syntax
       const res = await fetch('/api/portfolio/scrape', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -244,7 +246,7 @@ export default function UploadClient() {
     // Delete any review-batch images the user UNCHECKED.
     const toDelete = [...reviewIds].filter((id) => !keepIds.has(id));
     for (const id of toDelete) {
-      await fetch(`/api/portfolio/${id}`, { method: 'DELETE' });
+      await fetchJson<{ deleted: number }>(`/api/portfolio/${id}`, { method: 'DELETE' });
     }
     setReviewIds(new Set());
     setKeepIds(new Set());
@@ -254,7 +256,7 @@ export default function UploadClient() {
   function discardReview() {
     // Delete the entire review batch.
     void Promise.all(
-      [...reviewIds].map((id) => fetch(`/api/portfolio/${id}`, { method: 'DELETE' })),
+      [...reviewIds].map((id) => fetchJson(`/api/portfolio/${id}`, { method: 'DELETE' })),
     ).then(() => {
       setReviewIds(new Set());
       setKeepIds(new Set());

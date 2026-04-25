@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { fetchJson } from '@/lib/api/fetch-client';
 
 // Event shape mirrors what the server persists; we pluck a few fields for UI.
 type AtelierEvent = {
@@ -114,34 +115,33 @@ export default function RunLive({ runId }: { runId: number }) {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
-      try {
-        const res = await fetch(`/api/runs/${runId}/events`, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = (await res.json()) as {
-          events: AtelierEvent[];
-          runStatus: string;
-          done: boolean;
-          errored: boolean;
-        };
-        if (cancelled) return;
-        setStatus(j.runStatus);
-        if (j.events.length > 0) {
-          const items = j.events
+      const r = await fetchJson<{
+        events: AtelierEvent[];
+        runStatus: string;
+        done: boolean;
+        errored: boolean;
+      }>(`/api/runs/${runId}/events`, { cache: 'no-store', timeoutMs: 70_000 });
+      if (cancelled) return;
+      if (!r.ok) {
+        // Transient poll failure — log + keep polling, don't abort the loop.
+        console.warn('[run-live] poll failed', r.kind, r.error);
+      } else {
+        setStatus(r.data.runStatus);
+        if (r.data.events.length > 0) {
+          const items = r.data.events
             .map((e) => eventToItem(e))
             .filter((x): x is FeedItem => x !== null);
           setFeed((cur) => [...cur, ...items]);
         }
-        if (j.errored) {
-          setErrorMsg(j.runStatus);
+        if (r.data.errored) {
+          setErrorMsg(r.data.runStatus);
           return;
         }
-        if (j.done && !didFinishRef.current) {
+        if (r.data.done && !didFinishRef.current) {
           didFinishRef.current = true;
           router.push(`/dossier/${runId}`);
           return;
         }
-      } catch (err) {
-        console.warn('[run-live] poll failed', err);
       }
       if (!cancelled) timer = setTimeout(tick, 3000);
     };
@@ -157,9 +157,9 @@ export default function RunLive({ runId }: { runId: number }) {
     if (!playbackRunId) return;
     let cancelled = false;
     (async () => {
-      const res = await fetch(`/api/runs/${playbackRunId}/events-all`);
-      if (!res.ok) return;
-      const events = (await res.json()) as AtelierEvent[];
+      const r = await fetchJson<AtelierEvent[]>(`/api/runs/${playbackRunId}/events-all`);
+      if (!r.ok) return;
+      const events = r.data;
       for (let i = 0; i < events.length; i++) {
         if (cancelled) return;
         const ev = events[i];

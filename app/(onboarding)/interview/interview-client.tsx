@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AutoDiscoverPanel from './auto-discover-panel';
+import { fetchJson } from '@/lib/api/fetch-client';
 
 type Turn = { role: 'agent' | 'user'; content: string; akb_field_targeted?: string | null };
 
@@ -55,18 +56,18 @@ export default function InterviewClient() {
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const refreshAkb = useCallback(async () => {
-    const a = await fetch('/api/akb').then((r) => r.json());
-    setAkb(a.akb);
+    const r = await fetchJson<{ akb: Record<string, unknown> | null }>('/api/akb');
+    if (r.ok) setAkb(r.data.akb);
   }, []);
 
   useEffect(() => {
     (async () => {
       const [t, a] = await Promise.all([
-        fetch('/api/extractor/turn').then((r) => r.json()),
-        fetch('/api/akb').then((r) => r.json()),
+        fetchJson<{ turns: Turn[] }>('/api/extractor/turn'),
+        fetchJson<{ akb: Record<string, unknown> | null }>('/api/akb'),
       ]);
-      setTurns(t.turns ?? []);
-      setAkb(a.akb);
+      if (t.ok) setTurns(t.data.turns ?? []);
+      if (a.ok) setAkb(a.data.akb);
     })();
   }, []);
 
@@ -74,17 +75,30 @@ export default function InterviewClient() {
     scrollerRef.current?.scrollTo({ top: scrollerRef.current.scrollHeight });
   }, [turns]);
 
+  type TurnResponse = {
+    agent_message: string;
+    next_field_target: string | null;
+    akb: Record<string, unknown> | null;
+  };
+
   async function startInterview() {
     setBusy(true);
     try {
-      const res = await fetch('/api/extractor/turn', {
+      const r = await fetchJson<TurnResponse>('/api/extractor/turn', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ user_message: null }),
+        timeoutMs: 120_000,
       });
-      const j = await res.json();
-      setTurns((cur) => [...cur, { role: 'agent', content: j.agent_message, akb_field_targeted: j.next_field_target }]);
-      setAkb(j.akb);
+      if (!r.ok) {
+        setIngestStatus(`error: ${r.error}`);
+        return;
+      }
+      setTurns((cur) => [
+        ...cur,
+        { role: 'agent', content: r.data.agent_message, akb_field_targeted: r.data.next_field_target },
+      ]);
+      setAkb(r.data.akb);
     } finally {
       setBusy(false);
     }
@@ -97,14 +111,24 @@ export default function InterviewClient() {
     setTurns((cur) => [...cur, { role: 'user', content: message }]);
     setBusy(true);
     try {
-      const res = await fetch('/api/extractor/turn', {
+      const r = await fetchJson<TurnResponse>('/api/extractor/turn', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ user_message: message }),
+        timeoutMs: 120_000,
       });
-      const j = await res.json();
-      setTurns((cur) => [...cur, { role: 'agent', content: j.agent_message, akb_field_targeted: j.next_field_target }]);
-      setAkb(j.akb);
+      if (!r.ok) {
+        setIngestStatus(`error: ${r.error}`);
+        // Drop the optimistic user message we just appended — the request failed.
+        setTurns((cur) => cur.slice(0, -1));
+        setDraft(message); // restore so user can retry without retyping
+        return;
+      }
+      setTurns((cur) => [
+        ...cur,
+        { role: 'agent', content: r.data.agent_message, akb_field_targeted: r.data.next_field_target },
+      ]);
+      setAkb(r.data.akb);
     } finally {
       setBusy(false);
     }
@@ -122,17 +146,23 @@ export default function InterviewClient() {
     setBusy(true);
     setIngestStatus('ingesting…');
     try {
-      const res = await fetch('/api/extractor/ingest', {
+      const r = await fetchJson<{
+        sources: Array<{ ok: boolean }>;
+        changed_fields: string[];
+        akb: Record<string, unknown> | null;
+      }>('/api/extractor/ingest', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ urls, source: 'paste' }),
+        timeoutMs: 180_000,
       });
-      const j = await res.json();
-      setAkb(j.akb);
-      const ok = j.sources.filter((s: { ok: boolean }) => s.ok).length;
-      setIngestStatus(`${ok}/${urls.length} ingested · changed ${j.changed_fields.length} fields`);
-    } catch (err) {
-      setIngestStatus(`error: ${(err as Error).message}`);
+      if (!r.ok) {
+        setIngestStatus(`error: ${r.error}`);
+        return;
+      }
+      setAkb(r.data.akb);
+      const ok = r.data.sources.filter((s) => s.ok).length;
+      setIngestStatus(`${ok}/${urls.length} ingested · changed ${r.data.changed_fields.length} fields`);
     } finally {
       setBusy(false);
     }

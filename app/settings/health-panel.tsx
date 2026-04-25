@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { fetchJson } from '@/lib/api/fetch-client';
 
 type HealthResult = Record<string, unknown> | null;
 
@@ -10,14 +11,9 @@ export default function HealthPanel() {
 
   async function runCheck() {
     setLoading(true);
-    try {
-      const res = await fetch('/api/health', { cache: 'no-store' });
-      setResult(await res.json());
-    } catch (err) {
-      setResult({ error: (err as Error).message });
-    } finally {
-      setLoading(false);
-    }
+    const r = await fetchJson<Record<string, unknown>>('/api/health', { cache: 'no-store' });
+    setResult(r.ok ? r.data : { error: r.error, kind: r.kind });
+    setLoading(false);
   }
 
   return (

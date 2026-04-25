@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { fetchJson } from '@/lib/api/fetch-client';
 
 export default function NewRunClient() {
   const router = useRouter();
@@ -11,22 +12,18 @@ export default function NewRunClient() {
   async function onStart() {
     setStarting(true);
     setError(null);
-    try {
-      const res = await fetch('/api/runs/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
-      }
-      const data = (await res.json()) as { run_id: number };
-      router.push(`/runs/${data.run_id}`);
-    } catch (e) {
-      setError((e as Error).message);
+    const r = await fetchJson<{ run_id: number }>('/api/runs/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+      timeoutMs: 60_000,
+    });
+    if (!r.ok) {
+      setError(r.error);
       setStarting(false);
+      return;
     }
+    router.push(`/runs/${r.data.run_id}`);
   }
 
   return (

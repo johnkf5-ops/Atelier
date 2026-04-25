@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS extractor_turns (
   akb_patch_json TEXT,               -- RFC 7396 merge patch applied this turn
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
-CREATE INDEX IF NOT EXISTS idx_extractor_turns_user
+-- Prevents the double-submit race where two concurrent /api/extractor/turn
+-- POSTs both compute the same turn_index from a stale read of history.length.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_extractor_turns_user_idx
   ON extractor_turns(user_id, turn_index);
 
 -- Opportunity cache (shared across runs)

@@ -36,12 +36,16 @@ export const POST = withApiErrorHandling(async (req: NextRequest) => {
 
   let { akb } = await loadLatestAkb(userId);
 
-  // If user sent a message, append + persist before turn
+  // If user sent a message, append + persist before turn.
+  // Compute turn_index atomically from MAX(turn_index)+1 so concurrent
+  // submits (the "double-click during the 30s Anthropic call" race) don't
+  // both write the same index and collide on the UNIQUE constraint.
   if (parsed.data.user_message !== null) {
     history.push({ role: 'user', content: parsed.data.user_message });
     await db.execute({
-      sql: `INSERT INTO extractor_turns (user_id, turn_index, role, content) VALUES (?, ?, ?, ?)`,
-      args: [userId, history.length - 1, 'user', parsed.data.user_message],
+      sql: `INSERT INTO extractor_turns (user_id, turn_index, role, content)
+            VALUES (?, COALESCE((SELECT MAX(turn_index) + 1 FROM extractor_turns WHERE user_id = ?), 0), ?, ?)`,
+      args: [userId, userId, 'user', parsed.data.user_message],
     });
   }
 
@@ -76,10 +80,11 @@ export const POST = withApiErrorHandling(async (req: NextRequest) => {
     }
   }
 
-  // Persist agent message
+  // Persist agent message — same atomic-index pattern as above
   await db.execute({
-    sql: `INSERT INTO extractor_turns (user_id, turn_index, role, content, akb_field_targeted) VALUES (?, ?, ?, ?, ?)`,
-    args: [userId, history.length, 'agent', turn.agent_message, turn.next_field_target],
+    sql: `INSERT INTO extractor_turns (user_id, turn_index, role, content, akb_field_targeted)
+          VALUES (?, COALESCE((SELECT MAX(turn_index) + 1 FROM extractor_turns WHERE user_id = ?), 0), ?, ?, ?)`,
+    args: [userId, userId, 'agent', turn.agent_message, turn.next_field_target],
   });
 
   return Response.json({

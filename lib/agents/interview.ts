@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { detectGaps, type Gap } from '@/lib/akb/gaps';
 import {
   PartialArtistKnowledgeBase,
@@ -71,12 +72,16 @@ export async function nextInterviewTurn(args: {
           },
         ]
       : messages;
-    const resp = await client.messages.create({
-      model: MODEL_OPUS,
-      max_tokens: 2000,
-      system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: finalMessages,
-    });
+    const resp = await withAnthropicRetry(
+      () =>
+        client.messages.create({
+          model: MODEL_OPUS,
+          max_tokens: 2000,
+          system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+          messages: finalMessages,
+        }),
+      { label: 'interview.turn' },
+    );
     const text = extractText(resp.content as Array<{ type: string; text?: string }>);
     let parsed: unknown;
     try {
