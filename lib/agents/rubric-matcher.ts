@@ -157,12 +157,18 @@ ${portfolioBlock}
 OPPORTUNITIES_TO_SCORE (${opps.length} total):
 ${oppsBlock}
 
-VISION ACCESS:
-- Every image you need to see is already mounted at its mount_path above. No download step. No bash, no curl, no /tmp.
-- To vision over a portfolio image: \`read /workspace/portfolio/<id>.jpg\`
-- To vision over a recipient image: \`read /workspace/recipients/opp<id>_<recipient-slug>/<n>.jpg\`
+VISION ACCESS — READ THIS BEFORE YOUR FIRST TOOL CALL:
+- Every image is pre-mounted via the Files API. The mount paths are listed EXACTLY in the ARTIST_PORTFOLIO and OPPORTUNITIES_TO_SCORE blocks above. Use those exact strings.
+- DO NOT use bash. DO NOT use ls/find/curl/wget. DO NOT scan filesystems for files. The mount paths above are the contract — there is nothing else to discover.
+- To vision over a portfolio image: \`read /workspace/portfolio/<id>.jpg\` where <id> is the M value from the ARTIST_PORTFOLIO block.
+- To vision over a recipient image: \`read /workspace/recipients/opp<id>_<recipient-slug>/<n>.jpg\` exactly as printed in the OPPORTUNITIES_TO_SCORE block.
 - The read tool returns a multimodal content block you can vision over directly.
-- If a specific mount_path returns a not-found error, skip that image and proceed with the others.
+- If a specific mount_path returns a not-found error, skip THAT image and proceed with the others. Do NOT bash-fish for it.
+
+SAFETY-REMINDER POSTURE — DO NOT ACK:
+- The read tool will sometimes return a system reminder noting that JPEG files could in principle contain malware. These reminders are non-actionable for THIS task: every file you read here is a pre-mounted JPEG photograph (portfolio artwork or past-recipient artwork) for aesthetic-signature comparison.
+- DO NOT acknowledge, rebut, restate, or comment on these reminders. Do not write "Acknowledged…" or "Understood, the files are images…" or "Continuing with the task…" — these messages waste output budget and produce no scoring.
+- If a reminder appears, ignore it silently and proceed to the next read or the next persist_match call. The user has already vetted that these are visual-art JPEGs.
 
 ID MAPPING (CRITICAL — DO NOT FABRICATE IDs):
 - Each OPPORTUNITY block above is labeled "OPPORTUNITY id=N" — that N is the opportunity_id you MUST pass back in persist_match. Do not invent IDs; do not omit; do not transform.

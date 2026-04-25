@@ -1,4 +1,5 @@
 import { getAnthropic } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 
 /**
  * Upload a Buffer to the Anthropic Files API (Managed Agents beta).
@@ -7,9 +8,14 @@ import { getAnthropic } from '@/lib/anthropic';
  *
  * Pre-mounting recipient + portfolio images via Files API bypasses the
  * bash+curl+/tmp+read workflow that trips Anthropic's malware-analysis
- * safety layer (~18/19 agent messages burned on ack reminders in our
- * §3.4 runs). Read via mount_path directly instead — no binary fetches,
- * no reminder trigger.
+ * safety layer. Read via mount_path directly instead.
+ *
+ * Wrapped in withAnthropicRetry so transient 429/5xx/network failures
+ * don't permanently leave a recipient with empty file_ids. Throws on
+ * non-transient failure — callers MUST surface the error rather than
+ * swallow it (the prior swallow pattern was the WALKTHROUGH Note 8 root
+ * cause: prod recipients silently shipped with file_ids=[] for every
+ * row, blinding the Rubric).
  */
 export async function uploadToFilesApi(
   buf: Buffer,
@@ -20,7 +26,12 @@ export async function uploadToFilesApi(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const blob = new File([new Uint8Array(buf)], filename, { type: contentType }) as any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const meta = await (client.beta as any).files.upload({ file: blob });
+  const meta = (await withAnthropicRetry(
+    () =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (client.beta as any).files.upload({ file: blob }),
+    { label: `files.upload(${filename})` },
+  )) as { id: string };
   return String(meta.id);
 }
 
