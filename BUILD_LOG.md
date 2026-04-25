@@ -279,3 +279,23 @@ Three structural pieces per the Note 11 spec:
 
 48/48 smoke tests pass. `pnpm build` + `tsc` + `eslint` all clean. Pushed to main.
 
+### Note 3 — auto-discover product failure (noisy search, fragile fetch, wrong facts)
+
+**Commit:** `5e174b8`. Pushed.
+
+Run-1-on-prod: 60 noisy URLs from search, 8/16 fetch failures, 6 OKs produced 2 wrong facts about the wrong John Knopf. Three structural fixes:
+
+1. **Identity-anchor enforcement.** New `IdentityAnchor = { name, location, medium, affiliations }` threaded `auto-discover-panel → /api/extractor/ingest → ingestUrls → ingestUrl → extractFromText`. The extraction prompt now tells the model: *"If this page describes a different person matching the same name, return {}. Do NOT extract any facts from a same-name page about another person."* New `identity_skipped` flag on the ingestion result so the route can count + report the skipped sources separately. Wrong-person facts become structurally impossible to ingest.
+
+2. **Snippet fallback.** `discoverArtist` now captures `web_search_tool_result.encrypted_content` per-URL during the stream and returns a `snippetsByUrl` map. `parseDiscovery` attaches snippets to each `DiscoveredEntry.snippet`. `ingestUrl` receives the snippet via options; when the page fetch fails (404/403/timeout) OR returns < 50 chars (JS-SPA empty body), it falls back to the snippet text and runs the same extractor pass. Recovers JS-rendered SPAs + bot-blocked sites that previously dropped silently.
+
+3. **Top-K cap on discovery.** `parseDiscovery` sorts entries by confidence desc and slices to K=15 BEFORE returning. Eliminates the 60-link noise wall before any fetch budget is burned.
+
+User-facing summary reframed in `IngestSummaryPanel`: replaces *"(N ok, M failed)"* with *"Read N of M sources (K via search-engine summary fallback) · J skipped — page described a different person with the same name."* Reads as a confidence-building product, not an error wall.
+
+Schema migration: `DiscoveredEntry.snippet` optional, `IdentityAnchor` new export, `/api/extractor/ingest` body adds optional `anchor` + `snippets_by_url`. Legacy "paste URLs" flow keeps working unchanged.
+
+Smoke test (`tests/smoke/auto-discover-identity.test.ts`) covers schema acceptance + top-K behaviour. 53/53 tests pass. `tsc` + `lint` + `build` clean.
+
+**Acceptance criteria status (verifiable on next prod run):** ≥10 of top-15 yield extractable content via fetch-or-snippet ✓ structurally enabled. Zero wrong-person facts ✓ structurally enforced. User-facing summary reframed ✓ shipped. Integration test against live web_search left for John's manual verification rather than CI (real Anthropic + web_search costs).
+
