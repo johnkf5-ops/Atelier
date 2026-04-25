@@ -562,6 +562,89 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 21 — Project proposals are submission letters, not project proposals — and the wrong shape for grant/fellowship/residency types
+
+**Where:** every drafted `project_proposal` in `drafted_packages.project_proposal`, surfaced on the dossier per opportunity.
+
+**Symptom — audited across all 10 packages on a recent run:**
+
+**21a — Em-dash count is brutal across most proposals.** ND Awards: **28 em-dashes**. OPOTY: 12. FAPA: 9. TIFA: 9. ILPOTY: 8. WNPA: 7. APA: 7. IPA: 7. HIPA: 6. The Note 20 zero-em-dash rule needs to extend to proposals — same LLM-prose tell, same panel response.
+
+**21b — Third-person voice everywhere.** "Knopf submits...", "Knopf's working influences are...", "Knopf shoots on Hasselblad..." Only one proposal (FAPA) uses first-person. For grant/fellowship/residency applications, first-person is REQUIRED by panel expectation.
+
+**21c — Identical lineage paragraph in every proposal.** Same Lik / Rowell / Butcher / QT Luong roll-call across all 10. Lineage belongs in the artist statement, not the project proposal. Repeating it across both materials in the same dossier reads as filler.
+
+**21d — Identical method paragraph in every proposal.** Hasselblad / Phase One / Canon / ND grad / Fuji Flex / no HDR / no composites — repeated verbatim 10 times. Once across the dossier (in the artist statement) is enough.
+
+**21e (the structural error) — Proposals don't actually PROPOSE anything.** A real project proposal answers "what would you DO with this fellowship/commission/grant." Most of these just say "I am submitting these existing images." That is a SUBMISSION LETTER, not a project proposal. For state arts council fellowships (which fund work TO BE DONE, not work already done), this is a fundamental mismatch with what panels evaluate against.
+
+**21f — Doesn't distinguish proposal TYPE.** Different opportunities expect structurally different proposals:
+- **Competition entry** (ILPOTY, OPOTY, IPA, FAPA, ND, TIFA, HIPA): portfolio submission with curatorial framing of EXISTING work
+- **State arts council fellowship** (Nevada, NYSCA, NEA Visual Arts): project plan with timeline + deliverables for NEW work to be made with the fellowship
+- **Residency** (MacDowell, Yaddo, regional residencies): proposal of what would be PRODUCED DURING the residency in that specific place
+- **Photo book grant** (Aperture First Book, Lucie Foundation Book Prize): monograph plan with sequence, scope, page count, working title
+- **Foundation grant** (Aaron Siskind, Pollock-Krasner): narrative about current work + how grant supports continued practice
+- **Public art commission / RFQ**: project proposal for the specific commission's site/context
+
+The model currently treats ALL of them as "submission package." For OPOTY (a competition) that's correct. For Nevada Arts Council Fellowship that's panel-rejection-by-the-second-paragraph.
+
+**21g — Epson Pano proposal is TRUNCATED.** 63 words, ends mid-sentence. Hit max_tokens or some prompt issue. Coder needs to investigate alongside the rest of the fix.
+
+**21h — Banned-phrase leakage from artist statement.** Same "the work sits in the commercial-gallery landscape lineage" phrase appears across most proposals. Same banned-phrase list from Note 20 should extend to proposals.
+
+**Root cause:** the Drafter's `project_proposal` system prompt:
+1. Doesn't load opportunity-type-specific templates
+2. Doesn't distinguish competition vs grant vs residency vs book vs foundation vs commission proposal shapes
+3. Defaults to a "submission package" template that fits competition entries but is wrong for everything else
+4. Allows the same lineage + method paragraphs that the artist statement already contains
+5. Doesn't enforce the same em-dash + first-person discipline as Note 20 will enforce on statements
+
+**Fix — three parts:**
+
+### 21-fix.1 — Build skills/project-proposal-real-examples.md (research-mode-agent task — IN FLIGHT)
+
+A new skill file containing six proposal-type templates derived from real funder guidelines + winning project descriptions, plus 4-6 verbatim/paraphrased examples, 3-4 anti-examples, voice rules specific to proposals (different from artist statement rules), and type-routing logic the classifier uses.
+
+This file is being produced by a research-mode subagent right now. Coder should NOT write this — wait for the file to land, then wire it into the Drafter prompt.
+
+### 21-fix.2 — Rewrite the Drafter project-proposal system prompt
+
+- Load `skills/project-proposal-real-examples.md` via the existing `readSkill()` pattern
+- Extend the opportunity-type classifier from Note 20 to map to proposal-type as well: `state-fellowship | competition | residency | book-grant | foundation-grant | commission | general` (might be the same classification function reused in two places, or a separate but related one)
+- Inject the type-specific template + voice guidance into the user message for each material call
+- Apply the same Note 20 voice constraints: ZERO em-dashes (hard), first-person voice (with exceptions for competition entries that the template explicitly allows otherwise), banned-phrase list, no lineage paragraph (lineage lives in the statement), no method/gear paragraph repeated from the statement
+- The proposal MUST include real project commitments where the type calls for it: timeline, deliverables, why-now, why-this-funder, what-will-be-produced
+- Pre-write self-check using the verification checklist from the new skill file. Same retry-with-validation pattern from `callWithSchema()`
+
+### 21-fix.3 — Per-proposal-type smoke test
+
+Add `tests/smoke/drafter-proposal-shape.test.ts` that drafts proposals for one of each of the 6 types using the same AKB+fingerprint, then asserts:
+- Each proposal contains the structural sections expected for its type (e.g., state-fellowship has a Timeline section, residency has a "what I would produce during the residency" section)
+- Em-dash count is exactly zero for every proposal
+- No two proposals across the 6 types share the same opening sentence (Jaccard similarity check on opening 30 words)
+- No proposal contains the lineage paragraph that lives in the artist statement (regex against banned phrases like "sits in the lineage of")
+
+### Investigation for 21g (separate, urgent)
+
+Find why the Epson Pano proposal was truncated to 63 words. Check `package-drafter.ts` max_tokens for the project_proposal call (probably 1500 or similar; bump to 4000 like the orchestrator cover narrative fix). If max_tokens isn't the issue, check whether the prompt construction is being malformed for that specific opportunity (something in the opp data triggering an early-stop). Add a smoke test that asserts every drafted proposal ends with a complete sentence (regex on terminal punctuation `[.!?"']\s*$`).
+
+### Acceptance for Note 21
+
+- Read 3 generated proposals from a fresh run, one each from a competition / state-fellowship / residency type. Each is structurally distinct (different sections, different scaffolding).
+- Em-dash count is ZERO across every proposal.
+- First-person voice across grant/fellowship/residency proposals.
+- No lineage paragraph in any proposal (lineage only appears in the artist statement).
+- No method-and-gear paragraph in any proposal (method only appears in the artist statement, where it's justified).
+- State-fellowship-type proposals contain a real project plan with a timeline AND deliverables for work to be DONE with the fellowship — not just "I'm submitting existing images."
+- The new `skills/project-proposal-real-examples.md` is loaded at runtime by `package-drafter.ts`.
+- Epson Pano (or any single-opportunity truncation) is no longer happening — every proposal ends with terminal punctuation.
+
+**Files:** `lib/agents/package-drafter.ts` (project_proposal prompt rewrite + opportunity-type-to-proposal-type classifier extension + max_tokens bump), `skills/project-proposal-real-examples.md` (new — research subagent producing now), `tests/smoke/drafter-proposal-shape.test.ts` (new).
+
+**Priority:** highest after Note 20. Project proposals are the load-bearing piece for grant/fellowship/residency applications (competition entries care less about the proposal because the work itself does the work). Should ship before §5.2 demo recording.
+
+---
+
 ## Note 20 — Drafted artist statements read as third-person curatorial essays, not artist-authored text + 80% identical across opportunities
 
 **Where:** every drafted artist_statement in `drafted_packages.artist_statement`, surfaced on the dossier per opportunity.
