@@ -66,7 +66,7 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
 - **Style Analyst** — Opus 4.7 vision over the full portfolio. Produces a structured aesthetic fingerprint: composition, palette, subject, light, formal lineage, career-positioning read. Direct SDK call.
 - **Knowledge Extractor** — Builds the Artist Knowledge Base by ingesting URLs the artist provides (personal site, gallery bios, press mentions), then interviewing them via text to fill gaps the ingestion missed. Direct SDK call. Versioned and durable across runs.
 - **Opportunity Scout** *(Managed Agent)* — Searches twenty-plus curated source archetypes for current open calls in the artist's window. Runs long; uses `agent_toolset_20260401` (web_search, web_fetch, bash, read).
-- **Rubric Matcher** *(Managed Agent)* — For each candidate opportunity, fetches past recipients, downloads their portfolio images to the Anthropic Files API, mounts them as session resources, and scores the artist's portfolio fit against the cohort. Produces a fit score, reasoning, and supporting / weakening images per match.
+- **Rubric Matcher** *(Managed Agent)* — For each candidate opportunity, fetches past recipients, normalizes their portfolio images through Sharp, uploads them to the Anthropic Files API, then sends them as image content blocks inside per-opportunity `user.message` events so the agent reads both the artist's portfolio and the recipient cohort directly with vision. Produces a fit score, reasoning, and supporting / weakening images per match.
 - **Package Drafter** — For matched opportunities, drafts artist statement, project proposal, CV, and cover letter in the institutional voice each program expects. Pulls facts exclusively from the AKB. Direct SDK call.
 - **Orchestrator** — Synthesizes specialist outputs into the final ranked Dossier. Writes the "why this ranking" narrative and the "why not these others" filtered-out reasoning.
 
@@ -81,7 +81,7 @@ The two Managed Agent surfaces (Scout, Rubric) run on Anthropic's hosted orchest
 - **Persistence:** Turso (LibSQL — open-source SQLite over the network) via `@libsql/client`. Single DB from day one — no local file, no migration step
 - **Blob storage:** Vercel Blob via `@vercel/blob` for portfolio images and recipient cohort thumbnails
 - **LLM surface:** `@anthropic-ai/sdk` for direct specialist calls; Managed Agents beta (`managed-agents-2026-04-01`) for Scout and Rubric Matcher
-- **Files API:** Anthropic Files API for past-recipient images mounted as Managed Agent session resources
+- **Files API:** Anthropic Files API for portfolio + past-recipient images, sent as image content blocks inside `user.message` events for direct multimodal reading inside the Rubric session
 - **PDF export:** `@react-pdf/renderer`
 - **Validation:** `zod` (pinned to v3 — schemas use `.deepPartial()`)
 - **Image preprocessing:** `sharp`, EXIF read via `exifr`
@@ -102,7 +102,7 @@ Most working artists are not very googlable, and most cannot write well about th
 
 ### 2. Rubric Matcher — aesthetic-judgment-as-matching against past-recipient cohorts
 
-For each candidate opportunity, the Matcher fetches the last three years of recipients, finds their portfolio images, uploads those images to the Anthropic Files API, and mounts them inside the Managed Agent session at known paths alongside the artist's own portfolio. The agent then reads both cohorts directly with vision and scores the fit, with reasoning that cites which of the artist's specific images support the match and which weaken it. Programs whose past recipients work in different aesthetic territory get filtered out with explicit "why not" reasoning surfaced to the user — saying no with reasons is part of the value, not a by-product. See [`lib/agents/rubric-matcher.ts`](./lib/agents/rubric-matcher.ts) and [`app/api/runs/[id]/finalize-scout/`](./app/api/runs/) for the recipient-image pipeline.
+For each candidate opportunity, the Matcher fetches the last three years of recipients, finds their portfolio images, normalizes each one through Sharp, and uploads them to the Anthropic Files API. The Managed Agent session opens with the artist's portfolio sent as image content blocks in the initial `user.message`; the orchestrator then dispatches one `user.message` per opportunity, sequentially, each carrying that opportunity's recipient images as image content blocks alongside the scoring task. The agent reads both cohorts directly with vision — no `read`-tool round-trip on mounted files — and scores the fit, with reasoning that cites which of the artist's specific images support the match and which weaken it. Programs whose past recipients work in different aesthetic territory get filtered out with explicit "why not" reasoning surfaced to the user — saying no with reasons is part of the value, not a by-product. See [`lib/agents/rubric-matcher.ts`](./lib/agents/rubric-matcher.ts) and [`app/api/runs/[id]/finalize-scout/`](./app/api/runs/) for the recipient-image pipeline.
 
 ---
 

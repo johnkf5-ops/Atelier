@@ -11,7 +11,7 @@
 
 This document describes how Atelier is built. Atelier is a single-user-per-deploy Next.js app that turns a visual artist's portfolio into a Career Dossier — ranked grant / residency / competition opportunities and submission-ready application materials. The submission for the Cerebral Valley × Anthropic *Built with Opus 4.7* hackathon. The implementation runs six specialist agents on Anthropic's API: four direct `messages.create` agents and two Managed Agents on the `agent_toolset_20260401` toolset. Long-running runs survive Vercel's 60-second function timeout via a poll-pull-on-read pattern: state lives in Turso (LibSQL), the browser polls a thin Next.js route, and that route reads new events from Anthropic and persists them on every poll.
 
-The rest of this document is in the order a reader new to the codebase would want it: system shape, stack rationale, the agents, the data flow per run phase, the long-running pattern, the database, the Anthropic-integration patterns, the Files-API mounting trick that makes Rubric work, the skill files, the structural decisions documented in [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md), and finally the Path B (multi-tenant) hooks.
+The rest of this document is in the order a reader new to the codebase would want it: system shape, stack rationale, the agents, the data flow per run phase, the long-running pattern, the database, the Anthropic-integration patterns, the image-content-block multimodal pattern that makes Rubric work, the skill files, the structural decisions documented in [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md), and finally the Path B (multi-tenant) hooks.
 
 ---
 
@@ -167,35 +167,32 @@ The custom tool input schema is `OpportunityWithRecipientUrls` (`lib/schemas/opp
 
 Same Managed Agent shape as Scout. System prompt is `skills/juror-reading.md` + `skills/aesthetic-vocabulary.md`. Custom tool `persist_match` with input schema derived from `RubricMatchResult`.
 
-The architectural difference from Scout: **session resources**. `buildSessionResources(portfolio, opportunities)` constructs a `resources[]` array from the file_ids that `start-rubric` and `finalize-scout` populated. Each entry is `{ type: 'file', file_id, mount_path }` with mount paths:
+The architectural difference from Scout: **vision happens via image content blocks in `user.message` events, not via the `read` tool on mounted resources.** `sessions.create({ agent, environment_id, title })` is called **without** a `resources` field. File IDs are still uploaded (we need `file_id` strings) but they live in the per-message content blocks, not in the session container's filesystem.
 
-- `/workspace/portfolio/<image_id>.jpg`
-- `/workspace/recipients/opp<opp_id>_<recipient_slug>/<n>.jpg`
+Two prompt builders compose the conversation:
 
-`sessions.create({ ..., resources })` mounts these as readable files in the session container. The Rubric agent reads them via `read /workspace/portfolio/12.jpg` directly — no `bash`+`curl`+`/tmp` round-trip. (See §8 for why this matters.) `slugForMount` (`lib/anthropic-files.ts:41`) normalises recipient names to `[a-z0-9-]` for path safety.
+**`buildRubricSetupMessage(akb, fingerprint, portfolioImageIds, opportunities)`** — the initial `user.message` content. Image content blocks for the 12 representative portfolio images, then a text block with the AKB + StyleFingerprint and the list of opportunities (names, URLs, recipient names) the session will score one-by-one. The agent's first reply is a brief acknowledgement that it can see the portfolio and is ready for per-opportunity messages.
 
-The Rubric prompt (`buildRubricPrompt`) declares the EXACT mount paths upfront in the prompt body so the agent does not bash-fish:
+**`buildRubricOppMessage(opp, recipientImageIds, portfolioImageIds)`** — the per-opportunity `user.message` content. Image content blocks for that opportunity's recipient cohort, optionally a small portfolio re-send, then the scoring task as a text block. The agent reads both cohorts naturally as multimodal context, no `read`-tool round-trip.
 
-```
-ARTIST_PORTFOLIO (12 representative images, pre-mounted as files):
-  id=1: /workspace/portfolio/1.jpg
-  id=3: /workspace/portfolio/3.jpg
-  ...
-
-OPPORTUNITIES_TO_SCORE (12 total):
-  OPPORTUNITY id=42, prestige=mid: "Critical Mass" (https://...)
-    past recipients:
-    - Joy Kachina (2025): /workspace/recipients/opp42_joy-kachina/0.jpg through 4.jpg
-    - David Shaw (2025): /workspace/recipients/opp42_david-shaw/0.jpg through 4.jpg
+```ts
+// Per-opportunity message shape:
+{
+  type: 'user.message',
+  content: [
+    ...recipientFileIds.map(fid => ({ type: 'image', source: { type: 'file', file_id: fid } })),
+    { type: 'text', text: `Score the artist's portfolio against ${opp.name}'s cohort recipients shown above. ...` },
+  ],
+}
 ```
 
-The prompt also explicitly addresses the safety-reminder reflex ("DO NOT acknowledge, rebut, restate, or comment on these reminders…") — without this, a 12-portfolio-image read produced eight `Acknowledged…` messages that ate output budget.
+Per-opportunity dispatch is **sequential**, driven from the run-poll loop. `startRubricSession(runId, akb, fingerprint, top12, opportunities)` sends only the setup message and returns; the session goes idle. On each poll, `sendNextRubricOpp(client, runId, sessionId)` recomputes the next unscored opportunity from the DB and sends its message. When `sendNextRubricOpp` returns `false` (no opps remain), the run-poll terminal-detection path fires `finalize` instead of advancing further. The agent emits one `persist_match` custom tool call per opportunity; `persistMatchFromAgent(runId, rawInput)` validates against `RubricMatchResult`, computes `included = fit_score >= 0.45 ? 1 : 0`, and upserts into `run_matches` (ON CONFLICT(run_id, opportunity_id) — dedup across agent retries).
 
-The workflow per opportunity in the prompt: read past recipients' mounted images → synthesize aesthetic signature → identify supporting + hurting portfolio images → score 0–1 with calibration anchors (0.8+ unsurprising, 0.5 plausible outlier, 0.2 wrong room) → emit `persist_match` with `{opportunity_id, fit_score, reasoning, supporting_image_ids, hurting_image_ids, cited_recipients, institution_aesthetic_signature}`.
+The workflow per opportunity in the prompt: read the opportunity's recipient images (visible in the message above) → synthesize aesthetic signature → identify supporting + hurting portfolio images (visible from setup) → score 0–1 with calibration anchors (0.8+ unsurprising, 0.5 plausible outlier, 0.2 wrong room) → emit `persist_match` with `{opportunity_id, fit_score, reasoning, supporting_image_ids, hurting_image_ids, cited_recipients, institution_aesthetic_signature}`.
 
-`persistMatchFromAgent(runId, rawInput)` validates against `RubricMatchResult`, computes `included = fit_score >= 0.45 ? 1 : 0`, upserts into `run_matches` (ON CONFLICT(run_id, opportunity_id) — dedup across agent retries).
+Why this shape — at session scale (95+ resources mounted), the `read` tool on mounted files silently switches to text-only output, which made every Rubric run produce text-only blind scoring with the StyleFingerprint as the entire signal. Image content blocks in `user.message` are the documented multimodal path and engage vision at any session size. See §8 for the full diagnosis chain.
 
-`selectTopPortfolioImages(userId)` picks 12 evenly-spaced portfolio images by `ordinal` (`step = all.length / 12; picked.push(all[Math.floor(i * step)])`) so we don't blow Files API budget mounting 60-image portfolios.
+`selectTopPortfolioImages(userId)` picks 12 evenly-spaced portfolio images by `ordinal` (`step = all.length / 12; picked.push(all[Math.floor(i * step)])`) so we don't blow context budget sending the entire portfolio inside every per-opportunity message.
 
 ### 3.5 Package Drafter — `lib/agents/package-drafter.ts`
 
@@ -295,17 +292,15 @@ Browser polls `GET /api/runs/[id]/events` every 3s. Each poll runs `pollRun(req,
 
 1. `UPDATE runs SET status = 'rubric_running'`.
 2. Load AKB, fingerprint, and 12 portfolio images (`selectTopPortfolioImages`).
-3. Upload each portfolio thumb to Files API (best-effort — log failures but don't throw; portfolio is 12 images and Rubric can score with N-1 if one fails).
+3. Upload each portfolio image to Files API via `uploadVisionReadyImage` (Sharp-normalized JPEG-85, 1024px max). Best-effort — log failures but don't throw; Rubric can score with N-1 if one fails.
 4. Load opportunities + their past_recipients (only recipients with Blob-mirrored `portfolio_urls` AND deduped to `MAX(id)` per name to handle duplicate Scout runs on the same opp).
 5. `startRubricSession(runId, akb, fingerprint, top12, opportunities)`:
-   - `buildSessionResources` constructs the file-mount array.
-   - `client.beta.sessions.create({ agent: RUBRIC_AGENT_ID, environment_id: ATELIER_ENV_ID, resources, title: ... })`.
+   - `client.beta.sessions.create({ agent: RUBRIC_AGENT_ID, environment_id: ATELIER_ENV_ID, title: ... })` — **no `resources` field**. The session container has no mounted files.
    - Insert/update `run_event_cursors` with `phase = 'rubric'`.
-   - `client.beta.sessions.events.send(...)` with the Rubric prompt.
+   - `client.beta.sessions.events.send(...)` with the setup `user.message` from `buildRubricSetupMessage` — image content blocks for the 12 portfolio images plus AKB / StyleFingerprint / opportunity-list text.
+   - Returns immediately; the per-opportunity dispatch happens in the run-poll loop.
 
-Browser polling continues against the same `/api/runs/[id]/events` route — `pollRun` reads `phase` from the cursor row and dispatches the correct CAS + waitUntil at terminal.
-
-When Rubric reaches terminal, the CAS path advances `runs.status = 'rubric_complete'` and fires `POST /api/runs/[id]/finalize`.
+Browser polling continues against the same `/api/runs/[id]/events` route — `pollRun` reads `phase` from the cursor row. On each terminal-detection pass during the Rubric phase, the loop calls `sendNextRubricOpp(client, runId, sessionId)`. If it returns `true` (an opportunity was dispatched), the loop returns without firing `rubric_complete` — the agent will work on that opp and idle again, and the next poll will dispatch the next opp. If it returns `false` (no unscored opps remain), the CAS path advances `runs.status = 'rubric_complete'` and fires `POST /api/runs/[id]/finalize`. This is the sequential per-opportunity dispatch pattern.
 
 ### 4.6 Finalize (Drafter + Orchestrator)
 
@@ -505,38 +500,35 @@ A separate variant `stripUnsupportedJsonSchemaKeys` lives in `lib/extractor/auto
 
 ---
 
-## 8. Files API recipient mounting
+## 8. Files API + image-content-block multimodal pipeline
 
-The architectural pattern from Note 8. Without it, the Rubric Matcher cannot do its job.
+The architectural pattern that lets the Rubric Matcher actually see images. The current shape is the result of three diagnosis cycles documented as Notes 27, 28, and 29 in `WALKTHROUGH_NOTES.md`. The first two patterns failed at production scale in ways that did not appear at probe scale; the current pattern is the one that works.
 
-**Problem.** Rubric needs to vision over each opportunity's past-recipient images. Past-recipient images live at arbitrary URLs (gallery sites, personal portfolios, foundation press pages) — not all are CDN-friendly, many require Referer headers to defeat hotlink protection, several are JS-rendered. If we let the agent fetch them itself with `bash` + `curl` to `/tmp` and then `read /tmp/x.jpg`, two things break:
+**The job.** Rubric needs to vision over each opportunity's past-recipient cohort and the artist's portfolio together. Recipient images live at arbitrary URLs (gallery sites, personal portfolios, foundation press pages) — many require Referer headers to defeat hotlink protection, some are JS-rendered. The Files API gets us bytes-into-Anthropic; the harder question is how the agent reads those bytes inside a long-running session.
 
-1. **Bash-fishing.** The agent doesn't know where the files are. It does `ls /workspace/recipients/`, `ls /workspace/`, `find / -maxdepth 4 -name "recipients" -type d`, `find / -name "*.jpg"` — burning 5 events of output budget before finding the right path. Verified in run 1 prod logs (Note 8 root-cause).
-2. **Safety reminder reflex.** Anthropic's safety layer fires a "binary file may contain malware" reminder on every `read` of a JPEG. Each one costs an `Acknowledged…` ack message (≈400 tokens) before the agent moves on. With 12 portfolio reads, that's ~3200 tokens of pure ack — eating output budget for the actual scoring.
+**What we tried that didn't work.**
 
-**Fix — the architectural pattern.**
+*Pattern 1 — custom mount paths + `read` tool.* `sessions.create({ resources: [{ type: 'file', file_id, mount_path: '/workspace/recipients/...' }] })` and a Rubric prompt that listed the exact mount paths so the agent could `read /workspace/portfolio/12.jpg` directly. **The Files API silently ignored the custom `mount_path`** and mounted everything at the default `/mnt/session/uploads/<file_id>`. Every `read` returned "File not found." Diagnosed via `scripts/probe-mount.mjs`. Note 27.
 
-1. `finalize-scout` downloads each past-recipient image, resizes via sharp, mirrors to Blob, and uploads to Anthropic Files API via `uploadToFilesApi`. The Files API call **throws loudly on failure** — the prior swallow-on-error pattern was the prod root cause.
-2. The returned `file_id` is appended to the recipient's `file_ids` JSON array in `past_recipients`.
-3. `start-rubric` reads `file_ids` per recipient, builds a `resources[]` array via `buildSessionResources(portfolio, opportunities)`:
+*Pattern 2 — default mount paths + `read` tool.* Same shape, but using the documented default mount path, not a custom one. Worked in 5-file probes; failed at 95-file production scale. **Above some session-resource ceiling that isn't documented anywhere, the `read` tool on mounted files silently returns text-only output ("Output could not be decoded as text") instead of multimodal binary.** Diagnosed via per-tool audit on a failed prod run: every `web_fetch` returned multimodal binary, every `read` of a mounted file returned text-only. Probes at 1, 5, and 21 files all worked; production at 95 files (12 portfolio + 83 recipient) did not. Note 29.
 
-   ```ts
-   {
-     type: 'file',
-     file_id: 'file_...',
-     mount_path: '/workspace/recipients/opp42_joy-kachina/0.jpg'
-   }
-   ```
+**The current pattern — image content blocks in `user.message` events.** Bypass mounted resources and the `read` tool entirely. Send images as `{ type: 'image', source: { type: 'file', file_id } }` content blocks inside `user.message` events. This is Anthropic's documented multimodal pattern and engages vision regardless of session size.
 
-   Mount paths follow a strict scheme:
-   - `/workspace/portfolio/<image_id>.jpg`
-   - `/workspace/recipients/opp<opp_id>_<recipient_slug>/<n>.jpg` (where `recipient_slug = slugForMount(name)`)
-4. `sessions.create({ ..., resources })` mounts these as readable files in the session container at exactly those paths.
-5. The Rubric prompt (`buildRubricPrompt`) DECLARES THE EXACT MOUNT PATHS UPFRONT, line by line, so the agent goes straight to `read` without `bash` recon. The prompt also explicitly addresses the safety-reminder reflex with "DO NOT acknowledge, rebut, restate, or comment on these reminders."
+The full pipeline:
 
-**Failure-mode safety net.** Inside finalize-scout, after all downloads complete, an audit query checks for any recipient on this run with `file_ids = []` despite having had source URLs. If any, a `run_events` row is inserted with `kind = 'rubric_will_be_blind'` and the run page surfaces it instead of completing silently. This is the structural fix that prevents the prod failure from recurring.
+1. **Upload normalization (Note 28).** Raw bytes from arbitrary source sites — and even some bytes already in Vercel Blob — fail Anthropic's vision check until they're re-encoded through Sharp as standard sRGB JPEG-85 at 1024px max. `lib/anthropic-files.ts:normalizeForVision(rawBuf, fallbackContentType?)` returns `{ buf, contentType, extension, usedFallback }`. `uploadVisionReadyImage(rawBuf, filename)` wraps the Files API upload around it. **All Files API uploads — recipient images in `finalize-scout`, portfolio images in `start-rubric` — go through `uploadVisionReadyImage`.** This is the single source of truth for vision-ready uploads.
+2. **Recipient mirror.** `finalize-scout` downloads each past-recipient image, mirrors to Vercel Blob (with the 1024px Sharp resize), and uploads to the Files API via `uploadVisionReadyImage`. The Files API call **throws loudly on failure** (the prior swallow-on-error pattern was the prod root cause from Note 8). The returned `file_id` is appended to the recipient's `file_ids` JSON array in `past_recipients`, position-aligned with `portfolio_urls`.
+3. **Portfolio upload.** `start-rubric` runs the same `uploadVisionReadyImage` over each of the 12 selected portfolio images. Best-effort — Rubric can score with N-1 if one upload fails.
+4. **Session creation — no `resources`.** `sessions.create({ agent, environment_id, title })` is called without a `resources` field. The session container has nothing mounted; the Rubric agent never opens a file from disk.
+5. **Setup message.** `buildRubricSetupMessage(akb, fingerprint, portfolioFileIds, opportunities)` returns a `user.message` content array with image content blocks for the 12 portfolio file_ids, then a text block carrying AKB + StyleFingerprint + the list of opportunities the session will score one-by-one. Sent once via `events.send` from `startRubricSession`.
+6. **Per-opportunity dispatch (Note 30).** `sendNextRubricOpp(client, runId, sessionId)` runs from the run-poll terminal-detection path on each idle event. It recomputes the next unscored opportunity from the DB on demand, builds a per-opp `user.message` from `buildRubricOppMessage(opp, recipientFileIds)`, and sends it. Returns `true` if an opp was dispatched, `false` if no unscored opps remain. The poll loop uses the boolean to decide whether to continue (advance to next opp on next idle) or fall through to phase-advance + `finalize`. This sequential pattern keeps each turn under context limits and avoids inline loops that would block past Vercel's 60-second function timeout.
+7. **Match persistence.** Per opp, the agent emits one `persist_match` custom tool call. `persistMatchFromAgent(runId, rawInput)` validates against `RubricMatchResult` and upserts into `run_matches` with ON CONFLICT(run_id, opportunity_id) for retry safety.
+
+**Failure-mode safety net.** Inside `finalize-scout`, after all downloads complete, an audit query checks for any recipient on this run with `file_ids = []` despite having had source URLs. If any, a `run_events` row is inserted with `kind = 'rubric_will_be_blind'` and the run page surfaces it instead of completing silently with empty cohorts.
 
 **Health probe.** `GET /api/health` (`app/api/health/route.ts`) does a tiny Files API probe: upload a 1×1 white JPEG (`TINY_JPEG_BASE64`), capture the file_id, delete it. Verifies the prod `ANTHROPIC_API_KEY` has Files API access — without this, every run ships Rubric-blind.
+
+**Diagnostic scripts retained in `scripts/`.** `probe-mount.mjs` (proves custom mount_path is silently ignored), `probe-vision.mjs` (proves all four vision patterns engage in isolation), `probe-real-file.mjs` and `probe-many-files.mjs` (probe-scale verifications), `probe-portfolio.mjs` (the diagnosis that found portfolio files needed Sharp normalization while recipient files didn't), `probe-prod-scale.mjs` (production-scale probe with 8 portfolio + 5 recipient images that confirmed the image-content-block pattern engages vision at production scale). These exist as a regression-detection corpus — if any future change to the vision pipeline regresses, the probes will catch it before a prod run does.
 
 ---
 
@@ -574,7 +566,7 @@ The walkthrough notes are John's incognito-prod walkthrough log. Each note that 
 
 **Note 7 — Canonical `getPortfolioCount()` function** (`lib/db/queries/portfolio.ts:22`). Three different files were doing inline `SELECT COUNT(*) FROM portfolio_images` with subtle differences (one read `Number(rowObj)` instead of `Number(rowObj.n)`); the `/runs/new` page silently returned 0 against the same DB the upload page read 21 from. Single source of truth eliminates page-to-page count drift. Same module also exports `getNextPortfolioOrdinal`, `listPortfolio`, `existingPortfolioHashes`.
 
-**Note 8 — Fail-loud Files API uploads + Rubric session resource mounting**. `lib/anthropic-files.ts:uploadToFilesApi` throws on Files API non-2xx (no swallow). `app/api/runs/[id]/finalize-scout/route.ts` runs a post-pass audit that emits a `rubric_will_be_blind` `run_events` row if any recipient on this run still has empty `file_ids` despite source URLs. `lib/agents/rubric-matcher.ts:buildSessionResources` builds the mount array; the Rubric prompt declares exact mount paths upfront so the agent skips bash-fishing and the safety-reminder ack reflex is preempted in the prompt.
+**Note 8 — Fail-loud Files API uploads + per-run audit safety net**. `lib/anthropic-files.ts:uploadVisionReadyImage` throws on Files API non-2xx (no swallow). `app/api/runs/[id]/finalize-scout/route.ts` runs a post-pass audit that emits a `rubric_will_be_blind` `run_events` row if any recipient on this run still has empty `file_ids` despite source URLs. The "how Rubric reads images" architectural shape was iterated through Notes 27, 28, 29, and 30 and lives in its current form in §8 above (image content blocks in per-opportunity `user.message` events, dispatched sequentially from the run-poll loop).
 
 **Note 10 — `untrusted_sources` table** (`lib/db/schema.sql:204–210`, queries in `lib/db/queries/untrusted-sources.ts`). When the user rejects a fact on `/review` that came from auto-discover, the source URL is recorded here. Auto-discover and the URL ingest path skip any URL in this list — prevents the "delete this fact forever" treadmill where every re-ingest re-introduces the same hallucination.
 
@@ -614,13 +606,13 @@ Estimated total: ~1–1.5 days. The agent code, schema, and storage layers are u
 lib/
   anthropic.ts                       # singleton client + MODEL_OPUS
   anthropic-retry.ts                 # withAnthropicRetry wrapper (Note 11)
-  anthropic-files.ts                 # uploadToFilesApi (fail-loud, Note 8)
+  anthropic-files.ts                 # normalizeForVision + uploadVisionReadyImage (Sharp-normalize + fail-loud, Notes 8/28)
   agents/
     style-analyst.ts                 # chunked vision pipeline
     knowledge-extractor.ts           # URL ingestion w/ identity anchor (Note 3)
     interview.ts                     # gap-driven conversational AKB fill
     opportunity-scout.ts             # Managed Agent session + persist_opportunity
-    rubric-matcher.ts                # Managed Agent + Files API resources
+    rubric-matcher.ts                # Managed Agent + image content blocks (sequential per-opp dispatch)
     package-drafter.ts               # 4 materials × top 15 matches; FINGERPRINT_CONSTRAINT, NAME_PRIMACY_CONSTRAINT
     orchestrator.ts                  # composite scores + cover/ranking/filtered narratives
     run-poll.ts                      # poll-pull loop, requires_action handler, terminal CAS
@@ -664,7 +656,7 @@ app/
     runs/start                       # creates run, starts Scout session
     runs/[id]/events                 # poll-pull-on-read
     runs/[id]/finalize-scout         # Files API mounting (Note 8)
-    runs/[id]/start-rubric           # Rubric session w/ resources[]
+    runs/[id]/start-rubric           # Rubric session, setup user.message with image content blocks
     runs/[id]/finalize               # Orchestrator + Drafter
     dossier/[runId]/pdf, /match/...  # PDF render, docx export
     health, health/schema, health/web-search
