@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import pLimit from 'p-limit';
 import { getAnthropic, MODEL_OPUS } from '@/lib/anthropic';
+import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { getDb } from '@/lib/db/client';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 import type { Opportunity } from '@/lib/schemas/opportunity';
@@ -143,13 +144,16 @@ Write the cover letter now.`,
 async function draftMaterial(type: MaterialType, ctx: DraftCtx): Promise<string> {
   const { system, user } = PROMPTS[type](ctx);
   const client = getAnthropic();
-  const resp = await client.messages.create({
-    model: MODEL_OPUS,
-    max_tokens: 3000,
-    thinking: { type: 'adaptive' },
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
+  const resp = await withAnthropicRetry(
+    () => client.messages.create({
+      model: MODEL_OPUS,
+      max_tokens: 3000,
+      thinking: { type: 'adaptive' },
+      system,
+      messages: [{ role: 'user', content: user }],
+    }),
+    { label: `drafter-${type}` },
+  );
   const text = resp.content.find((b) => b.type === 'text')?.text ?? '';
   return text.trim();
 }
