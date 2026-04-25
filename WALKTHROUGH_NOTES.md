@@ -562,6 +562,73 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 20 — Drafted artist statements read as third-person curatorial essays, not artist-authored text + 80% identical across opportunities
+
+**Where:** every drafted artist_statement in `drafted_packages.artist_statement`, surfaced on the dossier per opportunity.
+
+**Symptom — three stacked failures audited across all 10 packages on a recent run:**
+
+**20a — Em-dash overuse is an LLM-tell.** Counts: 9, 7, 5, 7, 4, 3, 4, 5, 7, 4 em-dashes per ~360-word statement. Real artist statements use 0–2 em-dashes per ~400 words. The current rhythm (subject — descriptor — descriptor — close) reads as Claude/GPT signature punctuation. A juror who reads applications all day will recognize it instantly.
+
+**20b — 80% identical content across opportunities.** All 10 statements share: the same opening (subject geography list), the same compositional-grammar paragraph, the same lineage paragraph (Lik / Rowell / Butcher / QT Luong), the same career-marker paragraph (Mondoir / Venice / Art Basel / NFT cohorts). Variation is mostly word order + which sentence gets emphasis. Submitting 10 near-identical statements means the artist is functionally submitting the same statement to every panel — defeats the purpose of opportunity-specific drafting.
+
+**20c — Wrong voice entirely.** The statements are written in the third-person curatorial-essay voice ("Knopf photographs landscape on six continents — slot canyons, waterfalls in Hawaii..."), not the artist's first-person voice. Real artist statements are written by the artist about themselves, in first person OR opening with the artist's name and then transitioning to first person. The current output reads like a critic describing the work from outside the room, not the artist talking about why they make it.
+
+Three structural problems inside 20c:
+1. **Third-person posture** creates distance. Pure third-person reads as biography or critical essay.
+2. **Opens with WHAT and HOW** (cameras, formats, locations) and only mentions WHY in a tossed-off sentence at the end ("The animating intent is conservationist"). Real statements lead with WHY (the question the artist is after, the stakes) and use HOW/WHAT in service.
+3. **Lineage name-dropping in the artist's own voice** ("the work sits inside the commercial-gallery landscape register that runs from Peter Lik through Galen Rowell") feels defensive. Artists don't position themselves in lineages in their own statements — that's a critic's job.
+
+**Root cause:** the Drafter system prompt currently tells the model to write "in the institution's voice" and uses the `DEFAULT_VOICE_SKILL` constant which is a generic style instruction without grounded examples. The model defaults to its training-data average artist statement, which skews academic-fine-art (Sugimoto / Crewdson / Wall / MFA-thesis voice) — wrong register for a working commercial-landscape photographer applying to state arts councils and photo prizes.
+
+**Fix (real, structural — three parts):**
+
+### 20-fix.1 — Build skills/artist-statement-real-examples.md (research-mode-agent task — IN FLIGHT)
+
+A new skill file containing 5–7 REAL artist statements pulled from working landscape/commercial-gallery photographers who have actually won state arts council fellowships, regional photography prizes, or place in juried competitions, plus 3–4 anti-examples (third-person, em-dash-heavy, lineage-defensive statements that demonstrate what NOT to write). Plus distilled voice rules and per-opportunity-type tailoring guidance. Loaded into the Drafter's system prompt as ground-truth few-shot.
+
+This file is being produced by a research-mode subagent right now. Coder should NOT write this — wait for the file to land, then wire it into the Drafter prompt.
+
+### 20-fix.2 — Rewrite the Drafter artist-statement system prompt
+
+Replace the current voice instruction with:
+- A reference to skills/artist-statement-real-examples.md (loaded inline at runtime)
+- Explicit voice constraints derived from the skill file's "Voice rules distilled" section, including:
+  - First-person voice (or open with artist name then transition to first-person)
+  - Open with the artist's animating question or stake — NEVER with cameras/formats/locations
+  - Maximum 1 em-dash per 200 words (hard cap)
+  - Banned phrases: "sits in the lineage of", "commercial-gallery register", "aesthetic signature", "working grammar", "the work is built around", any other curator-essay phrasing surfaced in the skill file's anti-examples
+  - Technical details (cameras, prints, ND filters, Zone System) must be justified by what they enable artistically, never listed as bare facts
+  - Lineage name-drops limited to 1–2 names total, only if they're animating influences (not positioning markers)
+- A pre-write self-check: the model writes the statement, then re-reads it against the constraints, and if any are violated, rewrites. This is built into the prompt via the schema-validation retry pattern already used in `callWithSchema()`.
+
+### 20-fix.3 — Per-opportunity differentiation
+
+The current Drafter prompt receives the opportunity name + URL + AKB + fingerprint + Rubric reasoning. Add to the user message:
+- The opportunity TYPE classification (state-fellowship / landscape-prize / photo-book / museum-acquisition / general-prize) — derived from `opp.award.type` + `opp.award.prestige_tier` + opportunity name pattern matching
+- Tailoring guidance specific to that type, pulled from the skill file's "Per-opportunity tailoring" section
+- A constraint at the end: "This statement MUST differ meaningfully from a statement written for a different opportunity type. If you find yourself writing the same opening / structure / closing as you would for any other opportunity, restructure."
+
+Acceptance test: smoke test that drafts a statement for a state-fellowship and a statement for a landscape-prize using the same AKB + fingerprint, then asserts:
+- Token-overlap (Jaccard similarity on word-bag) below 0.55 between the two statements
+- Em-dash count ≤ ceil(word_count / 200) per statement
+- Statement opens with a sentence that does NOT mention any of: a camera brand, a print format, a country, a location list
+
+### Acceptance for Note 20
+
+- Read 3 generated statements from a fresh run. Each is meaningfully different (different opening sentences, different structural arc, different emphasis).
+- Em-dash count ≤ 2 per statement.
+- First-person voice OR transitions to first-person within the first paragraph.
+- Statement opens with stakes/question, not technical inventory.
+- A working artist who is not John can read one of the statements and not be sure it was AI-generated (the opposite of the current output, which is obvious within 30 seconds).
+- The new `skills/artist-statement-real-examples.md` is loaded at runtime by `package-drafter.ts` (same `readSkill()` pattern used for the existing skills).
+
+**Files:** `lib/agents/package-drafter.ts` (prompt rewrite + skill loader for new file + opportunity-type classifier), `skills/artist-statement-real-examples.md` (new — research subagent producing now), `tests/smoke/drafter-statement-voice.test.ts` (new).
+
+**Priority:** highest. The artist statement is the load-bearing piece of any application — judges read it first. Currently the statements are obviously AI-generated. This must ship before §5.2 demo recording.
+
+---
+
 ## Note 19 — Work sample selection is identical across opportunities + rationale is placeholder text
 
 **Where:** dossier work-sample section per drafted package. Both bugs are in the Drafter's work_sample_selection logic (`lib/agents/package-drafter.ts:185-231`).
