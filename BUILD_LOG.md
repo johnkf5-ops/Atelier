@@ -255,3 +255,27 @@ Live-verified the full roundtrip: exported 21 images + AKB v12 + fingerprint v4 
 
 Companion to Note 8's recovery script: combined, John can now `pnpm seed:demo` + `pnpm seed:demo:run-only` in under a minute to validate every Note 8/3/1/2/4/5 fix end-to-end.
 
+### Note 11 — systemic Anthropic retry audit + ESLint guard
+
+**Commit:** `fce8b7f`. Pushed.
+
+Style Analyst (`21a56cb`) and Package Drafter (`0fba724`) were already wrapped. This commit closes the remaining 11 unwrapped Anthropic call sites:
+
+- `rubric-matcher.ts` — `sessions.create` + `events.send`
+- `opportunity-scout.ts` — `sessions.create` + `events.send`
+- `run-poll.ts` — `events.send` + `sessions.retrieve` (the async-iterator `events.list` is intentionally left raw — mid-stream retries would replay events; the route's `withApiErrorHandling` + next-poll cursor recover instead)
+- `knowledge-extractor.ts` — `messages.create`
+- `orchestrator.ts` — three `messages.create` (cover narrative, ranking narrative, filtered-out blurb)
+- `auto-discover.ts` — parse-pass `messages.create` wrapped; the `messages.stream` left raw with `// eslint-disable-next-line` and a comment explaining why
+- `app/api/health/web-search/route.ts` — `messages.create`
+
+Each wrapped call carries a label (`rubric.events.send(run=N)`, `orchestrator.cover-narrative`, etc.) so `[anthropic-retry]` log lines are diagnosable.
+
+Three structural pieces per the Note 11 spec:
+
+1. **ESLint guard** in `eslint.config.mjs`. New `no-restricted-syntax` rules ban direct `await client.messages.create(...)`, `await client.beta.sessions.create/retrieve(...)`, `await client.beta.sessions.events.send(...)`, `await client.beta.files.upload(...)`. Selectors target `AwaitExpression > CallExpression` so the wrapped form (`await withAnthropicRetry(() => client.<...>())`) is allowed — the create-call there is parented by an ArrowFunctionExpression, not an AwaitExpression. Verified firing on a synthetic direct call and silent on every wrapped site in the codebase.
+2. **Capacity probe in `/api/health`.** New `anthropic_messages` field fires a tiny `messages.create(max_tokens: 8)` through the retry wrapper and reports `"ok (Nms)"` or the final error. Spots Anthropic-side weather BEFORE running expensive flows. Pairs with the existing `anthropic_files_api` probe (Note 8) — both render in `/settings → Run /api/health`.
+3. **Smoke test** (`tests/smoke/anthropic-retry.test.ts`) locks in the retry contract: retries on 529/503/502/429/ECONNRESET, does NOT retry on 400/401/AbortError, throws after `maxAttempts`. 9 assertions, all green.
+
+48/48 smoke tests pass. `pnpm build` + `tsc` + `eslint` all clean. Pushed to main.
+
