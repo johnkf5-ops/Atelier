@@ -239,3 +239,19 @@ Smoke test `tests/smoke/finalize-scout.test.ts` asserts the SELECT filter contra
 
 **Note for John:** verify Vercel `ANTHROPIC_API_KEY` matches your local one. Vercel has it set 19h ago — if the keys are different and the prod key lacks Files-API access in your Anthropic console, you'll see the audit event fire on every run no matter what we do.
 
+### Note 9 — `pnpm seed:export` + `pnpm seed:demo` (permanent dev tool)
+
+**Commit:** `bb32ea5`. Pushed.
+
+Eliminates the 15-minute re-onboarding tax on every debug iteration. Three new scripts:
+
+- **`pnpm seed:export`** — captures the current local DB into `fixtures/`: per-image JPEGs (gitignored), `portfolio.manifest.json`, `akb.json`, `style-fingerprint.json`, `extractor-turns.jsonl`. Run once when the DB is in a known-good state.
+- **`pnpm seed:demo`** — restores fixtures into a wiped target DB in ~30s. Defaults to local. `--target prod` requires both `ATELIER_IS_RESETTABLE_PROD=true` env var AND a typed-host confirmation prompt — belt-and-suspenders against accidental prod wipes.
+- **`pnpm seed:demo:run-only`** — companion that POSTs `/api/runs/start` so you can iterate on just the run/Rubric/Drafter loop without clicking Start Run.
+
+Live-verified the full roundtrip: exported 21 images + AKB v12 + fingerprint v4 + 62 interview turns from the local DB; ran seed:demo against a wiped DB; `/runs/new` rendered "21 images" + Start Run enabled.
+
+`fixtures/portfolio/*.jpg` + the manifest are gitignored (copyrighted artwork stays local). `fixtures/akb.example.json` + `fixtures/style-fingerprint.example.json` committed as anonymised schema examples for fresh contributors.
+
+Companion to Note 8's recovery script: combined, John can now `pnpm seed:demo` + `pnpm seed:demo:run-only` in under a minute to validate every Note 8/3/1/2/4/5 fix end-to-end.
+
