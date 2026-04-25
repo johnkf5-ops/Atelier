@@ -562,6 +562,89 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 28 — Portfolio files uploaded RAW from Vercel Blob fail Anthropic vision; recipient files (Sharp-normalized) succeed (THE actual unlock)
+
+**Where:** `app/api/runs/[id]/start-rubric/route.ts` portfolio upload path. Diagnosed via `scripts/probe-portfolio.mjs` after Note 27 mount fix landed.
+
+**Symptom:** Even after Note 27 fix made files mount at correct `/mnt/session/uploads/<file_id>` paths, the Rubric agent in the live run got `"Output could not be decoded as text"` for every portfolio read. Agent gave up on vision and fell back to text-only StyleFingerprint scoring. Same as before Note 27 in observable behavior.
+
+**Diagnosed:** Same agent, same session pattern, same read tool, two different files:
+
+- **PORTFOLIO file** (`file_011CaQxJq4USYKMW3NyChwcz`, 586x800 JPEG, uploaded by start-rubric) → tool_result is `{"text":"Output could not be decoded as text."}` → vision **FAILS**
+- **RECIPIENT file** (`file_011CaQvZrgePq2tTNwxr6K7Q`, 1024x408 JPEG, uploaded by finalize-scout) → tool_result is `{"source":{"data":"/9j/2wB..."}}` → vision **SUCCEEDS**
+
+The agent message confirms: *"The file is a JPEG image (586x800 pixels), but my read attempts could not decode it visually for me to describe its contents."* Anthropic recognizes the file as JPEG but cannot decode it as vision input.
+
+**Root cause:** `finalize-scout` passes recipient images through Sharp (`sharp(buf).rotate().resize(1024, 1024).jpeg({quality: 85})`) before uploading — this normalizes color profiles, strips metadata, re-encodes as vanilla baseline JPEG. `start-rubric` does NOT — it downloads the portfolio thumb from Vercel Blob and uploads it raw. The Vercel-Blob-served JPEG has SOMETHING (color profile, encoding variant, embedded metadata, progressive encoding) that Anthropic's multimodal vision pipeline cannot decode, even though it identifies the file as JPEG.
+
+This is the actual root cause of every "Files API working" run we celebrated never having actual vision-based scoring. Recipient files were vision-ready (Sharp-normalized via finalize-scout). Portfolio files weren't (raw from Vercel Blob via start-rubric). When Rubric tried to read portfolios, vision failed; when it tried to read recipients, vision MIGHT have worked but the agent had already given up or the prompts directed it to bash-fish for files at non-existent /workspace/ paths.
+
+**Fix (one-line architectural change):**
+
+### 28-fix.1 — Pass portfolio uploads through Sharp in start-rubric
+
+In `app/api/runs/[id]/start-rubric/route.ts`:
+
+```typescript
+// BEFORE (broken):
+const buf = Buffer.from(await res.arrayBuffer());
+const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+const fileId = await uploadToFilesApi(buf, `portfolio_${p.id}.jpg`, contentType);
+
+// AFTER (vision-ready):
+const rawBuf = Buffer.from(await res.arrayBuffer());
+let normalizedBuf: Buffer;
+try {
+  normalizedBuf = await sharp(rawBuf)
+    .rotate()
+    .resize(1024, 1024, { fit: 'inside' })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+} catch (e) {
+  console.warn(`[start-rubric] sharp failed on portfolio ${p.id}, using raw bytes: ${(e as Error).message}`);
+  normalizedBuf = rawBuf;
+}
+const fileId = await uploadToFilesApi(normalizedBuf, `portfolio_${p.id}.jpg`, 'image/jpeg');
+```
+
+Same Sharp pattern + soft-fallback already used in `finalize-scout/route.ts` per Note 8 fix. Apply consistently to portfolio uploads.
+
+### 28-fix.2 — Refactor: extract `normalizeAndUploadImage(buf)` helper
+
+Both finalize-scout and start-rubric should use the same helper instead of duplicating the Sharp normalize + upload pattern. Move to `lib/anthropic-files.ts` alongside `uploadToFilesApi`. Single source of truth for vision-ready Files API uploads.
+
+```typescript
+export async function uploadVisionReadyImage(rawBuf: Buffer, filename: string): Promise<string> {
+  let buf: Buffer;
+  let ct: string;
+  try {
+    buf = await sharp(rawBuf).rotate().resize(1024, 1024, { fit: 'inside' }).jpeg({ quality: 85 }).toBuffer();
+    ct = 'image/jpeg';
+  } catch {
+    buf = rawBuf;
+    ct = 'image/jpeg'; // best-effort fallback
+  }
+  return uploadToFilesApi(buf, filename, ct);
+}
+```
+
+### 28-fix.3 — Smoke test that catches the vision-readability contract
+
+`tests/smoke/files-api-vision.test.ts` — uploads a fixture image through `uploadVisionReadyImage`, creates a session with the file mounted, sends a "describe this image" message, asserts the agent's response is NOT `"VISION FAILED"` or `"Output could not be decoded as text"`. This catches the regression class structurally — any future change that breaks vision-ready upload semantics fails this test.
+
+### Acceptance for Note 28
+
+- A fresh Rubric run actually ENGAGES VISION on portfolio reads. Tool_result returns `{"source":{"data":"<base64>"}}` instead of `{"text":"Output could not be decoded as text."}`.
+- Agent describes portfolio images using actual visual content (saturation, palette, subject) — not just StyleFingerprint vocabulary.
+- Scoring slate produces 6-12 included opportunities with real cohort comparison reasoning, not 1-2 conservative blind scores.
+- Smoke test (28-fix.3) passes.
+
+**Files:** `app/api/runs/[id]/start-rubric/route.ts` (apply Sharp normalize), `lib/anthropic-files.ts` (extract `uploadVisionReadyImage` helper), `app/api/runs/[id]/finalize-scout/route.ts` (refactor to use helper), `tests/smoke/files-api-vision.test.ts` (new). Probe scripts `probe-vision.mjs`, `probe-real-file.mjs`, `probe-many-files.mjs`, `probe-portfolio.mjs` retained as live diagnostic / regression tools.
+
+**Priority:** highest. THIS is the actual unlock for Rubric vision. Note 27's mount fix was necessary but insufficient. Until 28 ships, every run will continue producing text-only blind scoring even though paths are correct.
+
+---
+
 ## Note 27 — Files API custom `mount_path` is silently ignored — Rubric scoring BLIND because the files mount at the wrong paths (CRITICAL)
 
 **Where:** `lib/agents/rubric-matcher.ts` (`buildSessionResources`, `buildRubricPrompt`) and the Anthropic Managed Agents Files API behavior.
