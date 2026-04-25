@@ -10,6 +10,27 @@ export type AkbVersionRow = {
   created_at: number;
 };
 
+/**
+ * WALKTHROUGH Note 4 migration: existing AKB versions written before
+ * `identity.artist_name` existed get the field auto-filled from
+ * `identity.legal_name`, with `legal_name_matches_artist_name = true`.
+ * Pure function — does not write back to the DB; the next manual edit /
+ * interview turn / save will persist the migration.
+ */
+export function migrateArtistName(akb: TAkb): TAkb {
+  if (akb.identity?.artist_name && akb.identity.artist_name.length > 0) return akb;
+  if (!akb.identity?.legal_name) return akb;
+  return {
+    ...akb,
+    identity: {
+      ...akb.identity,
+      artist_name: akb.identity.legal_name,
+      legal_name_matches_artist_name:
+        akb.identity.legal_name_matches_artist_name ?? true,
+    },
+  };
+}
+
 export async function loadLatestAkb(userId: number): Promise<{ akb: TAkb; version: number; id: number | null }> {
   const db = getDb();
   const r = await db.execute({
@@ -26,7 +47,7 @@ export async function loadLatestAkb(userId: number): Promise<{ akb: TAkb; versio
   if (!parsed.success) {
     throw new Error(`stored AKB v${row.version} failed validation: ${parsed.error.message}`);
   }
-  return { akb: parsed.data, version: Number(row.version), id: Number(row.id) };
+  return { akb: migrateArtistName(parsed.data), version: Number(row.version), id: Number(row.id) };
 }
 
 export async function loadAkbById(id: number): Promise<{ akb: TAkb; version: number } | null> {
@@ -41,7 +62,7 @@ export async function loadAkbById(id: number): Promise<{ akb: TAkb; version: num
   if (!parsed.success) {
     throw new Error(`AKB id=${id} failed validation: ${parsed.error.message}`);
   }
-  return { akb: parsed.data, version: Number(row.version) };
+  return { akb: migrateArtistName(parsed.data), version: Number(row.version) };
 }
 
 export async function saveAkb(

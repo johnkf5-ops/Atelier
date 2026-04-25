@@ -2,7 +2,13 @@ import { z } from 'zod';
 
 export const ArtistKnowledgeBase = z.object({
   identity: z.object({
+    // WALKTHROUGH Note 4: artist_name is the PRIMARY identity used in every
+    // public-facing drafted output (cover letters, statements, bios). The
+    // legal_name field is administrative metadata only — used in tax/admin
+    // sections of submission templates that explicitly require it.
+    artist_name: z.string().optional(),
     legal_name: z.string(),
+    legal_name_matches_artist_name: z.boolean().optional(),
     public_name: z.string().optional(),
     pronouns: z.string().optional(),
     citizenship: z.array(z.string()),

@@ -6,7 +6,9 @@ import { fetchJson } from '@/lib/api/fetch-client';
 
 type Akb = Record<string, unknown> & {
   identity: {
+    artist_name: string;
     legal_name: string;
+    legal_name_matches_artist_name: boolean;
     public_name: string;
     pronouns: string;
     citizenship: string[];
@@ -35,10 +37,17 @@ function normalizeAkbForForm(raw: Record<string, unknown>): Akb {
   const home_base = (identity.home_base ?? {}) as Record<string, unknown>;
   const practice = (r.practice ?? {}) as Record<string, unknown>;
   const intent = (r.intent ?? {}) as Record<string, unknown>;
+  const legalName = (identity.legal_name as string) ?? '';
   return {
     ...r,
     identity: {
-      legal_name: (identity.legal_name as string) ?? '',
+      // WALKTHROUGH Note 4: artist_name is the primary identity. Auto-fill
+      // from legal_name when missing so existing AKBs don't get an empty
+      // input on first /review visit.
+      artist_name: ((identity.artist_name as string) ?? legalName) || '',
+      legal_name: legalName,
+      legal_name_matches_artist_name:
+        identity.legal_name_matches_artist_name === false ? false : true,
       public_name: (identity.public_name as string) ?? '',
       pronouns: (identity.pronouns as string) ?? '',
       citizenship: (identity.citizenship as string[]) ?? [],
@@ -182,10 +191,56 @@ export default function ReviewClient() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Section title="Identity" provenancePrefix="identity" akb={draft}>
-          <Field label="Legal name" path="identity.legal_name" akb={draft}
-            value={draft.identity.legal_name}
-            onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, legal_name: v } })} />
-          <Field label="Public name" path="identity.public_name" akb={draft}
+          <Field
+            label="Artist name (how it appears in bios, on labels, in credits)"
+            path="identity.artist_name"
+            akb={draft}
+            value={draft.identity.artist_name}
+            onChange={(v) =>
+              setDraft({
+                ...draft,
+                identity: {
+                  ...draft.identity,
+                  artist_name: v,
+                  // When the names match, keep legal_name in lockstep so
+                  // forms requiring "legal name (for tax/contract)" still
+                  // resolve correctly without a second edit.
+                  legal_name: draft.identity.legal_name_matches_artist_name
+                    ? v
+                    : draft.identity.legal_name,
+                },
+              })
+            }
+          />
+          <label className="flex items-center gap-2 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              checked={draft.identity.legal_name_matches_artist_name}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  identity: {
+                    ...draft.identity,
+                    legal_name_matches_artist_name: e.target.checked,
+                    legal_name: e.target.checked
+                      ? draft.identity.artist_name
+                      : draft.identity.legal_name,
+                  },
+                })
+              }
+            />
+            My legal name (tax / contract) matches my artist name
+          </label>
+          {!draft.identity.legal_name_matches_artist_name && (
+            <Field
+              label="Legal name (tax / W-9 / contract only)"
+              path="identity.legal_name"
+              akb={draft}
+              value={draft.identity.legal_name}
+              onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, legal_name: v } })}
+            />
+          )}
+          <Field label="Public name (alt — pseudonym, byline)" path="identity.public_name" akb={draft}
             value={draft.identity.public_name}
             onChange={(v) => setDraft({ ...draft, identity: { ...draft.identity, public_name: v } })} />
           <Field label="Pronouns" path="identity.pronouns" akb={draft}

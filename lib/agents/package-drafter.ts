@@ -76,12 +76,22 @@ Every descriptive claim you make about the artist's visual work (palette, lineag
 
 Read the fingerprint carefully. Write about the work as it actually is. Commercial-register honesty beats institutional-register pretense every time.`;
 
+// WALKTHROUGH Note 4: artist_name is the PRIMARY identity in every public-
+// facing draft. Use it for the byline, signature, "by [name]" attributions,
+// and any sentence that introduces the artist. legal_name is administrative
+// metadata only — reserve it for explicit tax/contract sections in templates
+// that ask for "Name (legal, for W-9 / contract)" specifically.
+const NAME_PRIMACY_CONSTRAINT = `IDENTITY NAMING:
+- The artist's name in every public-facing line (byline, signature, "by [name]", subject-line greetings, third-person bio sentences) MUST be \`identity.artist_name\`.
+- \`identity.legal_name\` is for tax / contract sections ONLY, and only when the template explicitly asks for "legal name (for tax/contract)".
+- If \`identity.artist_name\` and \`identity.legal_name\` differ, the cover letter's signature is artist_name; the legal name appears (if at all) only in an explicitly-labelled "Name for tax / W-9 purposes:" line.`;
+
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
     system:
       ctx.voiceSkill +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
       "\n\n---\n\nYou are writing an artist statement for a specific opportunity application. Use the voice patterns above. Pull facts ONLY from the provided AKB — never invent. Visual claims MUST match the StyleFingerprint. 300-500 words. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
 
@@ -97,7 +107,7 @@ Write the artist statement now. Describe the work as the fingerprint says it IS.
     system:
       ctx.proposalSkill +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
       "\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity's stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}
 
@@ -127,7 +137,7 @@ Format the CV now.`,
     system:
       ctx.voiceSkill +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT +
+      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
       "\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity's selectors. 200-300 words. Named addressee if the opportunity has a known director; else \"Selection Committee\". Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.",
     user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}
 
