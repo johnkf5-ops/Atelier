@@ -562,6 +562,82 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 23 — Cover letters in third-person, missing salutation convention, repeated lineage + full-reel career markers
+
+**Where:** every drafted `cover_letter` in `drafted_packages.cover_letter`.
+
+**Honest baseline:** cover letters are in better shape than statements/proposals on em-dash count (1-3 per letter) and length (~250-270 words, correct for cover letter). Note 20's voice constraints already inherit to cover letters per the coder's closeout. But cover-letter-specific issues remain that the inherited statement rules don't address.
+
+**Real problems:**
+
+**23a — Third-person voice across all cover letters.** "Knopf submits...", "Knopf is a Las Vegas-based landscape photographer...", "Knopf was included in National Geographic's first NFT cohort..." Cover letters are PERSONAL CORRESPONDENCE from the artist to the panel. They must be first-person — "I submit...", "I am a Las Vegas-based...", "I was included in..." A cover letter signed at the bottom by John Knopf with body text in third person reads as ghost-written by an agent or PR firm. Biggest issue. Note 20's first-person rule is already in the inheritance chain but is being defeated for cover letters specifically — the cover letter prompt or the inherited block needs to enforce first-person on cover letters explicitly.
+
+**23b — Wrong salutation convention.** Most cover letters open with bare "Selection Committee" (no "Dear"). One opens with the correct "Dear Selection Committee,". Standard business letter convention is "Dear [Name], / Dear [Title], / Dear Selection Committee,". Bare opening reads as memo or status update, not letter. Letter convention also typically includes a date line and the recipient's address block at the top.
+
+**23c — Same lineage paragraph in every cover letter.** Lik / Rowell / Butcher / QT Luong / Adams roll-call appears across most letters. Note 21 banned this in proposals — same ban must extend to cover letters. Cover letters are brief personal correspondence; they shouldn't carry the lineage paragraph that the artist statement already does. The cover letter's job is "I'm applying, here's a sentence on who I am, here's why your specific opportunity, please consider my work."
+
+**23d — Same career-marker paragraph repeated in every cover letter.** Mondoir 2025 + Venice 2022 + Art Basel 2022 + NFT cohorts + monographs appear verbatim in nearly every cover letter. Cover letters should select the 1-3 MOST RELEVANT career markers for the specific opportunity — not paste the full reel. For HIPA, Mondoir Dubai is the most relevant (geographic fit). For ILPOTY, the Mondoir solo + the named lineage influences are the most relevant (register fit). For state arts council fellowships, the FOTO founder + curator credentials would be the most relevant (community/civic). The model needs to PICK, not list everything.
+
+**23e — No personalization to the SPECIFIC opportunity beyond a "this is the right venue" sentence.** Cover letters should address the panel/jury directly when known, name a specific reason this prize/cycle/year matches the artist's current trajectory, and reference why the artist is applying NOW (recent work, upcoming monograph, geographic fit, prior shortlist, etc.). Generic "this is the right venue for this work" is filler.
+
+**23f — Lineage paragraph + career-marker reel + method paragraph displaces the actual cover-letter content.** A 250-word cover letter that spends 100 words on lineage + 80 words on career markers + 30 words on technique has 40 words for the actual job of a cover letter (introduction, ask, close). The structural fix is to BAN the inherited paragraphs and free up word budget for letter-specific content.
+
+**Root cause:** the Drafter's `cover_letter` system prompt inherits Note 20's voice block (good on em-dashes, banned phrases, banned single words), but does not yet enforce cover-letter-specific structural rules: first-person enforcement, salutation convention, ban on lineage paragraph, ban on full-reel career markers, requirement of opportunity-specific content.
+
+**Fix — single-part:**
+
+### 23-fix.1 — Add COVER_LETTER_VOICE_CONSTRAINTS block to Drafter
+
+Extend the Drafter's cover_letter system prompt with a cover-letter-specific block (in addition to inheriting the Note 20 STATEMENT_VOICE_CONSTRAINTS):
+
+```
+COVER LETTER STRUCTURAL RULES (in addition to the voice constraints above):
+
+1. FIRST PERSON THROUGHOUT. Cover letters are personal correspondence from the artist to the panel. Use "I submit...", "I am a Las Vegas-based landscape photographer...", "I was included in...". NEVER "Knopf submits..." or "Knopf is..." This is the artist writing to the panel directly.
+
+2. SALUTATION. Open with "Dear [Panel Name]," or "Dear Selection Committee," — NEVER bare "Selection Committee" without "Dear". If the panel chair or jury member is named in the opportunity record, address them by name: "Dear Dr. [Name]," or "Dear [Name],".
+
+3. NO LINEAGE PARAGRAPH. Lineage lives in the artist statement. The cover letter is brief personal correspondence; the panel will read the statement separately. Banned: any sentence listing two or more named photographers as influences ("Adams, Rowell, Lik, Butcher..."). Banned: the phrase "lineage of" / "the work sits in" / "commercial-gallery register" / "destination-landscape tradition".
+
+4. SELECTIVE CAREER MARKERS. Pick 1-3 career markers MOST RELEVANT to this specific opportunity. Geographic fit → name the geographic-relevant credit (Mondoir for Dubai-region opps; Las Vegas gallery program for Nevada opps). Register fit → name the lineage-aligned credits without listing them all. Community/civic relevance → name FOTO founder + curatorial credits. Do NOT paste the full reel of "Mondoir 2025 + Venice 2022 + Art Basel 2022 + NFT cohorts + monographs" in every letter.
+
+5. SPECIFIC TO THIS OPPORTUNITY. The letter must contain at least one sentence that names a specific reason for THIS opportunity at THIS time — not "this is the right venue for this work." Examples: "I am writing in advance of the upcoming third monograph deadline because [opp] would directly support its publication", "the cohort recognized in [opp]'s last cycle includes work I have studied closely", "the [specific category] is the right home for the [specific body of work]".
+
+6. STRUCTURE: salutation → 1 paragraph self-introduction (who I am, in 1-2 sentences) → 1 paragraph why this specific opportunity (the case for fit) → 1 paragraph the most relevant career markers (selective) → close ("Thank you for your consideration." or similar) → signature ("John Knopf" — the artist_name from AKB).
+
+7. LENGTH 200-350 words. Brevity is generosity to the panel.
+
+8. NO METHOD/GEAR PARAGRAPH. Technique belongs in the artist statement (where it's justified) or the project proposal (where it's load-bearing). The cover letter is correspondence, not technical documentation.
+
+9. NO TAX/ADMIN FOOTER unless the opportunity explicitly asks for legal name + tax info in the cover letter (rare). The artist's legal name belongs in the application form's admin section, not in the cover letter body.
+
+10. NO BANNED PHRASES from Note 20 + Note 21 ("sits in the lineage of", "commercial-gallery register", "aesthetic signature", "the medium has been preparing itself", "quiet authority", "emotional weight").
+
+POST-WRITE CHECK:
+- First-person verb in the first sentence after the salutation? (regex: `^[A-Z][a-z]+,?\n+I\b` or similar)
+- Salutation includes "Dear"?
+- Zero instances of "Knopf" in the body (only as signature)?
+- Zero lineage-list sentences (no sentence mentions 2+ named photographers as influences)?
+- Length within 200-350 words?
+- One sentence specifically references this opportunity by name + a specific reason?
+
+Same retry-with-validation pattern from Note 20's `draftStatementWithVoiceCheck`.
+```
+
+**Acceptance:**
+- Every cover letter in a fresh run uses first-person voice. Smoke test asserts: zero instances of "Knopf submits" / "Knopf is" / "Knopf was" / "Knopf has" in any cover letter body.
+- Every cover letter opens with "Dear" salutation.
+- Zero lineage paragraphs in any cover letter (regex check).
+- Career markers vary across letters per opportunity type (different opps emphasize different credits).
+- Each letter contains a sentence specifically referencing this opportunity by name with a specific reason for this cycle.
+- Length 200-350 words.
+
+**Files:** `lib/agents/package-drafter.ts` (cover_letter system prompt + new COVER_LETTER_VOICE_CONSTRAINTS block + post-write check), `tests/smoke/drafter-cover-letter-voice.test.ts` (new).
+
+**Priority:** medium — smaller than Notes 20/21 because Note 20 already covers most voice discipline. Should ship alongside the Notes 20+21+22 batch (same file, same coder pass).
+
+---
+
 ## Note 22 — CV is mostly correct but inconsistent across opportunities + ILPOTY CV missing curatorial section + bigger architectural question
 
 **Where:** every drafted `cv_formatted` in `drafted_packages.cv_formatted`.
