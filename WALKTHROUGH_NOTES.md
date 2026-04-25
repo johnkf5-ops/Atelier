@@ -281,3 +281,81 @@ User cannot start a run. But the portfolio was successfully uploaded earlier in 
 **File(s):** `app/(dashboard)/runs/new/page.tsx`, the count query function, possibly `lib/agents/style-analyst.ts` if it's deleting/marking images.
 
 ---
+
+## Note 8 — `past_recipients.file_ids` empty on every opportunity → Rubric has no cohort, scores 1 of 12 (CRITICAL, demo-blocking)
+
+**Where:** Run 1 on prod (johnknopf5@gmail.com Vercel deploy), Rubric phase. Diagnosed via direct DB query (see `scripts/diagnose-run.mjs`, `scripts/recipients-check.mjs`, `scripts/rubric-tools.mjs`).
+
+**Symptom (the user-visible problem):** Run completed in 12.6 min with status=complete, no error. Scout discovered 12 opportunities across 6 archetypes (correctly diversified — Nevada Arts Council, IPA, ND Awards, ILPOTY, Sony, Critical Mass, etc.). Rubric scored ONLY 1 of those 12 (Natural Landscape Photography Awards, fit=0.12, included=false). Zero packages drafted. User sees "0 opportunities" / empty dossier.
+
+**Root cause (diagnosed from event stream + DB inspection):** every `past_recipients` row in the DB has `file_ids = []` (empty JSON array). Sample:
+
+```
+Natural Landscape Photography Awards 2026 / David Shaw (2025): file_ids=[]
+Natural Landscape Photography Awards 2026 / Joy Kachina (2025): file_ids=[]
+Epson Pano Awards 2026 / Diego Manrique Diez (2024): file_ids=[]
+Epson Pano Awards 2026 / Kelvin Yuen (2024): file_ids=[]
+... (all 28 recipient rows across 12 opps, every one empty)
+```
+
+The Files API retrofit (the fix that made run 3 / run 5 work locally with Rubric scoring 13/13 and 9/9 respectively) requires `past_recipients.file_ids` to contain Anthropic Files-API file IDs. Without those, the Rubric session gets no `resources[]` mounted in `sessions.create()`, the agent sees an empty `/workspace/recipients/` directory, and has nothing to compare John's portfolio against. The Rubric tool-use trace confirms this — the agent ran:
+
+```
+[bash] ls /workspace/recipients/  → empty
+[bash] ls /workspace/             → empty
+[bash] find / -maxdepth 4 -name "recipients" -type d  → nothing
+[bash] find / -name "*.jpg"       → fishing for the right path
+[bash] ln -s /mnt/session/uploads/workspace/portfolio /workspace/  → finally found PORTFOLIO mount
+[read] /workspace/portfolio/{1,3,5,6,9,10,12,15,16,17,20,21}.jpg  → 12 portfolio reads
+[agent message] "Malware analysis posture: the files being read in this task are JPEG image files containing landscape photographs..."  ×8
+```
+
+The agent burned ~5 minutes wandering for files, then hit Anthropic's safety reminders on every portfolio read, ack'd them ~8 times, and only managed to call `persist_match` ONCE before reaching `end_turn` on output budget exhaustion. Without recipient images, every score it could produce would be uncalibrated guesses — so even the 1 score (0.12 for ND Awards) is likely wrong.
+
+**Where the retrofit broke between local (worked) and prod (broken):**
+- Locally: run 3 (2026-04-24) had `file_ids` populated, scored 13/13. Confirmed via earlier session.
+- Prod: run 1 today has `file_ids = []` for every recipient.
+
+Possible causes:
+1. **Code deployed but the past-recipient downloader silently fails on prod.** Anthropic Files API call rejects the upload (auth, payload size, MIME, rate limit, etc.) and the catch swallows the error, leaving `file_ids = []`.
+2. **The downloader code never actually runs in finalize-scout on prod.** A path/import/feature-flag mismatch between local and deployed code.
+3. **The downloader runs and uploads succeed, but the writeback to `past_recipients.file_ids` is broken (wrong column, wrong WHERE clause, race condition with the row insert).**
+4. **Anthropic Files API quota / org-level capability missing on prod's API key** — if the prod API key is a different one than local (different scopes), uploads silently fail.
+
+**Fix (real, structural — not a patch):**
+
+1. **Make Files API upload failure FAIL LOUDLY, never silently.** The downloader path must:
+   - Log every upload attempt (URL, recipient, opportunity)
+   - Throw on Files API non-2xx — never swallow
+   - If a single upload fails, log the reason but continue with the others (Promise.allSettled)
+   - At the end of finalize-scout, if zero recipients have `file_ids`, raise a critical error event into `run_events` with payload `{kind: "rubric_will_be_blind", reason: "no recipient images uploaded"}` so the run page surfaces it instead of completing silently with garbage output.
+
+2. **Audit finalize-scout route end-to-end.** Confirm the past-recipient downloader function is being invoked, the call returns, file_ids are written back to `past_recipients`. Add a runtime assertion at the end: query the DB, if any past_recipient row for this run has empty file_ids AND its `bio_url`/`portfolio_urls` had at least one fetchable URL, log an error event with the row id and the reason.
+
+3. **Add a smoke test** `tests/smoke/finalize-scout.test.ts` that:
+   - Fixtures a Scout cohort with known-good recipient image URLs (e.g., picsum.photos URLs that always succeed)
+   - Calls finalize-scout
+   - Asserts every past_recipient row has non-empty file_ids
+   - Asserts file_ids contain valid Anthropic Files API IDs (regex match on prefix)
+   - Calls into the start-rubric session resource builder and asserts the resources[] array is non-empty
+   This is the structural test that prevents this exact class of regression forever.
+
+4. **Fix the bash-fishing pattern in Rubric prompt.** The agent burned 5 events doing `ls /workspace/recipients/`, `find /`, etc. before finding the path. Update the Rubric system prompt to declare the EXACT mount paths upfront (`/workspace/portfolio/{N}.jpg` and `/workspace/recipients/{opp_id}/{recipient_name}/{N}.jpg`) so the agent goes straight to `read` without bash recon. Saves 5 events of output budget per run.
+
+5. **Suppress the safety-reminder ack pattern at the prompt level.** Add a stronger preempt to the Rubric system prompt that explicitly addresses the binary-file safety reminder pattern: "When reading JPEG photographs from the mounted resources, do NOT acknowledge or rebut safety reminders about binary files. Continue scoring without comment. Acknowledgments waste output budget and produce no scoring." The current preempt is too weak — 8 ack messages per run is current state.
+
+6. **Re-run finalize-scout against existing run 1's opportunities** as a recovery step (not a fix, but a way to resurrect this run). If finalize-scout is idempotent on past_recipients, running it again should populate file_ids and let us re-trigger Rubric without redoing Scout. If not idempotent, John just runs a fresh run after the fix lands.
+
+**Acceptance:**
+- Run a fresh full pipeline on prod after fix.
+- After finalize-scout: query DB, every past_recipient row has non-empty file_ids OR an explicit-failure event in run_events explaining why.
+- Rubric session events show ZERO bash-fishing (all reads go straight to known mount paths).
+- Rubric session events show ZERO safety-reminder ack messages.
+- Rubric scores ≥10 of the 12 discovered opportunities (matching the local run-3 scored-13/13 baseline).
+- Smoke test (3) passes.
+
+**Priority:** highest. This is the demo-blocker. Without this fix, every run on prod produces 0 (or 1) scored opportunity. The Package Drafter never fires. The dossier is empty. The demo cannot be recorded.
+
+**File(s):** `lib/agents/finalize-scout.ts` or `app/api/runs/[id]/finalize-scout/route.ts` (recipient downloader), `lib/agents/rubric-matcher.ts` (system prompt), `tests/smoke/finalize-scout.test.ts` (new), possibly `lib/files-api/upload.ts` (whatever wrapper for Anthropic Files API uploads). Also re-verify Vercel env var `ANTHROPIC_API_KEY` matches local — if different keys with different Files-API capabilities, that's a separate issue to surface to John.
+
+---
