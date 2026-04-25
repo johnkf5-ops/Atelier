@@ -562,6 +562,97 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 24 — Drafter is HALLUCINATING facts (invented exhibitions, partnerships, dates) — needs hard AKB-only constraint
+
+**Where:** every Drafter prompt that asks the model to write specific content (artist statement, project proposal, cover letter, work-sample rationale). Surfaced first in the Note 23 cover letter smoke test output.
+
+**Symptom (real example from cover letter smoke test fixture):**
+
+> "The Nevada Arts Council Fellowship would directly support my third monograph in 2026, with a confirmed exhibition at the Boulder City library in October. My founding role at FOTO has kept me close to the Nevada arts ecosystem, and my ongoing partnership with the Walker River Paiute Tribe is the most relevant credential for this fellowship."
+
+Three invented facts in three sentences:
+- "confirmed exhibition at the Boulder City library in October" — does not exist in AKB
+- "ongoing partnership with the Walker River Paiute Tribe" — does not exist in AKB
+- "third monograph in 2026" — AKB has the third monograph as an aspiration but no 2026 date
+
+This is much worse than generic prose. It's the model putting FALSE CLAIMS in writing under John's name. If this lands in a real submitted application, it constitutes misrepresentation to a funding body.
+
+**Root cause:** Notes 20, 21, 23 prompts ask the model to be SPECIFIC about why this opportunity. The model interprets the specificity demand as "include believable-sounding specific details," and fills the gap with invented partnerships, dates, exhibitions, and credentials when the AKB doesn't supply them. The existing `FINGERPRINT_CONSTRAINT` covers VISUAL claims (palette, lineage, register) but does not cover BIOGRAPHICAL claims (exhibitions, partnerships, dates, residencies, awards).
+
+**Fix — single mandatory constraint applied to ALL Drafter prompts:**
+
+### 24-fix.1 — Add AKB_FACTS_ONLY_CONSTRAINT block
+
+```
+HARD CONSTRAINT — BIOGRAPHICAL FACTS MUST COME FROM AKB ONLY:
+
+Every claim you make about the artist's exhibitions, publications, awards, collections, representation, residencies, partnerships, commissions, dates, venues, project plans, monographs, or future commitments MUST be verifiable in the provided ARTIST_AKB JSON. Do NOT invent ANY of the following:
+- Exhibitions not listed in akb.exhibitions
+- Publications not listed in akb.publications
+- Awards not listed in akb.awards_and_honors
+- Gallery representation not listed in akb.representation
+- Collections not listed in akb.collections
+- Residencies, fellowships, or grants the artist has NOT received
+- Partnerships with named organizations, tribes, councils, or institutions not in akb
+- Specific future dates (e.g., "October 2026", "spring 2027 exhibition") UNLESS the AKB explicitly states them
+- Confirmed exhibitions, commissions, or publications that are not actually confirmed in the AKB
+- Curatorial or organizational credits beyond what's listed in akb.curatorial_and_organizational
+- Press, awards, or recognitions not in the AKB
+
+If the prompt asks you to be specific about WHY this opportunity, draw the specificity from:
+- akb.bodies_of_work for project subject and scope
+- akb.intent.aspirations for forward-looking commitments
+- akb.intent.statement for animating principles
+- akb.curatorial_and_organizational for community/civic credentials
+- The opportunity's own field (geographic alignment, category fit, jury alignment) — these are derivable from the opp data, not invented
+
+If the AKB does not contain a fact that would make a sentence specific, OMIT that sentence rather than invent the fact. A vaguer-but-true sentence beats a specific-but-false sentence every time. The drafted material will be submitted under the artist's name; false claims constitute misrepresentation to the funding body.
+
+When you cite a specific year, venue, partnership, or commitment, the corresponding fact MUST be present in the AKB. If you find yourself writing "[venue] in [year]" or "ongoing [relationship]" or "confirmed [event]" and you cannot point to the AKB field that supports it, delete the claim.
+```
+
+### 24-fix.2 — Post-write fact-grounding check
+
+Add a deterministic post-write check that scans the generated text for patterns that suggest invented specificity:
+- Specific dates not present in AKB (regex extracts dates like "October 2026", "Spring 2027", "by 2028" → check against AKB content)
+- Named venues not present in AKB (extract proper-noun phrases that look like venue names → check against akb.exhibitions venues + akb.representation galleries + known geographic places)
+- Named partnerships/institutions not in AKB (extract "partnership with X" / "ongoing X" / "confirmed X" patterns → check against akb)
+
+If the check finds an unverifiable claim, retry with the specific issue fed back ("you wrote 'confirmed exhibition at Boulder City library in October' but the AKB does not contain this — remove or replace with a true claim from the AKB").
+
+This is harder than the regex-based em-dash check because it requires entity extraction. Acceptable approximations:
+- Year-range regex: extract `\b(20\d{2})\b` from generated text, assert each year is either "today's year" or appears in the AKB JSON string
+- Quoted-phrase check: extract phrases that look like specific commitments ("confirmed [thing]", "ongoing partnership with [name]", "[name] in [year]"), substring-check against AKB JSON
+
+Soft-fallback: if check fails after one retry, log the warning but ship the output (better to show what we have than to crash). The constraint in 24-fix.1 should prevent most cases from reaching the check.
+
+### 24-fix.3 — Apply to all Drafter prompts
+
+Add the AKB_FACTS_ONLY_CONSTRAINT to:
+- artist_statement system prompt (alongside FINGERPRINT_CONSTRAINT and NAME_PRIMACY_CONSTRAINT and STATEMENT_VOICE_CONSTRAINTS)
+- project_proposal system prompt (alongside the same constraints + PROPOSAL_VOICE_CONSTRAINTS)
+- cover_letter system prompt (alongside COVER_LETTER_VOICE_CONSTRAINTS)
+- generateSampleRationales (Note 19) — rationales must also not invent claims about the images or the opportunity
+- master CV (Note 22) — already structurally safe since it's just rendering AKB fields, but add the constraint as belt-and-suspenders
+
+NOT needed for:
+- generateCoverNarrative (orchestrator, already constrained)
+- generateRankingNarrative (orchestrator, already constrained)
+- Filtered-out blurbs (constrained to Rubric reasoning input)
+
+### Acceptance for Note 24
+
+- A fresh run produces no cover letter / proposal / statement containing a venue, year, partnership, or commitment that is NOT present in the AKB.
+- Smoke test asserts: extract all 4-digit years 20XX from each generated material, verify each year appears in the AKB JSON string. Fail the test if any year in generated material is not in AKB.
+- Smoke test asserts: scan for patterns "confirmed [X]" / "ongoing partnership with [X]" / "exhibition at [X] in [year]" — fail if the [X] phrase doesn't substring-match against the AKB JSON.
+- Manual review: read 3 generated cover letters, verify every specific factual claim (venue, year, partnership, exhibition, monograph date, recognition) maps to a real AKB entry.
+
+**Files:** `lib/agents/package-drafter.ts` (new AKB_FACTS_ONLY_CONSTRAINT block + post-write fact-grounding check + applied to all 4 material prompts), `tests/smoke/drafter-fact-grounding.test.ts` (new — covers the year-regex + entity-substring patterns).
+
+**Priority:** highest. Hallucinated facts in submitted applications constitute misrepresentation to a funding body. This is a SAFETY issue, not a quality issue. Must ship before any real run is sent to a panel.
+
+---
+
 ## Note 23 — Cover letters in third-person, missing salutation convention, repeated lineage + full-reel career markers
 
 **Where:** every drafted `cover_letter` in `drafted_packages.cover_letter`.
