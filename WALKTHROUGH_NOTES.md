@@ -431,3 +431,43 @@ Half-step variant: assumes the demo state is already seeded, just kicks off a fr
 **File(s):** `scripts/seed-export.ts` (new), `scripts/seed-demo.ts` (new), `package.json` scripts (`seed:export`, `seed:demo`, `seed:demo:run-only`), `fixtures/` (new directory with .gitignore + README + examples), `.env.example` updates for the new `ATELIER_IS_RESETTABLE_PROD` flag.
 
 ---
+
+## Note 10 — `/review` cannot delete auto-populated facts (data integrity bug)
+
+**Where:** `/review` page, AKB editor.
+
+**Symptom:** Auto-discover (broken per Note 3) ingested a fabricated fact: `awards_and_honors[0] = {name: "StarCraft competition winner", year: 2011}`. This is a hallucination — wrong person or pure invention. John tried to remove it on `/review` and could not — the UI does not allow deletion of auto-populated array entries. Workaround required a direct DB write (`scripts/fix-akb.mjs`) by Claude to write a new AKB v13 with the entry removed.
+
+**Why this is a critical data-integrity bug:** Atelier's value proposition is "trustworthy career representation." If users cannot remove wrong facts the system invented, the AKB becomes a permanent contamination — every subsequent run scores against and drafts against false claims. Worse, if the user submits a Drafter package containing a fabricated award, that's a real reputational and potentially legal hazard for the artist. The user MUST always be able to delete any fact, regardless of source.
+
+**Root cause(s) likely:**
+1. The `/review` form treats array-typed AKB fields as read-only when populated by ingest (only manual additions get a delete button).
+2. OR the delete button exists but the underlying `mergeAkbPartial` (RFC-7396 alternative) has an append-only semantic that ignores deletions.
+3. OR deletes are sent to the API but the route writes a new AKB version that re-merges from the prior ingested data, restoring the deleted fact.
+
+**Fix (real, structural — not just a delete button):**
+
+1. **Every AKB field, regardless of source, MUST be user-editable AND user-deletable on `/review`.** Array entries get a per-entry delete control. Object fields get a clear "Remove this fact" affordance. Scalar fields get a "Clear" / set-to-null option. Source provenance (manual vs ingested vs interview) is shown as metadata but never gates editing.
+
+2. **Manual edits override ingest forever.** When the user deletes or edits an ingested fact, the new value is recorded with `source: 'manual_override'` and a flag `user_rejected_ingest_at: timestamp`. Future re-ingests check this flag and DO NOT re-add the rejected fact (otherwise the user has to delete it forever every time auto-discover runs).
+
+3. **Source URL untrust tracking.** When the user rejects a fact, surface the source URL (where ingest got the fabrication) and offer: "Mark this source as untrusted for future ingests?" If yes, add the URL to a `untrusted_sources` table. Auto-discover route reads this table and skips those sources.
+
+4. **Bulk reject UI for the auto-discover-just-ingested batch.** After auto-discover runs and writes new facts, surface a per-fact "Looks wrong, remove" affordance specifically for the just-added facts (highlighted differently from existing facts). This catches Note 3-class hallucinations BEFORE they pollute the AKB long-term.
+
+5. **AKB version-history view + revert.** The `/review` page should let the user see prior AKB versions and revert to one ("v12 had the right data, this v13 ingest broke things — revert to v12"). Versions already exist in `akb_versions` table; just need a UI affordance to read/revert. This is the safety net for when the per-fact UX above doesn't catch a bad ingest.
+
+6. **API-level invariant:** `mergeAkbPartial` and any other merge path must respect `user_rejected_ingest_at` and `manual_override` flags. Add a unit test asserting that a rejected fact cannot be re-introduced by any merge operation.
+
+**Acceptance:**
+- John deletes any fact on `/review`, regardless of source. Saves. The fact stays gone.
+- A subsequent auto-discover run does not re-introduce the deleted fact.
+- A "revert to prior version" button in `/review` lets John roll back to any earlier AKB version.
+- Bulk-reject affordance appears immediately after a fresh auto-discover ingest, with the just-added facts highlighted.
+- Smoke test: insert AKB v1 → user deletes fact F → re-run auto-discover → assert AKB v2 does NOT contain F.
+
+**File(s):** `app/(onboarding)/review/page.tsx` (UI), `lib/db/queries/akb.ts` (merge semantics), `lib/agents/knowledge-extractor.ts` (re-ingest must respect rejection flags), new `untrusted_sources` table + migration, new revert API route.
+
+**Priority:** high — data integrity bug. Auto-discover is broken until Note 3 lands; until then, Note 10 is the safety valve that lets users remove the broken outputs. Should ship alongside or before Note 3.
+
+---
