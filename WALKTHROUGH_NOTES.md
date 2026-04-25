@@ -578,7 +578,7 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 **22d — Em-dash usage in CVs is acceptable here**, unlike statements/proposals. CV em-dashes are INSTITUTIONAL FIELD SEPARATORS ("National Geographic — first-cohort NFT drop"), the convention NEA, MacDowell, and Aperture all use. The Note 20/21 zero-em-dash rule is for PROSE; CVs are different. The model should still apply the rule consistently — pick one separator style (em-dash OR comma) and use it everywhere across the dossier.
 
-**The bigger question (architectural, post-hackathon):** Should every opportunity get a slightly-tweaked CV, or should there be ONE master CV generated once per dossier? Most institutions expect a single PDF upload — they don't expect each application to have a custom-rewritten CV. Generating 10 slightly-different CVs is API tokens spent for no real benefit, AND introduces the consistency drift documented in 22b/22c. The honest model: one master CV per dossier, with optional per-opp TRIM instructions ("for IPA's 2,000-character limit, drop pre-2018 entries").
+**The bigger architectural problem:** every opportunity currently gets a slightly-tweaked CV. That's wrong by design. Most institutions expect a single PDF upload — they don't expect each application to have a custom-rewritten CV. Generating 10 slightly-different CVs is API tokens spent for no real benefit AND introduces the consistency drift documented in 22b/22c. The honest model: one master CV per dossier, with optional per-opp TRIM instructions ("for IPA's 2,000-character limit, drop pre-2018 entries"). Fix is 22-fix.3 below.
 
 **Fix — three parts:**
 
