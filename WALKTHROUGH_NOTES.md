@@ -615,21 +615,35 @@ Always in this order. Always these labels. Skip a section ONLY if the correspond
 
 The DEFAULT_CV_SKILL inline fallback in `package-drafter.ts` already documents this format roughly — extend it to be more prescriptive about section names + ordering, and tighten the prompt to follow it without drift.
 
-### 22-fix.3 — (POST-HACKATHON) Collapse to one master CV per dossier
+### 22-fix.3 — Collapse to one master CV per dossier (THE REAL ARCHITECTURE)
 
-Move CV generation OUT of the per-opportunity drafting loop. Generate ONE CV per run (in the orchestrator phase, after AKB is finalized). Store as `dossiers.master_cv` (new column). Each opportunity package references the master CV with optional per-opp NOTES (e.g., "abbreviated for IPA 2,000-char limit"). Saves ~9 messages.create calls per run × ~$0.50 each = ~$4.50/run cost reduction. AND eliminates the consistency-drift class of bugs by design.
+Move CV generation OUT of the per-opportunity drafting loop. Generate ONE CV per run (in the orchestrator phase, after AKB is finalized). Store as `dossiers.master_cv` (new column). Each opportunity package references the master CV with optional per-opp NOTES (e.g., "abbreviated for IPA 2,000-char limit").
 
-Don't ship 22-fix.3 for the hackathon — it requires schema changes and dossier UI restructuring. Ship 22-fix.1 + 22-fix.2 only. 22-fix.3 documented as post-submission scope.
+Why this is the right fix, not a "future" one:
+- Eliminates the consistency-drift class of bugs (22b/22c) by design — there's only ONE CV, so it cannot drift across opps.
+- Saves ~9 messages.create calls per run × ~$0.50 = ~$4.50/run cost reduction.
+- Mirrors how artists actually use CVs in the real world — they have ONE CV PDF they upload to every application, not 10 custom-rewritten CVs.
+- Schema change is small: one new column on `dossiers` (`master_cv TEXT`).
+- Dossier UI change is small: render the master CV once at the top of the dossier instead of inside each per-opp package, with per-opp trim notes inline.
 
-### Acceptance for Note 22 (hackathon scope = 22-fix.1 + 22-fix.2 only)
+Implementation:
+1. Schema migration: add `master_cv TEXT` to `dossiers` table.
+2. New function `draftMasterCv(akb, fingerprint)` in `package-drafter.ts` (or a new file) that produces the canonical CV per Note 22-fix.2 format. Called once per run from the orchestrator after AKB is finalized, before per-opp drafting starts.
+3. Remove `cv_formatted` generation from `draftPackageForMatch()` — that field becomes either deprecated or repurposed as a "per-opp trim note" (1-2 sentences explaining what to trim for that specific opp's char/page limit).
+4. Dossier UI: render `dossiers.master_cv` once at the top of the dossier (or in a dedicated section), with each per-opp package showing the trim note instead of a duplicated CV.
+5. PDF export: master CV rendered once in the appendix.
 
-- Every CV in a fresh run includes the CURATORIAL AND ORGANIZATIONAL section if `akb.curatorial_and_organizational` is non-empty. Verified via smoke test that asserts the section header is present.
-- Section names match the canonical list above across every CV in a run. Smoke test that asserts CV text contains the expected section labels in expected order.
-- No section drift (no "AWARDS" in one CV and "AWARDS AND HONORS" in another for the same dossier).
+### Acceptance for Note 22 (all three sub-fixes)
+
+- Every dossier has exactly ONE CV (master), generated once per run, stored in `dossiers.master_cv`.
+- The master CV includes the CURATORIAL AND ORGANIZATIONAL section if `akb.curatorial_and_organizational` is non-empty.
+- Section names match the canonical list in the canonical order.
+- Each per-opp package references the master CV with an optional per-opp trim note when the opp has a stated CV length cap (e.g., Aperture's "single-page PDF" or IPA's "2,000 character" cap). When the opp has no stated cap, no trim note appears.
+- Smoke test asserts: (a) `dossiers.master_cv` is non-empty after run completes, (b) `drafted_packages.cv_formatted` is null/empty (or repurposed as trim note), (c) master CV contains canonical section labels in canonical order, (d) CURATORIAL section is present when AKB has the field non-empty.
 
 **Files:** `lib/agents/package-drafter.ts` (CV system prompt + DEFAULT_CV_SKILL fallback), `tests/smoke/drafter-cv-shape.test.ts` (new).
 
-**Priority:** medium — much less broken than statements/proposals. Should ship with the Notes 20+21 batch since it's a small additional change to the same file. NOT a demo blocker, but worth fixing alongside.
+**Priority:** medium — much less broken than statements/proposals. Ship all three sub-fixes (22-fix.1 + 22-fix.2 + 22-fix.3 master-CV refactor) alongside Notes 20+21. The master-CV architecture change is small (one schema column + one new generation function + remove the per-opp CV call + small dossier UI update) and is the right architecture, not a "future" deferral.
 
 ---
 
