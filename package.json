@@ -12,6 +12,7 @@
     "seed:export": "tsx scripts/seed-export.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:demo:run-only": "tsx scripts/seed-demo-run-only.ts",
+    "check:copy": "node scripts/check-copy.mjs",
     "test": "vitest run tests/smoke"
   },
   "dependencies": {

@@ -335,7 +335,7 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
             disabled={checked.size === 0}
             className="rounded border border-emerald-700 px-4 py-2 text-sm hover:bg-emerald-950/40 disabled:opacity-40"
           >
-            Confirm and ingest ({checked.size})
+            Confirm and import ({checked.size})
           </button>
         )}
       </div>

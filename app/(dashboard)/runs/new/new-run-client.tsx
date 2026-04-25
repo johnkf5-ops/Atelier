@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchJson } from '@/lib/api/fetch-client';
+import { Button } from '@/app/_components/ui';
 
 export default function NewRunClient() {
   const router = useRouter();
@@ -28,14 +29,9 @@ export default function NewRunClient() {
 
   return (
     <div className="space-y-3">
-      <button
-        type="button"
-        onClick={onStart}
-        disabled={starting}
-        className="px-6 py-3 bg-neutral-100 text-neutral-900 rounded hover:bg-white disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {starting ? 'Starting run…' : 'Start new run'}
-      </button>
+      <Button type="button" variant="primary" onClick={onStart} disabled={starting} size="md">
+        {starting ? 'Starting run…' : 'Start new run →'}
+      </Button>
       {error && <p className="text-sm text-rose-400">{error}</p>}
       <p className="text-xs text-neutral-500">
         A typical run takes 20–30 minutes. You can close this tab and come back.

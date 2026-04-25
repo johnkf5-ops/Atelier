@@ -1,16 +1,64 @@
 @import "tailwindcss";
 
 @theme {
+  /* Color tokens — see lib/ui/design-system.md for contrast notes */
   --color-bg: #0a0a0a;
-  --color-fg: #ededed;
-  --color-muted: #6b7280;
-  --color-accent: #d4d4d4;
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
-  --font-serif: ui-serif, Georgia, "Times New Roman", serif;
+  --color-surface: #171717;
+  --color-surface-2: #262626;
+  --color-border: #262626;
+  --color-border-hover: #404040;
+  --color-fg: #fafafa;
+  --color-fg-muted: #a3a3a3;
+  --color-fg-subtle: #737373;
+
+  /* Type pairing — Crimson Pro display + body, Inter for UI chrome.
+     Loaded via next/font in app/layout.tsx; CSS variables there resolve
+     these defaults at runtime. */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Helvetica, Arial, sans-serif;
+  --font-serif: var(--font-crimson), "Crimson Pro", ui-serif, Georgia,
+    "Times New Roman", serif;
 }
 
 html, body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Long-form serif body — used inside <Prose> on drafted-document surfaces.
+   ~65 char measure on typical 16px serif; 1.65 leading. */
+.prose-narrow {
+  max-width: 38rem;
+}
+
+/* Print styles for the dossier — tighter than the screen view, white bg,
+   serif body so the printed PDF reads as a real institutional packet. */
+@media print {
+  html, body {
+    background: #ffffff;
+    color: #111111;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Skeleton shimmer — matches the surface tone with a sweeping highlight */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-surface) 0%,
+    var(--color-surface-2) 50%,
+    var(--color-surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+  border-radius: 4px;
 }

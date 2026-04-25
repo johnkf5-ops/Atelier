@@ -1,16 +1,16 @@
 import UploadClient from './upload-client';
+import { PageHeader } from '@/app/_components/ui';
 
 export const dynamic = 'force-dynamic';
 
 export default function UploadPage() {
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="font-serif text-3xl">Upload portfolio</h1>
-        <p className="text-neutral-400 text-sm mt-1">
-          Drop 20–100 images. EXIF camera/lens data is preserved; GPS is stripped.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Step 1"
+        title="Your portfolio"
+        subtitle="Drop 20–100 images, or paste URLs and we'll scrape them. EXIF camera and lens data is preserved; GPS is stripped."
+      />
       <UploadClient />
     </div>
   );

@@ -2,15 +2,16 @@ import Link from 'next/link';
 import { getCurrentUserId } from '@/lib/auth/user';
 import { ensureDbReady } from '@/lib/db/client';
 import { listRunsForUser, formatRelative, type RunSummary } from '@/lib/db/queries/runs';
+import { PageHeader, LinkButton, Badge, EmptyState } from '@/app/_components/ui';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-function statusLabel(s: string): { label: string; classes: string } {
-  if (s === 'complete') return { label: 'complete', classes: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' };
-  if (s === 'error') return { label: 'errored', classes: 'bg-rose-500/10 text-rose-300 border-rose-500/30' };
-  if (s === 'cancelled') return { label: 'cancelled', classes: 'bg-neutral-700/30 text-neutral-400 border-neutral-600' };
-  return { label: 'running', classes: 'bg-amber-500/10 text-amber-300 border-amber-500/30' };
+function statusBadge(s: string) {
+  if (s === 'complete') return <Badge variant="success">complete</Badge>;
+  if (s === 'error') return <Badge variant="danger">errored</Badge>;
+  if (s === 'cancelled') return <Badge variant="neutral">cancelled</Badge>;
+  return <Badge variant="warning">running</Badge>;
 }
 
 function rowHref(r: RunSummary): string {
@@ -23,57 +24,51 @@ export default async function RunsPage() {
   const runs = await listRunsForUser(userId);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-baseline justify-between">
-        <h1 className="font-serif text-3xl">Runs</h1>
-        <Link
-          href="/runs/new"
-          className="px-4 py-2 bg-neutral-100 text-neutral-900 text-sm rounded hover:bg-white"
-        >
-          New Run
-        </Link>
-      </div>
+    <div>
+      <PageHeader
+        eyebrow="Step 4"
+        title="Runs"
+        subtitle="Each run scans for new opportunities, scores them against your work, and drafts application materials for the matches that fit."
+        action={
+          runs.length > 0 ? (
+            <LinkButton href="/runs/new" variant="primary">
+              New run
+            </LinkButton>
+          ) : undefined
+        }
+      />
 
       {runs.length === 0 ? (
-        <div className="border border-neutral-800 rounded p-8 text-center space-y-3">
-          <p className="text-neutral-300">No runs yet.</p>
-          <p className="text-neutral-500 text-sm">
-            Start a run to let Atelier surface opportunities that fit your portfolio.
-          </p>
-          <Link
-            href="/runs/new"
-            className="inline-block px-4 py-2 bg-neutral-100 text-neutral-900 text-sm rounded hover:bg-white"
-          >
-            Start your first run
-          </Link>
-        </div>
+        <EmptyState
+          title="No runs yet"
+          body="Start a run to let Atelier surface opportunities that fit your portfolio. A typical run takes 20–30 minutes."
+          cta={
+            <LinkButton href="/runs/new" variant="primary">
+              Start your first run →
+            </LinkButton>
+          }
+        />
       ) : (
-        <div className="border border-neutral-800 rounded divide-y divide-neutral-800">
-          {runs.map((r) => {
-            const s = statusLabel(r.status);
-            return (
-              <Link
-                key={r.id}
-                href={rowHref(r)}
-                className="block px-4 py-3 hover:bg-neutral-900/50 transition-colors"
-              >
-                <div className="flex items-center justify-between gap-4">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono text-neutral-500 text-sm">#{r.id}</span>
-                    <span
-                      className={`px-2 py-0.5 text-xs rounded border ${s.classes}`}
-                    >
-                      {s.label}
-                    </span>
-                    <span className="text-sm text-neutral-400">{formatRelative(r.started_at)}</span>
-                  </div>
-                  <div className="text-xs text-neutral-500">
-                    {r.discovered_count} discovered · {r.scored_count} scored · {r.included_count} included
-                  </div>
+        <div className="rounded-lg border border-neutral-800 divide-y divide-neutral-800 overflow-hidden">
+          {runs.map((r) => (
+            <Link
+              key={r.id}
+              href={rowHref(r)}
+              className="block px-5 py-4 hover:bg-neutral-900/60 transition-colors"
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-neutral-500 text-sm">#{r.id}</span>
+                  {statusBadge(r.status)}
+                  <span className="text-sm text-neutral-300">{formatRelative(r.started_at)}</span>
                 </div>
-              </Link>
-            );
-          })}
+                <div className="text-xs text-neutral-500 tabular-nums">
+                  {r.discovered_count} discovered · {r.scored_count} scored ·{' '}
+                  <span className="text-emerald-400">{r.included_count}</span> drafted
+                </div>
+              </div>
+            </Link>
+          ))}
         </div>
       )}
     </div>

@@ -68,12 +68,18 @@ export default function DossierView({
   ranking,
   matches,
   filteredOut,
+  artistName,
+  portfolioThumbs,
+  runDate,
 }: {
   runId: number;
   cover: string;
   ranking: string;
   matches: DossierMatch[];
   filteredOut: DossierFilteredOut[];
+  artistName: string;
+  portfolioThumbs: string[];
+  runDate: string | null;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [tabByMatch, setTabByMatch] = useState<Record<number, Tab>>({});
@@ -83,22 +89,65 @@ export default function DossierView({
   const sorted = useMemo(() => sortMatches(matches, sortKey), [matches, sortKey]);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-12 py-4">
-      {/* Cover */}
-      <header className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-xs uppercase tracking-widest text-neutral-500">Career Dossier</div>
-          <div className="flex gap-2 text-xs">
-            <a
-              href={`/api/dossier/${runId}/pdf`}
-              className="rounded border border-neutral-700 px-3 py-1.5 hover:bg-neutral-800"
-            >
-              Download PDF
-            </a>
+    <div className="max-w-5xl mx-auto space-y-16 py-4">
+      {/* Cover hero — artist name big in serif, portfolio thumbnail strip,
+          run date. Designed to feel like the title page of a printed
+          institutional packet. */}
+      <header className="space-y-8">
+        <div className="flex items-baseline justify-between gap-4 no-print">
+          <div className="text-[11px] uppercase tracking-[0.2em] text-neutral-500">
+            Career Dossier
+          </div>
+          <a
+            href={`/api/dossier/${runId}/pdf`}
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-900 hover:border-neutral-600 transition"
+          >
+            Download PDF
+          </a>
+        </div>
+
+        <div className="space-y-2">
+          <h1 className="font-serif text-6xl leading-[0.95] tracking-tight text-neutral-100">
+            {artistName}
+          </h1>
+          <div className="flex items-baseline gap-3 text-xs text-neutral-500">
+            <span className="uppercase tracking-widest">Career Dossier</span>
+            {runDate && (
+              <>
+                <span className="text-neutral-700">·</span>
+                <span>
+                  {new Date(runDate).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}
+                </span>
+              </>
+            )}
           </div>
         </div>
-        <h1 className="font-serif text-4xl leading-tight">Your aesthetic read</h1>
-        <Prose>{cover}</Prose>
+
+        {portfolioThumbs.length > 0 && (
+          <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 max-h-32 overflow-hidden">
+            {portfolioThumbs.map((t, i) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                key={i}
+                src={t}
+                alt=""
+                loading="lazy"
+                className="aspect-square w-full object-cover opacity-90"
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="space-y-3 pt-4">
+          <h2 className="font-serif text-3xl text-neutral-200 tracking-tight">
+            Your aesthetic read
+          </h2>
+          <Prose>{cover}</Prose>
+        </div>
       </header>
 
       {/* Ranking narrative */}
@@ -377,7 +426,7 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 no-print">
         <button
           onClick={() => navigator.clipboard.writeText(text)}
           className="rounded border border-neutral-700 px-3 py-1 text-xs hover:bg-neutral-800"
@@ -390,9 +439,18 @@ function MatchBody({ match, tab, runId }: { match: DossierMatch; tab: Tab; runId
         >
           Download .docx
         </a>
+        <span className="text-[11px] text-neutral-600 ml-auto">
+          {text.split(/\s+/).filter(Boolean).length} words
+        </span>
       </div>
-      <div className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap font-serif bg-neutral-950 border border-neutral-800 rounded p-4">
-        {text}
+      {/* Drafted-document presentation: warm off-white "paper" surface,
+          generous serif body, narrow measure (~65 char). Mimics the visual
+          weight of a real printed institutional packet so the demo can
+          linger on this page without it feeling like a textarea. */}
+      <div className="rounded border border-neutral-800 bg-[#f7f5f1] text-neutral-900 px-10 py-12 print:p-0 print:border-0">
+        <article className="font-serif text-[15px] leading-[1.7] whitespace-pre-wrap mx-auto max-w-[40rem]">
+          {text}
+        </article>
       </div>
     </div>
   );

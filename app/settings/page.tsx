@@ -1,6 +1,7 @@
 import { hasAnthropicKey } from '@/lib/auth/api-key';
 import HealthPanel from './health-panel';
 import ResetDbPanel from './reset-db-panel';
+import { PageHeader, Card, Badge } from '@/app/_components/ui';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,26 +13,27 @@ export default function SettingsPage() {
     { label: 'BLOB_READ_WRITE_TOKEN', ok: !!process.env.BLOB_READ_WRITE_TOKEN },
   ];
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="font-serif text-3xl">Settings</h1>
-        <p className="text-neutral-400 text-sm mt-1">
-          Single-tenant v1. Model is hardcoded <code className="text-neutral-200">claude-opus-4-7</code>.
-        </p>
-      </div>
+    <div className="max-w-3xl space-y-10">
+      <PageHeader
+        title="Settings"
+        subtitle={`Single-tenant v1. Model is hardcoded claude-opus-4-7.`}
+      />
 
       <section className="space-y-3">
-        <h2 className="text-sm uppercase tracking-wide text-neutral-500">Environment</h2>
-        <ul className="border border-neutral-800 rounded divide-y divide-neutral-800">
-          {checks.map((c) => (
-            <li key={c.label} className="flex items-center justify-between px-4 py-2">
-              <span className="font-mono text-sm">{c.label}</span>
-              <span className={c.ok ? 'text-emerald-400 text-sm' : 'text-rose-400 text-sm'}>
-                {c.ok ? 'set' : 'missing'}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <h2 className="text-[11px] uppercase tracking-widest text-neutral-500">Environment</h2>
+        <Card padded={false}>
+          <ul className="divide-y divide-neutral-800">
+            {checks.map((c) => (
+              <li
+                key={c.label}
+                className="flex items-center justify-between px-5 py-3"
+              >
+                <span className="font-mono text-sm text-neutral-200">{c.label}</span>
+                {c.ok ? <Badge variant="success">set</Badge> : <Badge variant="danger">missing</Badge>}
+              </li>
+            ))}
+          </ul>
+        </Card>
       </section>
 
       <HealthPanel />

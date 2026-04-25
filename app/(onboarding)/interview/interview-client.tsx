@@ -162,7 +162,7 @@ export default function InterviewClient() {
       }
       setAkb(r.data.akb);
       const ok = r.data.sources.filter((s) => s.ok).length;
-      setIngestStatus(`${ok}/${urls.length} ingested · changed ${r.data.changed_fields.length} fields`);
+      setIngestStatus(`${ok}/${urls.length} imported · ${r.data.changed_fields.length} field(s) updated`);
     } finally {
       setBusy(false);
     }
@@ -281,7 +281,7 @@ function StateBanner({
     return (
       <div className="rounded border border-neutral-800 bg-neutral-900 p-3 text-sm text-neutral-300">
         Your Knowledge Base is empty. Start with Auto-discover below to seed it from the web,
-        or paste URLs you want ingested.
+        or paste URLs you want imported.
       </div>
     );
   }

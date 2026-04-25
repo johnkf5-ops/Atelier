@@ -302,7 +302,7 @@ export default function ReviewClient() {
 
         <Section title="Style Fingerprint (read-only)" provenancePrefix="" akb={draft}>
           <pre className="text-[11px] text-neutral-300 overflow-auto max-h-[36rem] leading-snug whitespace-pre-wrap">
-{fp ? JSON.stringify(fp, null, 2) : 'No fingerprint yet — run Style Analyst from /upload'}
+{fp ? JSON.stringify(fp, null, 2) : 'No fingerprint yet — analyse your portfolio from /upload'}
           </pre>
         </Section>
       </div>

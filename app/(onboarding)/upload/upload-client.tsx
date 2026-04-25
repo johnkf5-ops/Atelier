@@ -391,7 +391,7 @@ export default function UploadClient() {
           {isDragActive ? 'Drop them.' : busy ? 'Uploading…' : 'Drop images, or click to choose. JPEG / PNG / WebP / HEIC.'}
         </p>
         <p className="text-xs text-neutral-500 mt-2">
-          {images.length} / 100 uploaded — minimum {MIN_IMAGES} to run Style Analyst.
+          {images.length} / 100 uploaded — minimum {MIN_IMAGES} to analyse your work.
         </p>
       </div>
 
@@ -411,9 +411,9 @@ export default function UploadClient() {
           onClick={runAnalyst}
           disabled={!ready || analyzing}
           className="rounded border border-neutral-700 px-4 py-2 text-sm disabled:opacity-40 hover:bg-neutral-800"
-          title={ready ? 'Run Style Analyst' : `Need ${MIN_IMAGES - images.length} more image(s)`}
+          title={ready ? 'Analyse my work' : `Need ${MIN_IMAGES - images.length} more image(s)`}
         >
-          {analyzing ? 'Analyzing…' : 'Run Style Analyst →'}
+          {analyzing ? 'Analysing…' : 'Analyse my work →'}
         </button>
       </div>
 

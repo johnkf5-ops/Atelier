@@ -64,15 +64,15 @@ function formatStatus(s: string): string {
     case 'queued':
       return 'Queued';
     case 'scout_running':
-      return 'Opportunity Scout searching sources…';
+      return 'Searching for opportunities…';
     case 'scout_complete':
-      return 'Scout complete — downloading recipient images…';
+      return 'Found opportunities — downloading past-recipient work…';
     case 'finalizing_scout':
-      return 'Downloading recipient portfolios…';
+      return 'Downloading past-recipient work…';
     case 'rubric_running':
-      return 'Rubric Matcher scoring opportunities…';
+      return 'Scoring each opportunity against your portfolio…';
     case 'rubric_complete':
-      return 'Rubric complete — drafting materials…';
+      return 'Scoring complete — drafting application materials…';
     case 'finalizing':
       return 'Drafting application packages…';
     case 'complete':

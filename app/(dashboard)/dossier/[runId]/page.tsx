@@ -13,6 +13,29 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
   if (!Number.isInteger(runIdNum)) redirect('/runs');
   const db = getDb();
 
+  // Cover-page strip needs the artist's portfolio thumbs + their AKB
+  // identity for byline. Resolve via the run's user_id so prior runs
+  // still render a coherent cover even after the user updates their KB.
+  const runRow = (
+    await db.execute({
+      sql: `SELECT user_id, akb_version_id, started_at FROM runs WHERE id = ?`,
+      args: [runIdNum],
+    })
+  ).rows[0] as unknown as
+    | { user_id: number; akb_version_id: number; started_at: number }
+    | undefined;
+  const coverArtistName = await resolveArtistName(db, runRow?.akb_version_id);
+  const coverThumbs = runRow
+    ? (
+        await db.execute({
+          sql: `SELECT thumb_url FROM portfolio_images WHERE user_id = ?
+                ORDER BY ordinal ASC LIMIT 12`,
+          args: [runRow.user_id],
+        })
+      ).rows.map((r) => String((r as unknown as { thumb_url: string }).thumb_url))
+    : [];
+  const coverDate = runRow ? new Date(runRow.started_at * 1000).toISOString().slice(0, 10) : null;
+
   const dossierRow = (
     await db.execute({
       sql: `SELECT cover_narrative, ranking_narrative FROM dossiers WHERE run_id = ?`,
@@ -129,6 +152,30 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
       ranking={dossierRow.ranking_narrative}
       matches={matches}
       filteredOut={filtered}
+      artistName={coverArtistName}
+      portfolioThumbs={coverThumbs}
+      runDate={coverDate}
     />
   );
+}
+
+async function resolveArtistName(
+  db: ReturnType<typeof getDb>,
+  akbVersionId: number | undefined,
+): Promise<string> {
+  if (!akbVersionId) return 'Atelier';
+  const r = await db.execute({
+    sql: `SELECT json FROM akb_versions WHERE id = ?`,
+    args: [akbVersionId],
+  });
+  const row = r.rows[0] as unknown as { json: string } | undefined;
+  if (!row) return 'Atelier';
+  try {
+    const akb = JSON.parse(row.json) as {
+      identity?: { artist_name?: string; legal_name?: string };
+    };
+    return akb.identity?.artist_name || akb.identity?.legal_name || 'Atelier';
+  } catch {
+    return 'Atelier';
+  }
 }
