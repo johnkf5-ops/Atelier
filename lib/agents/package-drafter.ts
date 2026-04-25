@@ -102,6 +102,118 @@ const TAILORING_BY_TYPE: Record<OppType, string> = {
   'general-prize': `GENERAL-PRIZE TAILORING: Lean into the specific prize category. Match ambition to the scale of the opportunity. Avoid grand-vision framing for an open-call competition.`,
 };
 
+/**
+ * WALKTHROUGH Note 21: sibling to classifyOpportunityType, but mapped to the
+ * proposal templates from skills/project-proposal-real-examples.md. Distinct
+ * from the artist-statement classifier — e.g. Aperture Portfolio Prize is a
+ * "landscape-prize" statement-wise but a "competition" proposal-wise (the
+ * proposal is curatorial framing of finished work, not a project plan).
+ *
+ * Order matters; first match wins. Mirrors the skill file's "Type-routing
+ * logic" table.
+ */
+export type ProposalType =
+  | 'state-fellowship'
+  | 'competition'
+  | 'residency'
+  | 'book-grant'
+  | 'foundation-grant'
+  | 'commission'
+  | 'guggenheim-major-bespoke';
+
+const PROPOSAL_BESPOKE_PATTERNS = [
+  /\b(creative capital|guggenheim|usa fellowship|joan mitchell|macarthur)\b/i,
+];
+const PROPOSAL_RESIDENCY_PATTERNS = [
+  /\b(macdowell|yaddo|headlands|vermont studio|light work|banff|djerassi|skowhegan|ucross)\b/i,
+  /\b(artist[- ]in[- ]residence|residency)\b/i,
+];
+const PROPOSAL_BOOK_PATTERNS = [
+  /\b(book prize|book award|photobook|monograph|first photo book)\b/i,
+];
+const PROPOSAL_COMMISSION_PATTERNS = [
+  /\b(public art call|call for artists|rfq|rfp)\b/i,
+  /\b(arts commission)\b.*\b(call|rfq|rfp|public art)\b/i,
+];
+const PROPOSAL_COMPETITION_PATTERNS = [
+  /\b(ilpoty|opoty|nlpa|tpoty|np[oa]ty|critical mass|aperture portfolio prize|ipa|fapa|hamdan|sony world|photographer of the year|portfolio prize|awards)\b/i,
+];
+const PROPOSAL_FOUNDATION_PATTERNS = [
+  /\b(pollock[- ]krasner|aaron siskind|vmfa|howard foundation|en foco)\b/i,
+];
+
+export function classifyProposalType(opp: Opportunity): ProposalType {
+  const name = opp.name ?? '';
+  if (PROPOSAL_BESPOKE_PATTERNS.some((r) => r.test(name))) return 'guggenheim-major-bespoke';
+  if (PROPOSAL_RESIDENCY_PATTERNS.some((r) => r.test(name))) return 'residency';
+  if (PROPOSAL_BOOK_PATTERNS.some((r) => r.test(name))) return 'book-grant';
+  if (PROPOSAL_COMMISSION_PATTERNS.some((r) => r.test(name))) return 'commission';
+  if (PROPOSAL_FOUNDATION_PATTERNS.some((r) => r.test(name))) return 'foundation-grant';
+  if (PROPOSAL_COMPETITION_PATTERNS.some((r) => r.test(name))) return 'competition';
+  // State arts council fellowship checks — reuse the artist-statement patterns.
+  if (STATE_FELLOWSHIP_PATTERNS.some((r) => r.test(name))) return 'state-fellowship';
+  // Coarse fallback by award metadata: project-restricted grants → state-fellowship,
+  // unrestricted/foundation → foundation-grant, else competition.
+  if (/fellowship|grant/i.test(opp.award.type) && /regional|mid|emerging/i.test(opp.award.prestige_tier)) {
+    return 'state-fellowship';
+  }
+  return 'competition';
+}
+
+const PROPOSAL_TAILORING: Record<ProposalType, string> = {
+  'state-fellowship': `STATE ARTS COUNCIL FELLOWSHIP PROPOSAL: Funds NEW work by a named artist over a defined period. Required structure: (1) one-sentence project description naming project, medium, geography; (2) what activities take place during the period of performance; (3) why this project, why now; (4) public-benefit / engagement statement (load-bearing for state councils); (5) timeline in MONTHS, not "phases"; (6) deliverables with counts (number of new works, exhibitions, publications); (7) one clause naming the fiscal sponsor relationship if NYSCA. Length: write to the cap (~750 words for NEA). Address each council review criterion explicitly. Specify what is NEW vs prior practice. Common failure: reads as continuation of practice.`,
+  'competition': `PHOTOGRAPHY COMPETITION PORTFOLIO STATEMENT: Curatorial framing of an EXISTING, COMPLETED body of work — not a project plan. No timeline, no budget, no deliverables. Required moves: (1) name the body of work as a titled series; (2) one sentence on subject; (3) one sentence on method/approach when load-bearing; (4) one sentence on what unifies the 10 images as a series; (5) one sentence on stakes. Length: ~250 words is the dominant ceiling — every sentence load-bearing. Common failure: generic artist statement that does not frame the specific submitted images.`,
+  'residency': `RESIDENCY APPLICATION PROJECT DESCRIPTION: Specify what would be DONE during the residency weeks, not what the larger project is. The grant is for the residency window, not the project lifetime. Required moves: (1) brief context on the larger project; (2) what specifically gets accomplished during the residency weeks (sequenced book dummy, formal portraits of fellows, mockup, etc.); (3) connection to the residency facility when load-bearing (darkroom, studio, place); (4) downstream output if any (publication, exhibition). Length: 250–500 words. Common failure: project so large the residency window cannot meaningfully advance it; project that could happen anywhere.`,
+  'book-grant': `PHOTO BOOK STATEMENT: The book itself is the primary submission; the statement is a frame. Required moves: (1) working title; (2) one sentence on subject and concept; (3) one sentence on book-object decisions (page count, trim size, paper, binding, cover, edition size); (4) one sentence on sequencing logic / argument the order of images makes; (5) one sentence on publisher relationship (named publisher, verbal agreement, self-published). Length: ~250 words. Common failure: frames as a portfolio rather than a book object; no mention of sequence, scale, page count.`,
+  'foundation-grant': `FOUNDATION GRANT (Pollock-Krasner / Siskind / En Foco): Pollock-Krasner specifically asks for amount requested + specific purposes (e.g., "$25,000: $12,000 toward studio rent for 12 months, $8,000 toward print production for confirmed exhibition at [venue], $5,000 toward unreimbursed medical"). Other foundations want a frame for current work, naming the body of work, subject and approach, personal relevance (En Foco). Not a project plan — supports continued practice. Common failure: vague "to support my practice" with no dollar amount; generic artist statement.`,
+  'commission': `PUBLIC ART RFQ LETTER OF INTEREST: Stage-one qualifications submission, NOT a design proposal. Required moves: (1) why this specific project / site; (2) how the practice connects to the brief; (3) reference brief specifics; (4) installation and presentation experience for photography RFQs; (5) site-responsiveness without naming a design. Length: one page. Common failure: jumping to design ideas (stage two), missing budgets in image annotations, gallery prints submitted instead of installed public works.`,
+  'guggenheim-major-bespoke': `BESPOKE MAJOR GRANT (Creative Capital, Guggenheim, USA Fellowship, Joan Mitchell, MacArthur): These have published handbooks. Use the generic six-beat structure from project-proposal-structure.md, write to the published cap, address each published review criterion. The Creative Capital and Guggenheim worked examples are the model.`,
+};
+
+// WALKTHROUGH Note 21: hard voice constraints applied to project_proposal.
+// Inherits the zero-em-dash + banned-phrase discipline from the statement
+// constraints, plus proposal-specific bans (no lineage paragraph anywhere,
+// no method/gear paragraph unless the technique justifies the project).
+const PROPOSAL_VOICE_CONSTRAINTS = `HARD VOICE CONSTRAINTS — every constraint is non-negotiable:
+
+1. ZERO em-dashes. Hard rule. No "—" anywhere. Use commas, periods, parentheses, or colons. Em-dash overuse is the strongest tell of generic AI prose; panels notice.
+2. FIRST PERSON for grants, fellowships, residencies, foundation cover letters. Either person for competition statements; first-person reads more direct.
+3. NO LINEAGE PARAGRAPH. Lineage belongs in the artist statement only. If you find yourself writing "the proposed work sits in the lineage of Adams / Rowell / Butcher" or "draws on the Zone System tradition" or "in the tradition of [name]", DELETE the sentence. Lineage paragraphs in proposals displace the load-bearing content (project, deliverables, timeline, budget).
+4. NO METHOD / GEAR PARAGRAPH carried over from the artist statement. Technique only appears when it JUSTIFIES the project ("I will return to three Maine rivers across freeze-thaw cycles in 4x5 color negative because the format's tonal range is required to register the ice-water-bare-rock contrast at the project's exhibition scale"). A bare gear list is a category error.
+5. BANNED PHRASES (hard list — do not produce any of these):
+   - "sits at the intersection of"
+   - "sits in the lineage of"
+   - "interrogates the relationship between"
+   - "liminal space"
+   - "a kind of grammar"
+   - "aesthetic signature"
+   - "visual vocabulary"
+   - "working grammar"
+   - "commercial-gallery register"
+   - "meditations on"
+   - "informed by"
+   - "the medium has been preparing itself"
+   - "quiet authority"
+   - "emotional weight"
+   - "vision" / "visionary"
+   - "journey"
+   - "passion" / "passionate"
+   - "explore" / "exploration"
+   - "capture" (use "photograph", "make", "see")
+6. SPECIFICITY OVER GENERALITY. Real project, real timeline in MONTHS, real deliverables with COUNTS, real venues by NAME when known. Not "a series of works" — "twelve large-format prints, 30x40 inches, exhibited at [venue] in October 2026."
+7. DELIVERABLES MUST BE COUNTABLE. Number of works, page count for monograph, edition size, exhibition scale in running feet, residency outputs in defined units.
+8. WHY NOW answered with a specific reason — closing window, confirmed venue, body of work at the point of needing publication, site that will not be accessible later. Not generic urgency.
+9. WHY THIS FUNDER addressed in at least one clause when the funder is named (why MacDowell rather than Yaddo, why NYSCA rather than NEA). Panels notice when the application reads addressed-to-them.
+10. WRITE TO THE CAP. If the form allows 750 words, write 700. Do not run under by 40%. Brevity is a virtue but only after the required content is in place.
+
+PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if any check fails):
+- Em-dash count is exactly zero.
+- No lineage paragraph anywhere (no "Adams + Rowell + Butcher" name-stack, no "in the tradition of").
+- Method/gear only present if it justifies the project, not as a separate section.
+- Deliverables are counted (number of works, edition size, page count, etc.).
+- Timeline in months, not "phases."
+- No banned phrase from list 5 appears.`;
+
 type DraftCtx = {
   akb: ArtistKnowledgeBase;
   opp: Opportunity;
@@ -110,7 +222,9 @@ type DraftCtx = {
   proposalSkill: string;
   cvSkill: string;
   examplesSkill: string; // WALKTHROUGH Note 20 — real-statement few-shot
+  proposalExamplesSkill: string; // WALKTHROUGH Note 21 — real-proposal few-shot
   oppType: OppType;
+  proposalType: ProposalType; // WALKTHROUGH Note 21 — proposal template route
   oppRequirementsText: string;
 };
 
@@ -209,14 +323,27 @@ Write the artist statement now. Describe the work as the fingerprint says it IS.
   }),
   project_proposal: (ctx) => ({
     system:
+      // Real-proposal few-shot FIRST so the model sees verbatim recipient
+      // examples (MacDowell project descriptions, Aperture book framings,
+      // Pollock-Krasner cover letters) before the constraints. The
+      // generic structure file (proposalSkill) is loaded after as the
+      // bespoke fallback for Creative Capital / Guggenheim / etc.
+      ctx.proposalExamplesSkill +
+      '\n\n---\n\n' +
       ctx.proposalSkill +
       '\n\n---\n\n' +
-      FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
-      "\n\n---\n\nYou are writing a project proposal for a specific grant/residency application. Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity's stated requirements are provided, follow their structure and word limits. Otherwise use the generic structure from your loaded skill. 400-800 words. No preamble, no markdown. Return plain text only.",
-    user: `OPPORTUNITY: ${ctx.opp.name} — ${ctx.opp.url}
+      PROPOSAL_VOICE_CONSTRAINTS +
+      '\n\n---\n\n' +
+      FINGERPRINT_CONSTRAINT + '\n\n---\n\n' + NAME_PRIMACY_CONSTRAINT +
+      '\n\n---\n\nYou are writing a project proposal for a specific opportunity. The proposal type is given in the user message — use the matching template from the few-shot examples above (NOT the generic six-beat structure unless the type is "guggenheim-major-bespoke"). Pull facts ONLY from the provided AKB — never invent. Visual claims about current work MUST match the StyleFingerprint. Project aspirations MAY extend beyond current work but must be connected to it. If the opportunity\'s stated requirements are provided, follow their structure and word limits. No preamble, no markdown. Return plain text only.',
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
+
+PROPOSAL_TYPE: ${ctx.proposalType}
+
+${PROPOSAL_TAILORING[ctx.proposalType]}
 
 OPPORTUNITY_REQUIREMENTS (from their page, may be partial):
-${ctx.oppRequirementsText || '(not available — use generic structure)'}
+${ctx.oppRequirementsText || '(not available — use the template above)'}
 
 STYLE_FINGERPRINT:
 ${JSON.stringify(ctx.fingerprint, null, 2)}
@@ -224,7 +351,7 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the project proposal now.`,
+Write the project proposal now. Match the structural shape of the matching template above — a competition portfolio statement is NOT a residency project description is NOT a state arts council fellowship narrative. This proposal MUST differ meaningfully from a proposal written for a different opportunity type. End with a complete sentence — do not truncate mid-thought.`,
   }),
   cv: (ctx) => ({
     system:
@@ -260,13 +387,26 @@ Write the cover letter now.`,
   }),
 };
 
+// WALKTHROUGH Note 21 truncation fix: project_proposal needs a higher
+// max_tokens because (a) state-fellowship + bespoke proposals can run to
+// ~750 words ≈ ~1000 output tokens, and (b) adaptive thinking eats into
+// the same budget. The Epson Pano regression at 63 words was the symptom.
+// CV is factual and bounded; statement and cover_letter are length-capped
+// in the prompt. 4000 protects the proposal without inflating the others.
+const MAX_TOKENS_BY_TYPE: Record<MaterialType, number> = {
+  artist_statement: 3000,
+  project_proposal: 4000,
+  cv: 3000,
+  cover_letter: 3000,
+};
+
 async function draftMaterial(type: MaterialType, ctx: DraftCtx): Promise<string> {
   const { system, user } = PROMPTS[type](ctx);
   const client = getAnthropic();
   const resp = await withAnthropicRetry(
     () => client.messages.create({
       model: MODEL_OPUS,
-      max_tokens: 3000,
+      max_tokens: MAX_TOKENS_BY_TYPE[type],
       thinking: { type: 'adaptive' },
       system,
       messages: [{ role: 'user', content: user }],
@@ -356,6 +496,92 @@ async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
   // Soft fallback — if the revision still fails, return whichever is closer.
+  return revised.length > 0 ? revised : first;
+}
+
+/**
+ * WALKTHROUGH Note 21: post-write voice check on the project proposal.
+ * Mirrors the statement check but adds proposal-specific rules:
+ *  - additional banned phrases per skill voice rule #11
+ *  - lineage paragraph check ("the proposed work sits in the lineage of",
+ *    "draws on the [name] tradition", three lineage names in one paragraph)
+ *  - terminal-punctuation check (catches the Epson-Pano-style truncation
+ *    regression where the model ran out of tokens mid-sentence)
+ */
+const PROPOSAL_BANNED_PHRASES = [
+  ...STATEMENT_BANNED_PHRASES,
+  'the medium has been preparing itself',
+  'quiet authority',
+  'emotional weight',
+  'sits in the lineage of',
+  'draws on the zone system tradition',
+  'in the tradition of',
+];
+const PROPOSAL_BANNED_WORDS = STATEMENT_BANNED_WORDS;
+
+const LINEAGE_NAME_PARAGRAPH = /\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b.*\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b.*\b(adams|rowell|butcher|luong|frye|burtynsky|sugimoto|eggleston|crewdson|wall|weston|porter|misrach)\b/i;
+
+export function checkProposalVoice(text: string): {
+  ok: boolean;
+  issues: string[];
+} {
+  const issues: string[] = [];
+  if (text.includes('—')) {
+    const count = (text.match(/—/g) || []).length;
+    issues.push(`${count} em-dash(es) found — use commas, periods, or parentheses instead. Hard rule: zero em-dashes.`);
+  }
+  const lower = text.toLowerCase();
+  for (const phrase of PROPOSAL_BANNED_PHRASES) {
+    if (lower.includes(phrase)) issues.push(`banned phrase: "${phrase}"`);
+  }
+  for (const word of PROPOSAL_BANNED_WORDS) {
+    const re = new RegExp(`\\b${word}\\b`, 'i');
+    if (re.test(text)) issues.push(`banned word: "${word}" — use a concrete alternative`);
+  }
+  // Lineage-paragraph check: three or more named photographers in a single
+  // paragraph anywhere in the text. Lineage paragraphs belong in the artist
+  // statement, never in a proposal (skill voice rule #5).
+  for (const para of text.split(/\n\s*\n/)) {
+    if (LINEAGE_NAME_PARAGRAPH.test(para)) {
+      issues.push('lineage paragraph detected — three or more named photographers in one paragraph; lineage belongs in the artist statement, not the proposal');
+      break;
+    }
+  }
+  // Truncation check: the proposal must end with a complete sentence, not
+  // mid-thought. Catches the Epson-Pano-style 63-word regression where the
+  // model ran out of tokens. Allow ., !, ?, ", ', ), ] as terminals.
+  if (text.length > 0 && !/[.!?"'\)\]]\s*$/.test(text)) {
+    issues.push('proposal does not end with terminal punctuation — likely truncated; check max_tokens budget');
+  }
+  return { ok: issues.length === 0, issues };
+}
+
+async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
+  const first = await draftMaterial('project_proposal', ctx);
+  const check = checkProposalVoice(first);
+  if (check.ok) return first;
+
+  const { system } = PROMPTS.project_proposal(ctx);
+  const client = getAnthropic();
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: MAX_TOKENS_BY_TYPE.project_proposal,
+        thinking: { type: 'adaptive' },
+        system,
+        messages: [
+          { role: 'user', content: PROMPTS.project_proposal(ctx).user },
+          { role: 'assistant', content: first },
+          {
+            role: 'user',
+            content: `Your draft violated the hard proposal voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the proposal now. Same opportunity, same template, but fix every issue listed above. End with a complete sentence. Return plain text only.`,
+          },
+        ],
+      }),
+    { label: `drafter-project_proposal-revise` },
+  );
+  const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
   return revised.length > 0 ? revised : first;
 }
 
@@ -562,7 +788,7 @@ export async function draftPackageForMatch(
     if (r) ws.rationale = r;
   }
 
-  const [voiceSkill, proposalSkill, cvSkill, examplesSkill] = await Promise.all([
+  const [voiceSkill, proposalSkill, cvSkill, examplesSkill, proposalExamplesSkill] = await Promise.all([
     readSkill('artist-statement-voice.md', DEFAULT_VOICE_SKILL),
     readSkill('project-proposal-structure.md', DEFAULT_PROPOSAL_SKILL),
     readSkill('cv-format-by-institution.md', DEFAULT_CV_SKILL),
@@ -573,9 +799,18 @@ export async function draftPackageForMatch(
       'artist-statement-real-examples.md',
       'Real artist statement examples not loaded — write in plain first-person voice, open with stake/question, zero em-dashes.',
     ),
+    // WALKTHROUGH Note 21: real-proposal few-shot. Six type-specific
+    // templates (state-fellowship, competition, residency, book-grant,
+    // foundation-grant, commission) plus anti-examples. Always committed;
+    // fallback note matches the same structure as Note 20.
+    readSkill(
+      'project-proposal-real-examples.md',
+      'Real proposal examples not loaded — match the proposal type, no lineage paragraphs, zero em-dashes, end with complete sentences.',
+    ),
   ]);
 
   const oppType = classifyOpportunityType(opp);
+  const proposalType = classifyProposalType(opp);
   const ctx: DraftCtx = {
     akb,
     opp,
@@ -584,12 +819,14 @@ export async function draftPackageForMatch(
     proposalSkill,
     cvSkill,
     examplesSkill,
+    proposalExamplesSkill,
     oppType,
+    proposalType,
     oppRequirementsText,
   };
 
   const artist_statement = await draftStatementWithVoiceCheck(ctx);
-  const project_proposal = await draftMaterial('project_proposal', ctx);
+  const project_proposal = await draftProposalWithVoiceCheck(ctx);
   const cv_formatted = await draftMaterial('cv', ctx);
   const cover_letter = await draftMaterial('cover_letter', ctx);
 

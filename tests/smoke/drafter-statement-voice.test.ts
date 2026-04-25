@@ -18,7 +18,7 @@ function opp(over: Partial<Opportunity> = {}): Opportunity {
     source_id: 'id',
     name: 'Test',
     url: 'https://example.com',
-    deadline: null,
+    deadline: undefined,
     award: { type: 'grant', prestige_tier: 'mid' },
     eligibility: {},
     ...over,
