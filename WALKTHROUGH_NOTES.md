@@ -599,3 +599,51 @@ For ANY number we DO show users (deadline, prize, fee), audit precision:
 **Priority:** high — this is what makes the demo feel like a polished product vs. an internal tool. Should ship before §5.2 demo recording.
 
 ---
+
+## Note 14 — "Deadline Timeline" is decorative, not informational — replace with sorted deadline list
+
+**Where:** dossier page (`/dossier/[runId]`) — the "DEADLINE TIMELINE" panel that renders dots on a horizontal line with "today" and "+6 mo" labels.
+
+**Symptom:** the panel shows 4 dots positioned along a 6-month horizontal axis. No labels per dot. No dates per dot. No opportunity names. The user can SEE that there are 4 deadlines spread across 6 months — but cannot tell which dot represents which opportunity, or what the actual date is for any of them. Visualization without information.
+
+**Root cause:** the timeline was designed as a glanceable shape but the implementation strips all the context that would make the shape meaningful. A timeline that doesn't label its points is decoration, not data.
+
+**Fix (real, not patch — replace the visualization):**
+
+Replace the timeline visualization with a SORTED DEADLINE LIST:
+
+```
+DEADLINES — sorted nearest first
+
+May 31, 2026 (5 weeks)
+Nature Photographer of the Year (NPOTY) 2026 — $27,000 prize, $30 fee
+[click to expand opportunity card]
+
+Jun 30, 2026 (9 weeks)
+International Photography Awards (IPA) 2026 — $10,000 prize, $40 fee
+[click to expand opportunity card]
+
+Oct 13, 2026 (5 months)
+International Landscape Photographer of the Year (ILPOTY) — $5,000 prize, $25 fee
+[click to expand opportunity card]
+
+Oct 15, 2026 (5 months)
+Travel Photographer of the Year (TPOTY) 2026 — $1,370 prize, $25 fee
+[click to expand opportunity card]
+```
+
+Sort key: deadline ASC. Each row is clickable → smooth-scroll to that opportunity's full card on the same page. The list communicates everything the dots tried to + adds the actual information the user needs.
+
+Apply Note 13's number-discipline here too: humanize the date format ("May 31, 2026" not "2026-05-31"), surface time-until-deadline in human units ("5 weeks", "5 months"), round prize amounts.
+
+**Acceptance:**
+- Dossier page shows a sorted-by-deadline list of every included opportunity, not a dot-on-line visualization.
+- Each row contains: human date, time-until, opportunity name, prize, fee.
+- Each row is clickable → scrolls to that opportunity's full card.
+- A user looking at the panel can answer "what do I need to apply to first" in one second.
+
+**File(s):** dossier page component, deadline-timeline component (replace or delete).
+
+**Priority:** high — same as Note 13, ships before §5.2 demo recording.
+
+---
