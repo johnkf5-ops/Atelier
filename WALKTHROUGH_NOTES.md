@@ -562,6 +562,40 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 26 — Statement truncation regression: ILPOTY statement cut to 138 words mid-sentence ("I work in the")
+
+**Where:** `lib/agents/package-drafter.ts` — `draftStatementWithVoiceCheck` and `checkStatementVoice`. Surfaced in re-draft of run 1 with the new Notes 19+20+21+22+23+24+25 bundle.
+
+**Symptom:** the ILPOTY artist statement returned 138 words ending mid-sentence with the literal text *"I work in the"*. All 9 other statements in the same run completed cleanly at 236-270 words. This is the same truncation class Note 21 fixed for proposals (`checkProposalVoice` includes a terminal-punctuation check that catches `[.!?"')]\s*$` failure), but Note 20's `checkStatementVoice` does NOT include that check.
+
+**Root cause:** the post-write voice-check revision pass for the artist statement either produced a shorter-than-original response that the soft fallback shipped, OR the revision itself was cut by max_tokens. Either way, the deterministic linter accepted the truncated text because it doesn't check for terminal punctuation.
+
+**Fix — small extension to Note 20:**
+
+### 26-fix.1 — Add terminal-punctuation check to `checkStatementVoice`
+
+Mirror the pattern from `checkProposalVoice`. Statement text must end with `[.!?"')]\s*$` or it's flagged as truncated. Same revision-pass behavior — feed back to model with the specific issue ("statement was truncated mid-sentence"), bounded one-shot retry, soft fallback.
+
+### 26-fix.2 — Same check on `checkCoverLetterVoice`
+
+Belt-and-suspenders. Cover letters can hit the same truncation pattern. Same regex, same revision feedback.
+
+### 26-fix.3 — Investigate revision-pass token budget
+
+The truncation likely happened on the REVISION pass, not the first draft. The revision call may use a smaller max_tokens than the initial draft. Check `MAX_TOKENS_BY_TYPE` per material — if revisions inherit a smaller budget, the truncation regression will recur. If the revision call uses `MAX_TOKENS_BY_TYPE.artist_statement = 3000`, that should be enough for ~750-word statements with adaptive thinking, but verify. If the issue is adaptive thinking eating the budget on the revision, may need to either bump to 4000 (consistent with proposal) or disable thinking on the revision pass.
+
+### Acceptance for Note 26
+
+- Re-run the redraft script (`scripts/redraft-existing.ts`) against run 1. Every statement ends with terminal punctuation. No mid-sentence truncations.
+- Smoke test extension in `tests/smoke/drafter-statement-voice.test.ts`: assert truncated text (no terminal punctuation) is flagged by `checkStatementVoice`.
+- Same smoke test extension on `tests/smoke/drafter-cover-letter-voice.test.ts`.
+
+**Files:** `lib/agents/package-drafter.ts` (extend `checkStatementVoice` + `checkCoverLetterVoice` + possibly `MAX_TOKENS_BY_TYPE` if 26-fix.3 surfaces a budget issue).
+
+**Priority:** medium-high. One ship-blocker statement out of 30 materials in the redraft. Easy fix; should ship before the full pipeline run.
+
+---
+
 ## Note 25 — Sample rationale prompt allows lineage name-drops in 30-word per-image notes (small)
 
 **Where:** `generateSampleRationales()` in `lib/agents/package-drafter.ts` (Note 19 work). Surfaced in the test fixture (`tests/smoke/sample-rationales.test.ts` line 46-47).
