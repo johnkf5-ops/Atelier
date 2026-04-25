@@ -562,6 +562,46 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 19 — Work sample selection is identical across opportunities + rationale is placeholder text
+
+**Where:** dossier work-sample section per drafted package. Both bugs are in the Drafter's work_sample_selection logic (`lib/agents/package-drafter.ts:185-231`).
+
+**Symptom — two stacked bugs:**
+
+**19a:** Across 10 drafted packages on a recent run, 8 of 10 opportunities show the EXACT same 12 portfolio image IDs `[1,6,11,16,21,29,41,2,15,31,48,66]`. Different opportunities should value different images — what Hamdan International Photography Award wants to see is not what Outdoor Photographer of the Year wants to see. The lack of variation is a tell that the system is generating opportunity-agnostic samples.
+
+**19b:** Every single sample across every opportunity has the exact same rationale string: `"cited as supporting the institution's aesthetic signature in the Rubric Matcher's reasoning"` — a hardcoded placeholder, not model-generated per-image-per-opp reasoning. The user gets no insight into WHY each specific image was chosen for THIS specific opportunity.
+
+**Root causes:**
+
+**For 19a (cascading from upstream):** Rubric returns `supporting_image_ids` per match. When Rubric can see the cohort images (Files API mount working), it picks images that match THAT cohort's aesthetic signature → opportunity-specific selection. When Rubric is BLIND (no cohort images), it can only judge against the StyleFingerprint description, which is the same for every opportunity → same supporting_ids everywhere. The blindness was caused by Note-18-era Scout returning homepage URLs instead of direct image URLs, fixed in commit a2eca7e (Scout prompt + server-side filter requiring direct image URLs). The 19a symptom should self-resolve on the next run with the Scout fix in place.
+
+**For 19b (independent bug):** `lib/agents/package-drafter.ts:204` and 222 hardcode the rationale string. The Drafter never asks the model for per-image rationale. It takes Rubric's `supporting_image_ids` array and stamps the same placeholder text on each. No LLM call, no reasoning, no per-opportunity context.
+
+**Fix:**
+
+**19a verification:** after the Scout fix lands and a new run completes, re-query `run_matches.supporting_image_ids` per opportunity. Different opportunities should now show different image_id lists. If they still show identical lists, dig deeper — Rubric prompt may also need work to force per-cohort discrimination.
+
+**19b real fix:** add a per-opportunity LLM call that generates per-image rationale. Spec:
+
+1. After `selectWorkSamples()` returns the 12 images for an opportunity, fire a single `messages.create` call with:
+   - System: "You are writing one-sentence rationales explaining why each portfolio image fits a specific institutional opportunity. Reference the Rubric Matcher's reasoning paragraph. Voice: terse, specific, no marketing language. One sentence per image. Output JSON array of `{image_id: number, rationale: string}` matching the input image_ids."
+   - User: "OPPORTUNITY: {opp.name}. RUBRIC REASONING: {row.reasoning}. IMAGES TO RATIONALIZE: {array of {image_id, filename, exif_subject_if_known}}. Write one rationale per image."
+2. Parse the response, attach rationale to the WorkSample objects before persisting.
+3. Wrap with `withAnthropicRetry`. ~$0.30-0.60 per dossier (12 images × ~150 tokens × ~10 opps × Opus 4.7 pricing).
+4. Adaptive thinking on for this call — short reasoning helps.
+
+**Acceptance:**
+- Different opportunities show different supporting_image_id sets in DB (verifies 19a).
+- Every drafted sample has a unique, opportunity-specific 1-sentence rationale grounded in the Rubric reasoning. No two sample rationales are identical across the dossier.
+- Smoke test that calls the new per-image-rationale generator with a fixture and asserts the output contains all input image_ids with non-empty distinct rationales.
+
+**Files:** `lib/agents/package-drafter.ts` (selectWorkSamples + new generateSampleRationales function + draftPackageForMatch wiring), possibly new prompt file in `skills/` documenting the rationale voice.
+
+**Priority:** high — this is what makes the demo feel like real curation vs. a wrapper around a 12-image default. Should ship before §5.2 demo recording.
+
+---
+
 ## Note 18 — Aggressiveness selector needs time + cost estimates per option (and Note 16 banner needs cost correction)
 
 **Where:** `/runs/new` Aggressiveness selector (the Note 17c selector with Conservative / Standard / Wide net buttons), and the global demo banner from Note 16.
