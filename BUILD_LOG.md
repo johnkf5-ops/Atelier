@@ -299,3 +299,24 @@ Smoke test (`tests/smoke/auto-discover-identity.test.ts`) covers schema acceptan
 
 **Acceptance criteria status (verifiable on next prod run):** ≥10 of top-15 yield extractable content via fetch-or-snippet ✓ structurally enabled. Zero wrong-person facts ✓ structurally enforced. User-facing summary reframed ✓ shipped. Integration test against live web_search left for John's manual verification rather than CI (real Anthropic + web_search costs).
 
+### Notes 1, 2, 10, 12 — polish-batch closeout
+
+**Commit:** `fb5f1b8`. Pushed.
+
+Four notes shipped together since they touched disjoint files.
+
+**Notes 1 + 2 — cycling status during long-running calls.** New `app/_components/cycling-status.tsx` with `<CyclingStatus messages={...} intervalMs={5000} />`. `auto-discover-panel` wires two distinct message lists: discovery phase (*"Searching the web…", "Reading gallery sites and bios…", "Cross-referencing affiliations…"*) and ingest phase (*"Opening pages…", "Checking each fact against your identity anchor…", "Saving your KB…"*). Reads as continuously-progressing instead of frozen.
+
+**Note 12 — per-event timestamps in `/runs/[id]` live feed.** `pickEventTs()` prefers Anthropic `processed_at` (live poll path) and falls back to playback `_created_at`. `FeedRow` renders the event's own time + a `+Ns / +Nm Ns` delta from the prior row. Long gaps (>30s) render the delta in amber so silence reads as "agent thinking" not "frozen UI". A glance at the feed now answers "is the agent moving fast or slow."
+
+**Note 10 — delete-any-fact + untrust-source (data integrity).**
+
+- New `untrusted_sources(user_id, url, reason, rejected_at)` table — `EXPECTED_TABLES` + `reset-db` + bootstrap test all updated.
+- `lib/db/queries/untrusted-sources.ts` — list/add/remove/isUntrusted.
+- `ingestUrls` filters URLs through the user's untrusted-sources list BEFORE running `ingestUrl`. Filtered URLs surface as *"source previously marked untrusted by user"* failures so the user sees why they were skipped.
+- New `POST /api/akb/delete-fact` — removes an array entry at index OR clears a scalar field, writes new `akb_versions` row with `source='manual'`. Optional `untrust_source: true` flag also adds the matching source URL to `untrusted_sources` so the same hallucination can't re-enter on the next ingest.
+- New `POST/DELETE/GET /api/akb/untrust-source` — dedicated endpoint for managing the untrusted list.
+- `/review` `ArrayFactSection` renders awards, exhibitions, publications, bodies of work, education, representation, collections as per-row JSON cards with source provenance line + Remove button. Two-step confirm flow shows "Delete" and (if the fact came from an ingested source) "Delete + untrust source" so a single click handles the StarCraft-class hallucination.
+
+53/53 smoke tests pass. `tsc` + `lint` + `build` all clean. Pushed to main.
+
