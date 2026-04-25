@@ -1,10 +1,17 @@
 # Atelier
 
-An AI art director for working visual artists. Upload your portfolio, build a Knowledge Base from public web data and a short interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
+*An AI art director for working visual artists.*
 
-[![Built with Claude Opus 4.7](https://img.shields.io/badge/Built%20with-Claude%20Opus%204.7-d97706)](https://platform.claude.com/docs/en/about-claude/models/overview)
-[![Hackathon entry](https://img.shields.io/badge/Built%20with%20Opus%204.7-Hackathon%20entry-1f2937)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
+[![Built with Claude Opus 4.7](https://img.shields.io/badge/Built_with-Claude_Opus_4.7-C15F3C?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
+[![Cerebral Valley × Anthropic Hackathon](https://img.shields.io/badge/Cerebral_Valley_%C3%97_Anthropic-Built_with_Opus_4.7-1f2937?style=flat-square)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
+[![Live demo](https://img.shields.io/badge/Live_demo-atelier--hazel.vercel.app-000000?style=flat-square&logo=vercel&logoColor=white)](https://atelier-hazel.vercel.app)
+[![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-1f2937?style=flat-square)](#license)
+
+---
+
+Upload your portfolio, build a Knowledge Base from public web data and a short interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
 
 ---
 
@@ -16,14 +23,20 @@ Atelier is the tool that removes the writing wall. It reads your portfolio with 
 
 It is built for mid-career US visual artists with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user.
 
+---
+
 ## Demo
 
-- [Live deploy](https://atelier-hazel.vercel.app)
-- [Demo video](TBD)
+- Live deploy → [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)
+- Demo video → *TBD*
+
+---
 
 ## Built for
 
-[Cerebral Valley × Anthropic — Built with Opus 4.7](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon). Submission deadline 2026-04-26 8:00 PM EST. Targets Problem Statement #1, "Build From What You Know" — the builder is a working photographer building for working photographers.
+[Cerebral Valley × Anthropic — Built with Opus 4.7](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon). Submission deadline 2026-04-26 8:00 PM EST. Targets Problem Statement #1, *"Build From What You Know"* — the builder is a working photographer building for working photographers.
+
+---
 
 ## How it works
 
@@ -59,6 +72,8 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
 
 The two Managed Agent surfaces (Scout, Rubric) run on Anthropic's hosted orchestration layer. Our Vercel routes kick off the session and poll for events; the long agent loop survives Vercel's 60-second function timeout because no long-lived connection lives on our infrastructure.
 
+---
+
 ## Architecture summary
 
 - **App framework:** Next.js 15 (App Router) + React 19 + TypeScript
@@ -75,6 +90,8 @@ The two Managed Agent surfaces (Scout, Rubric) run on Anthropic's hosted orchest
 
 Detailed architecture, including the run lifecycle, Managed Agent session shape, and AKB merge semantics, lives in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
+---
+
 ## Two novel primitives
 
 These are the contributions that distinguish Atelier from a chat-with-your-portfolio prototype.
@@ -86,6 +103,8 @@ Most working artists are not very googlable, and most cannot write well about th
 ### 2. Rubric Matcher — aesthetic-judgment-as-matching against past-recipient cohorts
 
 For each candidate opportunity, the Matcher fetches the last three years of recipients, finds their portfolio images, uploads those images to the Anthropic Files API, and mounts them inside the Managed Agent session at known paths alongside the artist's own portfolio. The agent then reads both cohorts directly with vision and scores the fit, with reasoning that cites which of the artist's specific images support the match and which weaken it. Programs whose past recipients work in different aesthetic territory get filtered out with explicit "why not" reasoning surfaced to the user — saying no with reasons is part of the value, not a by-product. See [`lib/agents/rubric-matcher.ts`](./lib/agents/rubric-matcher.ts) and [`app/api/runs/[id]/finalize-scout/`](./app/api/runs/) for the recipient-image pipeline.
+
+---
 
 ## Setup
 
@@ -162,6 +181,8 @@ pnpm test
 
 Runs the smoke suite under `tests/smoke/` — API error contract, Anthropic retry behavior, AKB merge invariants, finalize-scout file uploads, portfolio count consistency, and others.
 
+---
+
 ## Project structure
 
 ```
@@ -213,6 +234,8 @@ foto/
 └── WALKTHROUGH_NOTES.md              Production walkthrough notes (open)
 ```
 
+---
+
 ## Documentation
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — detailed architecture: run lifecycle, Managed Agent session shape, AKB merge semantics, retry posture
@@ -221,14 +244,20 @@ foto/
 - [`skills/README.md`](./skills/README.md) — skill catalog: what each of the 21 skill files codifies
 - [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md) — running notes from production walkthroughs
 
+---
+
 ## License
 
 MIT. See [`LICENSE`](./LICENSE).
 
 Open source per the hackathon rule: every component — backend, frontend, schemas, skill files — is published. Managed services used (Turso/LibSQL, Vercel Blob, Anthropic API) are accessed through public APIs and could be swapped for self-hosted equivalents (a local LibSQL file, S3-compatible blob storage, any Anthropic API endpoint) without architectural change.
 
+---
+
 ## Credits
 
-Built by [John Knopf](https://www.johnknopfphotography.com) — Emmy-nominated fine-art landscape photographer, two galleries (Las Vegas, Minneapolis), published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google. Fifteen years inside the visual-arts-submission economy; never applied to a single grant because writing was the wall. Atelier is the tool that would have removed the wall.
+Built by [John Knopf](https://www.johnknopfphotography.com) — Emmy-nominated fine-art landscape photographer, two galleries (Las Vegas, Minneapolis), published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google.
+
+> Fifteen years inside the visual-arts-submission economy; never applied to a single grant because writing was the wall. Atelier is the tool that would have removed the wall.
 
 Built with Claude Opus 4.7 for the [Cerebral Valley × Anthropic "Built with Opus 4.7" hackathon](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon).
