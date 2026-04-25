@@ -562,6 +562,37 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 18 — Aggressiveness selector needs time + cost estimates per option (and Note 16 banner needs cost correction)
+
+**Where:** `/runs/new` Aggressiveness selector (the Note 17c selector with Conservative / Standard / Wide net buttons), and the global demo banner from Note 16.
+
+**Symptom:** the three Aggressiveness cards have no time or cost estimates, so the user has no way to know what they're choosing between. The choice feels abstract. SEPARATELY: the Note 16 demo banner currently says "Each run costs ~$3-5 in Anthropic API calls" — actual cost is $10-50 per run depending on Aggressiveness. Off by an order of magnitude.
+
+**Per-card estimates (use these, derived from actual run-2 timing of 12 opps in ~15 min on prod):**
+
+- **Conservative (15 opportunities)** — ~20–30 minutes, ~$10–15
+- **Standard (25 opportunities)** — ~30–45 minutes, ~$20–25
+- **Wide net (40 opportunities)** — ~60–90 minutes, ~$40–60
+
+These are rough estimates — actual cost varies with opportunity complexity (how many recipients each has → how many Files API uploads), Rubric scoring depth, and Drafter material counts. Use a "~" prefix and mention "your actual time and cost may vary" in fine print under the cards.
+
+**Fix:**
+
+1. Each card on `/runs/new` Aggressiveness selector renders below the option name:
+   - Time line: "~20–30 min" (or whatever range)
+   - Cost line: "~$10–15 in Anthropic API costs (charged to the demo's API key)"
+2. Below all three cards, a fine-print note: "Estimates based on actual run timing. Your run may finish faster or slower depending on how many recipients each opportunity has and how the model decides to pace its work."
+3. **Update the Note 16 demo banner copy** from "Each run costs ~$3-5" to "Each run costs ~$10-60 in Anthropic API calls (depending on Aggressiveness setting). Please don't trigger more than one run unless you're testing something specific."
+4. Also update the Note 16 Start Run modal copy to match the new cost range.
+
+**Acceptance:** A judge looking at the Aggressiveness selector can see exactly what they're committing to before clicking Start Run. The demo banner cost claim matches reality.
+
+**File(s):** `app/(dashboard)/runs/new/page.tsx` (Aggressiveness card render), wherever the Note 16 demo banner copy lives, wherever the Note 16 Start Run modal lives (probably also `/runs/new`).
+
+**Priority:** medium — this is UX honesty, not a blocker. Should ship before §5.2 demo recording so the demo's first impression is calibrated.
+
+---
+
 ## Note 17 — Dossier missing apply links + material explainers + soft opportunity cap
 
 Three distinct dossier UX gaps surfaced together:
