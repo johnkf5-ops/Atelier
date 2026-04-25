@@ -332,6 +332,41 @@ PRE-SUBMIT SELF-CHECK (do this before returning the text — silently revise if 
 - No banned phrase from constraint #4 appears.
 - Word count is 150-300.`;
 
+// WALKTHROUGH Note 23: cover-letter-specific structural rules layered on
+// top of STATEMENT_VOICE_CONSTRAINTS. Cover letters are personal corre-
+// spondence from the artist to the panel; they need first-person enforce-
+// ment, salutation convention, no lineage paragraph, selective career
+// markers, and an opportunity-specific "why this, why now" sentence.
+const COVER_LETTER_VOICE_CONSTRAINTS = `COVER LETTER STRUCTURAL RULES (in addition to the voice constraints above):
+
+1. FIRST PERSON THROUGHOUT. The cover letter is personal correspondence FROM the artist TO the panel. Write "I submit…", "I am a Las Vegas-based landscape photographer…", "I was included in…". NEVER "Knopf submits…", "Knopf is…", "Knopf was…". The artist's surname appears ONLY as the typed signature at the bottom.
+
+2. SALUTATION. Open with "Dear [Name]," or "Dear Selection Committee,". NEVER bare "Selection Committee" or "To Whom It May Concern". If the opportunity record names a juror or panel chair, address them by name and title ("Dear Dr. [Name],").
+
+3. NO LINEAGE PARAGRAPH. Lineage lives in the artist statement. The panel reads the statement separately. Banned: any sentence listing two or more named photographers as influences (Adams + Rowell + Lik + Butcher + Luong rolls). Banned: phrases "lineage of", "in the tradition of", "the work sits in", "commercial-gallery register", "destination-landscape tradition".
+
+4. SELECTIVE CAREER MARKERS. Pick the 1-3 career markers MOST RELEVANT to THIS specific opportunity. Geographic fit → pull the geographic-relevant credit (Mondoir Dubai for Dubai-region opps; Las Vegas gallery program for Nevada opps). Register fit → pull the lineage-aligned credits without listing them all. Civic / community / curatorial relevance → pull FOTO founder + curatorial credits. Do NOT paste the full reel of "Mondoir 2025 + Venice 2022 + Art Basel 2022 + NFT cohorts + monographs" in every letter.
+
+5. SPECIFIC TO THIS OPPORTUNITY. The letter MUST contain at least one sentence naming a specific reason for THIS opportunity at THIS time — not generic "this is the right venue for this work." Examples: "I am writing in advance of the upcoming third monograph deadline because [opp] would directly support its publication"; "the cohort recognized in [opp]'s last cycle includes work I have studied closely"; "the [specific category] is the right home for the [specific body of work]".
+
+6. STRUCTURE: salutation → 1 paragraph self-introduction (who I am, in 1-2 sentences) → 1 paragraph why this specific opportunity (the case for fit) → 1 paragraph the most relevant career markers (selective) → close ("Thank you for your consideration.") → signature on its own line (the artist's NAME from identity.artist_name).
+
+7. LENGTH 200-350 words. Brevity is generosity to the panel.
+
+8. NO METHOD/GEAR PARAGRAPH. Technique belongs in the artist statement (where it's justified) or the project proposal (where it's load-bearing). The cover letter is correspondence, not a technical document.
+
+9. NO TAX/ADMIN FOOTER. The artist's legal name belongs in the application form's admin section, not in the cover letter body. Sign with identity.artist_name only.
+
+10. INHERITED BANS still apply: "sits in the lineage of", "commercial-gallery register", "aesthetic signature", "the medium has been preparing itself", "quiet authority", "emotional weight", and the Note 20 banned word list (vision, journey, passion, explore, capture, story-when-generic).
+
+PRE-SUBMIT SELF-CHECK (silently revise if any fails):
+- Salutation includes "Dear" and ends with comma.
+- Body uses first person throughout. Zero instances of "Knopf" in any body sentence (signature only).
+- No sentence names two or more photographers as influences.
+- One sentence specifically references this opportunity by name + a specific reason for this cycle.
+- Word count 200-350 (signature line excluded from the count).
+- Closes with a sign-off ("Thank you for your consideration." or similar) followed by a signature line.`;
+
 const PROMPTS: Record<MaterialType, (ctx: DraftCtx) => { system: string; user: string }> = {
   artist_statement: (ctx) => ({
     system:
@@ -400,9 +435,15 @@ Write the project proposal now. Match the structural shape of the matching templ
       // prose — the same LLM tells apply.
       STATEMENT_VOICE_CONSTRAINTS +
       '\n\n---\n\n' +
+      // WALKTHROUGH Note 23: cover-letter-specific structural rules layered
+      // on top of the inherited statement voice block.
+      COVER_LETTER_VOICE_CONSTRAINTS +
+      '\n\n---\n\n' +
       FINGERPRINT_CONSTRAINT + "\n\n---\n\n" + NAME_PRIMACY_CONSTRAINT +
-      "\n\n---\n\nYou are writing a brief cover letter introducing the artist to this specific opportunity's selectors. 200-300 words. Named addressee if the opportunity has a known director; else \"Selection Committee\". Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only.",
-    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}) — ${ctx.opp.url}
+      `\n\n---\n\nYou are writing a brief cover letter from the artist (${ctx.akb.identity.artist_name || 'the artist'}) to this opportunity's selectors. Pull facts ONLY from the provided AKB. Visual claims MUST match the StyleFingerprint. No preamble, no markdown. Return plain text only — start with the salutation line, end with the artist's signed name.`,
+    user: `OPPORTUNITY: ${ctx.opp.name} (${ctx.opp.award.type}, ${ctx.opp.award.prestige_tier}) — ${ctx.opp.url}
+
+PROPOSAL_TYPE: ${ctx.proposalType}
 
 STYLE_FINGERPRINT:
 ${JSON.stringify(ctx.fingerprint, null, 2)}
@@ -410,7 +451,7 @@ ${JSON.stringify(ctx.fingerprint, null, 2)}
 ARTIST_AKB:
 ${JSON.stringify(ctx.akb, null, 2)}
 
-Write the cover letter now.`,
+Write the cover letter now. First-person throughout. Open with "Dear [name]," or "Dear Selection Committee,". Pick 1-3 career markers MOST RELEVANT to THIS specific opportunity (do not paste the full reel). Include one sentence naming a specific reason for THIS opportunity at THIS time. Sign with the artist's name (${ctx.akb.identity.artist_name || 'the artist'}).`,
   }),
 };
 
@@ -606,6 +647,136 @@ async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
         ],
       }),
     { label: `drafter-project_proposal-revise` },
+  );
+  const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
+  return revised.length > 0 ? revised : first;
+}
+
+/**
+ * WALKTHROUGH Note 23: post-write voice check on the cover letter. Mirrors
+ * Note 20/21 — deterministic linter + bounded one-shot revision pass.
+ * Cover-letter-specific checks layered on top of the inherited statement
+ * lints: salutation must include "Dear", body must be first-person (no
+ * "Knopf submits/is/was/has" in the body), no lineage paragraph (3+ named
+ * photographers in one paragraph), opportunity name must appear at least
+ * once, length 200-350 words excluding the signature line.
+ *
+ * `lastName` is the artist's surname extracted from identity.artist_name
+ * (last whitespace-separated token). Letting the signature line carry the
+ * surname is fine — only the body is checked for third-person leakage.
+ */
+const COVER_LETTER_BANNED_PHRASES = [
+  ...PROPOSAL_BANNED_PHRASES,
+  'to whom it may concern',
+];
+
+export function checkCoverLetterVoice(
+  text: string,
+  opp: { name: string },
+  artistName: string,
+): { ok: boolean; issues: string[] } {
+  const issues: string[] = [];
+
+  // 1. Salutation must include "Dear" and end with comma.
+  const firstLine = (text.split(/\r?\n/, 1)[0] || '').trim();
+  if (!/^dear\b/i.test(firstLine)) {
+    issues.push('salutation must open with "Dear" — e.g. "Dear Selection Committee," or "Dear [Name],"');
+  }
+
+  // 2. First-person body — strip the signature line(s) before checking
+  // surname leakage. Signature is the trailing block after the close.
+  const lines = text.split(/\r?\n/);
+  // Heuristic: drop the last 1-3 non-empty lines as the signature block.
+  // We only flag surname leakage above that.
+  let bodyEnd = lines.length;
+  let nonEmptyCount = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim().length > 0) {
+      nonEmptyCount++;
+      if (nonEmptyCount >= 2) {
+        bodyEnd = i;
+        break;
+      }
+    }
+  }
+  const body = lines.slice(0, bodyEnd).join('\n');
+
+  const surname = (artistName.trim().split(/\s+/).pop() || '').trim();
+  if (surname.length > 1) {
+    const surnameRe = new RegExp(`\\b${surname}\\b\\s+(submits|is|was|has|photographs|shoots|works|writes|presents|exhibits|appears|continues|received|received\\b)`, 'i');
+    if (surnameRe.test(body)) {
+      issues.push(`third-person voice detected — body contains "${surname} [verb]". Cover letter must be first-person ("I submit", "I am", "I was"); the surname appears only in the signature line.`);
+    }
+  }
+
+  // 3. No banned phrases (inherited + cover-letter-specific).
+  const lower = text.toLowerCase();
+  for (const phrase of COVER_LETTER_BANNED_PHRASES) {
+    if (lower.includes(phrase)) issues.push(`banned phrase: "${phrase}"`);
+  }
+  for (const word of STATEMENT_BANNED_WORDS) {
+    const re = new RegExp(`\\b${word}\\b`, 'i');
+    if (re.test(text)) issues.push(`banned word: "${word}" — use a concrete alternative`);
+  }
+
+  // 4. Em-dash check.
+  if (text.includes('—')) {
+    const count = (text.match(/—/g) || []).length;
+    issues.push(`${count} em-dash(es) found. Hard rule: zero em-dashes.`);
+  }
+
+  // 5. Lineage paragraph check (same regex as proposal).
+  for (const para of text.split(/\n\s*\n/)) {
+    if (LINEAGE_NAME_PARAGRAPH.test(para)) {
+      issues.push('lineage paragraph detected — three or more named photographers in one paragraph; lineage belongs in the artist statement, not the cover letter');
+      break;
+    }
+  }
+
+  // 6. Opportunity name must appear at least once (specificity check).
+  // Use a relaxed match — strip parentheticals and abbreviation suffixes.
+  const oppCore = opp.name.replace(/\s*\(.*?\)\s*/g, '').trim();
+  if (oppCore.length > 3 && !text.toLowerCase().includes(oppCore.toLowerCase())) {
+    issues.push(`opportunity name "${oppCore}" does not appear anywhere in the letter — cover letter must specifically reference THIS opportunity by name`);
+  }
+
+  // 7. Length 200-350 words (body, signature included is fine — close enough).
+  const wordCount = text.split(/\s+/).filter((w) => w.length > 0).length;
+  if (wordCount < 180 || wordCount > 380) {
+    issues.push(`word count is ${wordCount}; target is 200-350 words.`);
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+async function draftCoverLetterWithVoiceCheck(ctx: DraftCtx): Promise<string> {
+  const first = await draftMaterial('cover_letter', ctx);
+  const check = checkCoverLetterVoice(
+    first,
+    { name: ctx.opp.name },
+    ctx.akb.identity.artist_name || '',
+  );
+  if (check.ok) return first;
+
+  const { system } = PROMPTS.cover_letter(ctx);
+  const client = getAnthropic();
+  const resp = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: MODEL_OPUS,
+        max_tokens: MAX_TOKENS_BY_TYPE.cover_letter,
+        thinking: { type: 'adaptive' },
+        system,
+        messages: [
+          { role: 'user', content: PROMPTS.cover_letter(ctx).user },
+          { role: 'assistant', content: first },
+          {
+            role: 'user',
+            content: `Your draft violated the hard cover-letter voice constraints. Specific issues:\n${check.issues.map((i) => `- ${i}`).join('\n')}\n\nRewrite the cover letter now. Same opportunity, same artist, but fix every issue listed above. Open with "Dear", body in first person throughout, name the opportunity by name with a specific reason for THIS cycle, sign with the artist's name only. Return plain text only.`,
+          },
+        ],
+      }),
+    { label: `drafter-cover_letter-revise` },
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
   return revised.length > 0 ? revised : first;
@@ -956,7 +1127,7 @@ export async function draftPackageForMatch(
 
   const artist_statement = await draftStatementWithVoiceCheck(ctx);
   const project_proposal = await draftProposalWithVoiceCheck(ctx);
-  const cover_letter = await draftMaterial('cover_letter', ctx);
+  const cover_letter = await draftCoverLetterWithVoiceCheck(ctx);
   // WALKTHROUGH Note 22-fix.3: cv_formatted column repurposed as a per-opp
   // trim NOTE (not a CV). Deterministic regex on oppRequirementsText —
   // null when the opportunity has no stated CV cap. Master CV is generated
