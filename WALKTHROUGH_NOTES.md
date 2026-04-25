@@ -562,6 +562,41 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 25 — Sample rationale prompt allows lineage name-drops in 30-word per-image notes (small)
+
+**Where:** `generateSampleRationales()` in `lib/agents/package-drafter.ts` (Note 19 work). Surfaced in the test fixture (`tests/smoke/sample-rationales.test.ts` line 46-47).
+
+**Symptom (test fixture, but realistic shape of model output):**
+
+> `"roadside vernacular signals Stephen Shore lineage the panel has rewarded twice"`
+
+A 30-word per-image rationale should be brief and specific to the image content + cohort fit. Lineage name-drops ("Stephen Shore lineage", "Adams tradition", "Lik register") add curator-essay weight to what should be a short observational note. The existing Note 19 prompt bans "marketing vocabulary" but does not ban lineage-name-drops in rationales.
+
+**What a clean rationale looks like:**
+
+- ✅ "deep-blue palette matches the winners' color register"
+- ✅ "vertical orientation echoes the cohort's preferred crop discipline"
+- ✅ "boulder repoussoir at the wide-angle near edge — the device this jury has consistently rewarded"
+- ❌ "signals Stephen Shore lineage the panel has rewarded twice"
+- ❌ "in the Adams tradition that informs this cohort's exposure discipline"
+- ❌ "carries the Peter Lik register"
+
+**Fix:**
+
+Extend the `generateSampleRationales()` system prompt with one additional constraint:
+
+> "NO LINEAGE NAME-DROPS in rationales. A per-image rationale is a brief observational note about THIS image's specific qualities and how those qualities map to the cohort's aesthetic signature — not a curator-essay sentence about lineage. Banned: any rationale that names a photographer (Adams, Lik, Rowell, Shore, Eggleston, Sugimoto, etc.) as evidence the image fits. The rationale must describe the image's PROPERTIES (palette, crop, subject, composition, condition) and how they match the cohort, not name a tradition or photographer."
+
+Plus an extension of the existing post-write check: scan each rationale for capitalized-photographer-name patterns (single-word capitalized photographer surnames — Adams / Lik / Shore / Eggleston / Sugimoto / Frye / Butcher / Luong / Plant / Rowell / Wall / Ratcliff / Dobrowner) and flag if any appear inside a per-image rationale. Soft fail with retry.
+
+**Acceptance:** smoke test asserts: across all generated rationales for a fixture, no rationale contains a capitalized photographer surname. Lineage discussion belongs in the artist statement, not in 30-word per-image notes.
+
+**Files:** `lib/agents/package-drafter.ts` (rationale prompt + post-write check extension), `tests/smoke/sample-rationales.test.ts` (extend with no-lineage-name-drop assertion).
+
+**Priority:** low — small extension to existing Note 19. Bundle with Notes 20+21+22+23+24 as part of the same Drafter polish pass.
+
+---
+
 ## Note 24 — Drafter is HALLUCINATING facts (invented exhibitions, partnerships, dates) — needs hard AKB-only constraint
 
 **Where:** every Drafter prompt that asks the model to write specific content (artist statement, project proposal, cover letter, work-sample rationale). Surfaced first in the Note 23 cover letter smoke test output.
