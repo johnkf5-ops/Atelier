@@ -228,7 +228,11 @@ describe('startRubricSession — Note 29 wire-up', () => {
     expect(arg).not.toHaveProperty('resources');
   });
 
-  it('sends one events.send call with [setup, ...per-opp messages]', async () => {
+  // WALKTHROUGH Note 30: startRubricSession sends ONLY the setup at session
+  // start. Per-opp messages are dispatched sequentially by run-poll's
+  // sendNextRubricOpp on each idle. Batched-events (Note 29 first pass)
+  // risked compaction at scale; sequential dispatch keeps each turn small.
+  it('sends ONLY the setup message at session start (no per-opp messages bundled)', async () => {
     const { startRubricSession } = await import('@/lib/agents/rubric-matcher');
     await startRubricSession(
       1,
@@ -242,13 +246,11 @@ describe('startRubricSession — Note 29 wire-up', () => {
       string,
       { events: Array<{ type: string; content: unknown[] }> },
     ];
-    expect(body.events.length).toBe(3); // setup + 2 opp messages
+    expect(body.events.length).toBe(1); // setup only — opps dispatched by run-poll
     expect(body.events[0].type).toBe('user.message');
-    expect(body.events[1].type).toBe('user.message');
-    expect(body.events[2].type).toBe('user.message');
   });
 
-  it('every event sent contains at least one image content block', async () => {
+  it('the setup event sent contains at least one image content block (portfolio)', async () => {
     const { startRubricSession } = await import('@/lib/agents/rubric-matcher');
     await startRubricSession(
       1,
@@ -261,9 +263,7 @@ describe('startRubricSession — Note 29 wire-up', () => {
       string,
       { events: Array<{ content: Array<{ type: string }> }> },
     ];
-    for (const ev of body.events) {
-      const imageCount = ev.content.filter((c) => c.type === 'image').length;
-      expect(imageCount).toBeGreaterThan(0);
-    }
+    const imageCount = body.events[0].content.filter((c) => c.type === 'image').length;
+    expect(imageCount).toBeGreaterThan(0);
   });
 });

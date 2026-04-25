@@ -3,7 +3,7 @@ import { getAnthropicKey } from '@/lib/auth/api-key';
 import { getDb } from '@/lib/db/client';
 import { withAnthropicRetry } from '@/lib/anthropic-retry';
 import { persistOpportunityFromAgent } from '@/lib/agents/opportunity-scout';
-import { persistMatchFromAgent } from '@/lib/agents/rubric-matcher';
+import { persistMatchFromAgent, sendNextRubricOpp } from '@/lib/agents/rubric-matcher';
 
 /**
  * Handles any pending session.status_idle with stop_reason.type ==='requires_action'
@@ -164,14 +164,24 @@ export async function pollRun(
         phaseDone = true;
       }
     } else if (phase === 'rubric') {
-      const cas = await db.execute({
-        sql: `UPDATE runs SET status = 'rubric_complete' WHERE id = ? AND status = 'rubric_running'`,
-        args: [runId],
-      });
-      if (cas.rowsAffected > 0) {
-        const { waitUntil } = await import('@vercel/functions');
-        waitUntil(fetch(new URL(`/api/runs/${runId}/finalize`, req.url), { method: 'POST' }).catch(() => {}));
-        phaseDone = true;
+      // WALKTHROUGH Note 30 sequential dispatch: when the Rubric session
+      // goes idle (after setup ack OR after a persist_match round-trip),
+      // try to send the next unscored opp's user.message. If there's
+      // still work to do, this is NOT a terminal idle — return without
+      // marking rubric_complete so the next poll cycle drives the next
+      // opp. Only when sendNextRubricOpp returns false (no more opps)
+      // do we transition to rubric_complete + fire finalize.
+      const sentNext = await sendNextRubricOpp(client, runId, managed_session_id);
+      if (!sentNext) {
+        const cas = await db.execute({
+          sql: `UPDATE runs SET status = 'rubric_complete' WHERE id = ? AND status = 'rubric_running'`,
+          args: [runId],
+        });
+        if (cas.rowsAffected > 0) {
+          const { waitUntil } = await import('@vercel/functions');
+          waitUntil(fetch(new URL(`/api/runs/${runId}/finalize`, req.url), { method: 'POST' }).catch(() => {}));
+          phaseDone = true;
+        }
       }
     }
   }
