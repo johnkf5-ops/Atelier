@@ -471,3 +471,46 @@ Half-step variant: assumes the demo state is already seeded, just kicks off a fr
 **Priority:** high — data integrity bug. Auto-discover is broken until Note 3 lands; until then, Note 10 is the safety valve that lets users remove the broken outputs. Should ship alongside or before Note 3.
 
 ---
+
+## Note 11 — Anthropic transient errors (529 / 503 / 429) surface as "Failed to fetch" instead of auto-retrying
+
+**Where:** Style Analyst (verified via Vercel runtime log — see below). Likely affects every Anthropic-call route in the app.
+
+**Symptom:** Style Analyst on prod with 62 images returned `Analysis failed: couldn't reach server (Failed to fetch)`. Investigation via `vercel logs` revealed the actual error is upstream:
+
+```
+Error: 529 {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"},"request_id":"req_011CaPbsF1pLtAMHHtRyytyW"}
+[style-analyst] 2/4 chunks failed; synthesizing from 2
+```
+
+The Style Analyst route is well-designed — it chunks the portfolio into parallel batches and tolerates partial failure. But when 2 of 4 chunks hit Anthropic's transient 529 AND the synthesis call also hits 529, the whole route 500s. The user sees "Failed to fetch" with no actionable signal.
+
+**Root cause:** no retry-with-backoff on Anthropic transient errors. Anthropic explicitly publishes 529 (overloaded), 503 (service unavailable), 429 (rate-limited, with `retry-after` header) as transient — these are MEANT to be retried by the client.
+
+**Fix (real, not patch — applied to every Anthropic call in the codebase):**
+
+1. **Wrap every Anthropic call in a retry helper.** Single shared module `lib/anthropic/retry.ts` exports `withAnthropicRetry(fn, options?)` that:
+   - Retries on `status === 529`, `status === 503`, `status === 502`, `status === 429`, and ECONNRESET / ETIMEDOUT network errors.
+   - Exponential backoff: 1s, 3s, 9s, 27s — up to 4 retries.
+   - Honors `retry-after` header from 429 responses (use that value if present, otherwise backoff schedule).
+   - Logs every retry to `console.warn` with `[anthropic-retry] attempt N after Xs delay, last error: ...`.
+   - On final failure (all retries exhausted), throws with a user-friendly message: `"Anthropic API is currently overloaded. We retried 4 times. Try again in a minute or two."` — NEVER lets the raw 529 stack trace bubble to the frontend.
+
+2. **Audit every Anthropic SDK call site.** `getAnthropic().messages.create(...)`, `.beta.sessions.create(...)`, `.beta.files.upload(...)`, etc. Wrap each one with `withAnthropicRetry()`. Add an ESLint rule (or grep-based CI check) that fails the build if any direct `.messages.create(...)` call exists without going through the retry wrapper.
+
+3. **For long-running parallel batched calls (Style Analyst, future batched things):** the retry wrapper applies to each individual call. PLUS: at the route level, if N-of-M batches fail after all retries, log clearly which ones failed AND surface a partial result OR a "we couldn't reach the model after retries — please try again in a moment" error that flows through `withApiErrorHandling` so the frontend gets a JSON response with a readable message, not "Failed to fetch."
+
+4. **Add a dev/health probe for Anthropic capacity.** `/api/health` already probes Files-API. Add a probe that fires a tiny `messages.create()` call and reports latency + last-known-overload status. Lets us spot Anthropic-side weather BEFORE running expensive flows.
+
+5. **User-visible "Anthropic is overloaded" affordance.** When the retry wrapper exhausts retries, surface a clear UI banner: "Anthropic's API is currently overloaded — this happens during peak usage. Click Retry, or wait a minute and try again. Your portfolio is saved." Already-friendly Style Analyst error message + auto-Retry button is most of the way there; just upgrade the copy and add an automatic-retry-after-delay option.
+
+**Acceptance:**
+- Style Analyst on 62 images on prod with Anthropic at peak load: succeeds (eventually) after silent retries, OR shows a clear "Anthropic overloaded — try again in a minute" message after exhausting retries. Never "Failed to fetch."
+- Same behavior for every other Anthropic-call route (Knowledge Extractor, Rubric, Drafter, etc.).
+- Smoke test: mock Anthropic returning 529 once then success on second call — assert the retry wrapper succeeds without bubbling the 529.
+
+**File(s):** new `lib/anthropic/retry.ts`, every Anthropic call site (Style Analyst, Knowledge Extractor, Package Drafter, finalize-scout, recipient downloader, anywhere else), `app/api/health/route.ts` (capacity probe), `lib/api/response.ts` (error message mapping).
+
+**Priority:** high. Anthropic 529s are common during hackathon hours (everyone hammering the same API). Without retry, we look like the system is broken when it's actually just transient upstream load. Shipping this makes Atelier resilient to peak-hour weather — which is exactly when judges will be touching it.
+
+---
