@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "fingerprint": {
+    "composition_tendencies": ["centered axial"],
+    "palette": {
+      "dominant_temperature": "warm",
+      "saturation_register": "natural",
+      "notable_palette_notes": []
+    },
+    "subject_categories": ["landscape"],
+    "light_preferences": ["golden hour"],
+    "formal_lineage": ["Adams"],
+    "career_positioning_read": "Example career read.",
+    "museum_acquisition_signals": [],
+    "weak_signals": []
+  }
+}

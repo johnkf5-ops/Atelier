@@ -9,6 +9,9 @@
     "lint": "next lint",
     "setup:agents": "tsx scripts/setup-managed-agents.ts",
     "db:reset": "tsx scripts/reset-db.ts --yes-reset-everything",
+    "seed:export": "tsx scripts/seed-export.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts",
+    "seed:demo:run-only": "tsx scripts/seed-demo-run-only.ts",
     "test": "vitest run tests/smoke"
   },
   "dependencies": {

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "akb": {
+    "identity": {
+      "legal_name": "Alex Example",
+      "public_name": "Alex Example",
+      "citizenship": ["USA"],
+      "home_base": { "city": "Anytown", "state": "CA", "country": "USA" },
+      "year_of_birth": 1985
+    },
+    "practice": {
+      "primary_medium": "Photography",
+      "secondary_media": [],
+      "process_description": "Example process description.",
+      "materials_and_methods": []
+    },
+    "education": [],
+    "bodies_of_work": [],
+    "exhibitions": [],
+    "publications": [],
+    "awards_and_honors": [],
+    "collections": [],
+    "representation": [],
+    "intent": {
+      "statement": "",
+      "influences": [],
+      "aspirations": []
+    },
+    "career_stage": "emerging",
+    "source_provenance": {}
+  }
+}

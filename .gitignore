@@ -40,3 +40,15 @@ Thumbs.db
 .claude/
 .vercel
 .env*.local
+
+# Seed fixtures — captured portfolio JPEGs may be copyrighted; never commit.
+# The .gitkeep + README + manifest files inside fixtures/ stay tracked.
+fixtures/portfolio/*.jpg
+fixtures/portfolio/*.jpeg
+fixtures/portfolio/*.png
+fixtures/portfolio/*.webp
+fixtures/portfolio/*.heic
+fixtures/portfolio.manifest.json
+fixtures/akb.json
+fixtures/style-fingerprint.json
+fixtures/extractor-turns.jsonl
