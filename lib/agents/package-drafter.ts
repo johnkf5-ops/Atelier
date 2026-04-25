@@ -542,10 +542,18 @@ Write the cover letter now. First-person throughout. Open with "Dear [name]," or
 // CV is factual and bounded; cover_letter is length-capped in the prompt
 // at 200-350 words and has not regressed. 4000 across the prose materials
 // keeps the budget consistent.
+// WALKTHROUGH Note 33-fix.6 — bumped from 4000/4000/3000 to 8000/8000/6000.
+// Empirical: at 4000 max_tokens with adaptive thinking on Opus 4.7, dense
+// opportunity-page contexts (Epson Pano's 20K-char page text + full AKB
+// JSON + StyleFingerprint JSON) can consume the entire budget in the
+// thinking phase and emit zero prose. Note 26 bumped statement 3000→4000
+// for the same root cause; this follow-up is the next ceiling. Cost
+// impact is bounded — adaptive thinking only spends what it needs and
+// the prose targets (150-300 / 250-750 / 200-350 words) are unchanged.
 const MAX_TOKENS_BY_TYPE: Record<MaterialType, number> = {
-  artist_statement: 4000,
-  project_proposal: 4000,
-  cover_letter: 3000,
+  artist_statement: 8000,
+  project_proposal: 8000,
+  cover_letter: 6000,
 };
 
 async function draftMaterial(type: MaterialType, ctx: DraftCtx): Promise<string> {
@@ -947,11 +955,32 @@ export function checkContentVariation(
   };
 }
 
+// WALKTHROUGH Note 33-fix.6 — empty / too-short floor. The terminal-
+// punctuation check guards on `text.length > 0`, so when the model
+// returns an empty text block (all budget spent on adaptive thinking,
+// or the adaptive-thinking phase emitted no prose at all) every other
+// check passes vacuously and the empty string ships as a finished
+// material into the dossier. Real fix: explicit floor that ALWAYS
+// triggers the revise pass when the model returned nothing meaningful.
+// 20 chars is the floor — well below any legitimate test fixture
+// (smallest is 36 chars) and well above the actual failure case
+// (empty string / one-word refusal). The substantive sanity check on
+// length is the per-material word-count linter and the prompt's
+// stated word target (150-300 / 250-750 / 200-350); this floor only
+// guards against zero-byte ship-to-dossier.
+const MIN_DRAFT_CHARS = 20;
+
 export function checkStatementVoice(text: string, extraLocations: string[] = []): {
   ok: boolean;
   issues: string[];
 } {
   const issues: string[] = [];
+  if (text.trim().length < MIN_DRAFT_CHARS) {
+    issues.push(
+      `statement is empty or too short (${text.trim().length} chars; floor is ${MIN_DRAFT_CHARS}). Likely the model's adaptive-thinking phase consumed the budget and produced no prose. Write a complete 150-300 word artist statement now, in plain text, no preamble.`,
+    );
+    return { ok: false, issues };
+  }
   if (text.includes('—')) {
     const count = (text.match(/—/g) || []).length;
     issues.push(`${count} em-dash(es) found — use commas, periods, or parentheses instead. Hard rule: zero em-dashes.`);
@@ -1011,8 +1040,15 @@ async function draftStatementWithVoiceCheck(ctx: DraftCtx): Promise<string> {
     { label: `drafter-artist_statement-revise` },
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
-  // Soft fallback — if the revision still fails, return whichever is closer.
-  return revised.length > 0 ? revised : first;
+  // Note 33-fix.6 — soft fallback to first ONLY when first is non-empty.
+  // If both first and revised are empty, throw so the caller surfaces the
+  // failure (run_events row + UI flag) instead of silently shipping a
+  // 0-byte material into the dossier.
+  if (revised.length >= MIN_DRAFT_CHARS) return revised;
+  if (first.length >= MIN_DRAFT_CHARS) return first;
+  throw new Error(
+    `artist_statement draft + revision both empty/too short (first=${first.length}, revised=${revised.length}). Likely adaptive-thinking-budget exhaustion; check max_tokens.`,
+  );
 }
 
 /**
@@ -1042,6 +1078,13 @@ export function checkProposalVoice(text: string, extraLocations: string[] = []):
   issues: string[];
 } {
   const issues: string[] = [];
+  // Note 33-fix.6 — empty / too-short floor (see MIN_DRAFT_CHARS).
+  if (text.trim().length < MIN_DRAFT_CHARS) {
+    issues.push(
+      `proposal is empty or too short (${text.trim().length} chars; floor is ${MIN_DRAFT_CHARS}). Likely the model's adaptive-thinking phase consumed the budget and produced no prose. Write a complete proposal now per the matching template, in plain text, no preamble.`,
+    );
+    return { ok: false, issues };
+  }
   if (text.includes('—')) {
     const count = (text.match(/—/g) || []).length;
     issues.push(`${count} em-dash(es) found — use commas, periods, or parentheses instead. Hard rule: zero em-dashes.`);
@@ -1105,7 +1148,12 @@ async function draftProposalWithVoiceCheck(ctx: DraftCtx): Promise<string> {
     { label: `drafter-project_proposal-revise` },
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
-  return revised.length > 0 ? revised : first;
+  // Note 33-fix.6 — see draftStatementWithVoiceCheck for rationale.
+  if (revised.length >= MIN_DRAFT_CHARS) return revised;
+  if (first.length >= MIN_DRAFT_CHARS) return first;
+  throw new Error(
+    `project_proposal draft + revision both empty/too short (first=${first.length}, revised=${revised.length}). Likely adaptive-thinking-budget exhaustion; check max_tokens.`,
+  );
 }
 
 /**
@@ -1133,6 +1181,14 @@ export function checkCoverLetterVoice(
   extraLocations: string[] = [],
 ): { ok: boolean; issues: string[] } {
   const issues: string[] = [];
+
+  // Note 33-fix.6 — empty / too-short floor (see MIN_DRAFT_CHARS).
+  if (text.trim().length < MIN_DRAFT_CHARS) {
+    issues.push(
+      `cover letter is empty or too short (${text.trim().length} chars; floor is ${MIN_DRAFT_CHARS}). Likely the model's adaptive-thinking phase consumed the budget and produced no prose. Write a complete 200-350 word cover letter now, opening with "Dear", first-person throughout, signed with the photographer's name.`,
+    );
+    return { ok: false, issues };
+  }
 
   // 1. Salutation must include "Dear" and end with comma.
   const firstLine = (text.split(/\r?\n/, 1)[0] || '').trim();
@@ -1257,7 +1313,12 @@ async function draftCoverLetterWithVoiceCheck(ctx: DraftCtx): Promise<string> {
     { label: `drafter-cover_letter-revise` },
   );
   const revised = resp.content.find((b) => b.type === 'text')?.text?.trim() ?? '';
-  return revised.length > 0 ? revised : first;
+  // Note 33-fix.6 — see draftStatementWithVoiceCheck for rationale.
+  if (revised.length >= MIN_DRAFT_CHARS) return revised;
+  if (first.length >= MIN_DRAFT_CHARS) return first;
+  throw new Error(
+    `cover_letter draft + revision both empty/too short (first=${first.length}, revised=${revised.length}). Likely adaptive-thinking-budget exhaustion; check max_tokens.`,
+  );
 }
 
 /**
