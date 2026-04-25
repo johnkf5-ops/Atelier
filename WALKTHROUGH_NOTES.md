@@ -4,6 +4,67 @@ Running notes from John's incognito prod walk-through. Each item logged as it su
 
 ---
 
+## Note 33 — Strip John-personal bias from the drafter; KEEP photography canon as the moat (SHIPPED)
+
+**Where:** `lib/agents/package-drafter.ts` (lexicons, voice constraint examples, surname references), `lib/agents/style-analyst.ts:20` (scope claim), `README.md` + `SUMMARY.md` + `ARCHITECTURE.md` taglines.
+
+**Symptom John caught:** Reading staged Note-32 code (`CANONICAL_LOCATION_LEXICON`, `GEAR_LEXICON`) and noticing that the lexicons were literally his own travel reel (Antelope Canyon, Delicate Arch, Palouse, Hawaii, Iceland, Patagonia, Amsterdam, Lisbon, Dubai, Faroe, Tuscany, Lake Powell) and his own gear (Phase One IQ4 back). Plus `COVER_LETTER_VOICE_CONSTRAINTS` rule 4 had a literal sentence "Mondoir Dubai for Dubai-region opps; Las Vegas gallery program for Nevada opps; FOTO founder + curatorial credits" — his career, his venues, his credentials, hardcoded. Plus rule 1 example "I am a Las Vegas-based landscape photographer". Plus voice-check examples referencing "Knopf submits" / "Knopf is" / "John Knopf" signature. He flagged: "this is starting to get catered to me and not an actual product. each agent or skill is literally defined to his reality. were making a mock now and not a real product."
+
+**Diagnosis:** The system had two conflated layers:
+
+1. **Photography-domain canon.** Adams / Sugimoto / Eggleston named precedents in `aesthetic-vocabulary.md`; ILPOTY / Critical Mass / Aperture / Hamdan competition classifiers; Pollock-Krasner / Aaron Siskind / En Foco foundation classifiers; MacDowell / Yaddo / Skowhegan residency classifiers; large-format gear vocabulary (Hasselblad, Phase One, Linhof, Schneider, Zone System, drum scan, cibachrome, 4x5, 8x10); juror-reading photo cohort heuristics. **This is the moat.** Every working photographer is checking their drafts and applications against this baseline. CrossBeam (1st place, Built with Opus 4.6) was California ADU permit responses — they didn't generalize across all 50 states or all permit classes; they went deep on one. Photo-domain depth is Atelier's same move.
+
+2. **John's personal layer.** His specific travel destinations bolted into the same lexicon as the photo canon; his Mondoir / Las Vegas / FOTO career markers literal in the cover-letter constraints; his surname literal in voice-check examples and code comments. **This is the leak.** A judge reading "Mondoir Dubai" in the prompt code doesn't see "well-tuned drafter for photographers" — they see "this app is hardcoded to one user."
+
+The cut: drop layer 2, keep layer 1. Atelier's tagline shifts from "AI art director for working visual artists" to "AI art director for working photographers." Stop overpromising cross-medium support the skill files plainly don't deliver.
+
+### 33-fix.1 — `CANONICAL_LOCATION_LEXICON` → `CANONICAL_PHOTO_DESTINATIONS` + AKB-derived per-photographer extension
+
+Dropped Amsterdam, Lisbon, Dubai, Faroe, Tuscany, Lake Powell — those were John's specific reel, not universal landscape-photo destinations.
+
+Renamed to `CANONICAL_PHOTO_DESTINATIONS` and re-scoped: places that recur in landscape-photo bodies of work across the field (Antelope Canyon, Delicate Arch, Palouse, Hawaii, Yosemite, Sierra Nevada, Death Valley, Arches, Zion, Bryce, Patagonia, Iceland, Norway, Banff, Grand Canyon, Half Dome). Universal photographer baseline.
+
+New `extractAkbLocations(akb)` runtime helper pulls Capitalized place tokens from THIS photographer's `bodies_of_work[*].description`, `home_base.city`, and `exhibitions[*].location`. The cap rule now operates on the union: universal photo destinations + this photographer's actual reel. A Maine-coast photographer's Acadia gets caught even though Acadia isn't in the universal list; their Vermont exhibitions city gets caught; their personal practice locations get caught.
+
+Signature change: `countLocationsInSentence(sentence)` → `countLocationsInSentence(sentence, extraLocations?: string[])`. Same for `checkCanonicalReelCaps`, `checkStatementVoice`, `checkProposalVoice`, `checkCoverLetterVoice` — optional param defaults to empty for test fidelity. The three `draftXWithVoiceCheck` functions compute `extractAkbLocations(ctx.akb)` and pass it through.
+
+### 33-fix.2 — `GEAR_LEXICON` IQ4 removal
+
+Dropped IQ4 (specific Phase One back model, John's gear). Kept Hasselblad, Phase One, Canon, Nikon, Linhof, Schneider, Zone System, drum scan, cibachrome, 4x5, 8x10, archival pigment, etc. — universal fine-art-photography vocabulary every working photographer is checking against.
+
+### 33-fix.3 — `COVER_LETTER_VOICE_CONSTRAINTS` John-specific examples deleted
+
+Rule 1 ("I am a Las Vegas-based landscape photographer") → "I am a [city]-based photographer working in [body of work / register from AKB]". Generic placeholder phrasing.
+
+Rule 4 (the literal "Mondoir Dubai for Dubai-region opps; Las Vegas gallery program for Nevada opps; FOTO founder + curatorial credits" sentence) → "Pull from akb.exhibitions / akb.curatorial_and_organizational based on geographic / register / civic relevance." The mechanism (geographic + register + civic axes) generalizes; the literal venues come from the AKB at runtime, not from prompt text.
+
+Code comments and PRE-SUBMIT-check examples that hardcoded "Knopf submits" / "Knopf is" / "John Knopf signature" — all genericized to [Surname] / photographer-typed-name placeholders. The actual surname-detection regex was already AKB-derived; only the human-readable references in comments and examples needed updating.
+
+### 33-fix.4 — Style Analyst scope-honesty
+
+`lib/agents/style-analyst.ts:20` claimed "your expertise spans photography, painting, and sculpture." Not true — the loaded `aesthetic-vocabulary.md` skill names twelve photographer precedents and zero painters or sculptors. Changed to "your expertise is fine-art photography." Honest about what the analyst is actually equipped to do.
+
+### 33-fix.5 — Doc taglines own the photographer scope
+
+`README.md`, `SUMMARY.md`, `ARCHITECTURE.md` all shift from "AI art director for working visual artists" to "AI art director for working photographers." Opening paragraphs scoped accordingly. The "It is built for mid-career US fine-art photographers… moat is photography-domain depth, not breadth across every medium" sentence was added to the README to make the depth-vs-breadth choice explicit. Closing line in SUMMARY ("the test the system has to pass for every photographer who uses it") matches.
+
+The README Credits paragraph ("fifteen years inside the visual-arts-submission economy") stays — that's John's biographical fact, not a positioning claim about the product.
+
+### Acceptance for Note 33
+
+- All 189 smoke tests green after the cuts.
+- `grep -i "mondoir\|FOTO founder\|las vegas-based" lib/` returns zero hits.
+- `grep -i "knopf" lib/` returns zero hits.
+- README + SUMMARY + ARCHITECTURE taglines match: "AI art director for working photographers."
+- The cap rule still triggers on test fixtures using Antelope Canyon / Delicate Arch / Palouse / Yosemite (universal photo canon retained).
+- Future test: a photographer running through onboarding whose `bodies_of_work` describe Maine coast work gets the cap-rule firing on Acadia / Penobscot / Mount Desert in their drafted statements, even though those names aren't in the universal canon — because `extractAkbLocations` pulls them at runtime.
+
+**Files:** `lib/agents/package-drafter.ts` (114 lines changed), `lib/agents/style-analyst.ts` (1 line), `README.md`, `SUMMARY.md`, `ARCHITECTURE.md`. Tests unchanged. Three commits: drafter de-bias; docs + style-analyst scope; this note.
+
+**Priority:** highest. Caught at submission-readiness audit. Without this fix, judges reading the source would see a one-user-shaped app, not a photographer-shaped product.
+
+---
+
 ## Note 1 — Auto-discover ingest: no visible status during processing
 
 **Where:** `/interview` page, Auto-discover tab, after clicking submit on the seed form (Name / Medium / City / Affiliations).
