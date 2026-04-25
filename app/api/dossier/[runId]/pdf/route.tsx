@@ -93,7 +93,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ runId: 
       ranking={dossierRow.ranking_narrative}
       matches={matches}
       filteredOut={filteredOut}
-      legalName={akb.identity.legal_name || 'Artist'}
+      artistName={akb.identity.artist_name || akb.identity.legal_name || 'Artist'}
     />,
   );
 

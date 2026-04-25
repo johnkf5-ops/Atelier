@@ -14,21 +14,42 @@ export type AkbVersionRow = {
  * WALKTHROUGH Note 4 migration: existing AKB versions written before
  * `identity.artist_name` existed get the field auto-filled from
  * `identity.legal_name`, with `legal_name_matches_artist_name = true`.
- * Pure function — does not write back to the DB; the next manual edit /
- * interview turn / save will persist the migration.
+ *
+ * Operates on the raw parsed JSON (Record-shape) BEFORE strict schema
+ * validation, because after the Note 4 flip `artist_name` is required —
+ * old rows without it would fail safeParse before the migration could
+ * run. Pure function; does not write back to the DB.
  */
-export function migrateArtistName(akb: TAkb): TAkb {
-  if (akb.identity?.artist_name && akb.identity.artist_name.length > 0) return akb;
-  if (!akb.identity?.legal_name) return akb;
+export function migrateArtistNameRaw(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const r = raw as Record<string, unknown>;
+  const identity = (r.identity ?? {}) as Record<string, unknown>;
+  const artistName = identity.artist_name;
+  const legalName = identity.legal_name;
+  if (typeof artistName === 'string' && artistName.length > 0) return raw;
+  if (typeof legalName !== 'string' || legalName.length === 0) {
+    // Nothing to copy from. Seed an empty string so strict validation passes
+    // — `artist_name` is required post-Note-4. The interview gap detector
+    // will surface it as the top gap on next visit.
+    return {
+      ...r,
+      identity: { ...identity, artist_name: '' },
+    };
+  }
   return {
-    ...akb,
+    ...r,
     identity: {
-      ...akb.identity,
-      artist_name: akb.identity.legal_name,
+      ...identity,
+      artist_name: legalName,
       legal_name_matches_artist_name:
-        akb.identity.legal_name_matches_artist_name ?? true,
+        identity.legal_name_matches_artist_name ?? true,
     },
   };
+}
+
+/** Back-compat wrapper for callers that already have a parsed TAkb. */
+export function migrateArtistName(akb: TAkb): TAkb {
+  return migrateArtistNameRaw(akb) as TAkb;
 }
 
 export async function loadLatestAkb(userId: number): Promise<{ akb: TAkb; version: number; id: number | null }> {
@@ -43,11 +64,12 @@ export async function loadLatestAkb(userId: number): Promise<{ akb: TAkb; versio
     return { akb: seed, version: 0, id: null };
   }
   const row = r.rows[0];
-  const parsed = ArtistKnowledgeBase.safeParse(JSON.parse(row.json as string));
+  const migrated = migrateArtistNameRaw(JSON.parse(row.json as string));
+  const parsed = ArtistKnowledgeBase.safeParse(migrated);
   if (!parsed.success) {
     throw new Error(`stored AKB v${row.version} failed validation: ${parsed.error.message}`);
   }
-  return { akb: migrateArtistName(parsed.data), version: Number(row.version), id: Number(row.id) };
+  return { akb: parsed.data, version: Number(row.version), id: Number(row.id) };
 }
 
 export async function loadAkbById(id: number): Promise<{ akb: TAkb; version: number } | null> {
@@ -58,11 +80,12 @@ export async function loadAkbById(id: number): Promise<{ akb: TAkb; version: num
   });
   if (r.rows.length === 0) return null;
   const row = r.rows[0];
-  const parsed = ArtistKnowledgeBase.safeParse(JSON.parse(row.json as string));
+  const migrated = migrateArtistNameRaw(JSON.parse(row.json as string));
+  const parsed = ArtistKnowledgeBase.safeParse(migrated);
   if (!parsed.success) {
     throw new Error(`AKB id=${id} failed validation: ${parsed.error.message}`);
   }
-  return { akb: migrateArtistName(parsed.data), version: Number(row.version) };
+  return { akb: parsed.data, version: Number(row.version) };
 }
 
 export async function saveAkb(

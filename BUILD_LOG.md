@@ -364,6 +364,22 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Notes 4 + 5 — interview identity schema (artist_name primacy + structured home_base + conditional citizenship)
+
+The interview was treating legal_name as the primary identity slot and asking citizenship + country in back-to-back questions, both reading as broken software to a non-academic artist. Note 4 + 5 work was partially landed (gap-detection ordering, DEFAULT_EQUALS suppression, citizenship suppression, interview prompt phrasing, drafter NAME_PRIMACY_CONSTRAINT) — but the AKB schema still had `artist_name: optional` / `legal_name: required`, and the PDF cover byline still printed `legal_name`. This batch ships the structural flip.
+
+**Schema flip.** `lib/schemas/akb.ts`: `identity.artist_name` is now REQUIRED (was optional), `identity.legal_name` is now OPTIONAL (was required). `emptyAkb()` flipped its arg from `legalName` to `artistName` and seeds `identity.artist_name` instead of `identity.legal_name`. The Drafter's NAME_PRIMACY_CONSTRAINT (already shipped earlier) is now backed by the schema actually requiring artist_name in every saved AKB.
+
+**Safe migration on load.** Old prod rows written before the flip have `legal_name` but no `artist_name` — a naive `safeParse` would now reject them. Fix: split migration into `migrateArtistNameRaw(unknown)` that operates on the pre-validation JSON and is called BEFORE strict `ArtistKnowledgeBase.safeParse` in `loadLatestAkb` + `loadAkbById`. If `artist_name` is missing it copies `legal_name` over (and sets `legal_name_matches_artist_name=true`); if both are missing it seeds an empty string so strict validation passes and the gap detector surfaces `identity.artist_name` as the top gap on next visit. `migrateArtistName(TAkb)` retained as a thin wrapper for any direct callers. Tested with a smoke covering the pre-flip JSON-row → migrated → strict-parse path.
+
+**PDF cover byline (the actual user-visible Note 4 bug).** `lib/pdf/dossier.tsx` and `app/api/dossier/[runId]/pdf/route.tsx` were threading `legal_name` into the cover-page byline. Note 4's central premise: every public-facing surface uses `artist_name`, never `legal_name`. Fixed: the prop renamed `legalName` → `artistName`; the route now reads `akb.identity.artist_name || akb.identity.legal_name || 'Artist'` (the `||` chain is purely a defensive fallback for the migration window — `artist_name` is required post-flip so the second branch is unreachable on freshly-saved AKBs).
+
+**Note 5 status.** Already fully implemented before this batch — `home_base` is one structured Zod object (city + state? + country) so the gap detector treats it as one question; `citizenshipSuppressed()` short-circuits the citizenship gap once `home_base.country` is filled; the interview prompt asks home_base in a single message and then asks "Are you a citizen of [home_country]?" with default-yes. Smoke tests in `tests/smoke/interview-schema.test.ts` lock the gap-suppression contract. Nothing structural to add.
+
+**Tests added.** Two new specs in `interview-schema.test.ts`: (1) strict schema rejects an AKB missing `identity.artist_name`; (2) `migrateArtistNameRaw` upgrades an old-shape JSON row (artist_name absent, legal_name present) so subsequent strict parse succeeds with `artist_name` copied from `legal_name` and `legal_name_matches_artist_name=true`. 78/78 smoke tests pass.
+
+`tsc --noEmit` clean, `pnpm check:copy` clean.
+
 ### Note 17 — dossier apply links + material explainers + configurable opportunity volume
 
 Three dossier UX gaps from John's review, shipped together. The product had been telling artists *which* opportunities to apply to without giving them the apply link or explaining what each drafted block is for — and Scout was producing 12 every run because the prompt anchored on that as the floor.

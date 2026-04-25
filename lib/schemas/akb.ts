@@ -4,10 +4,12 @@ export const ArtistKnowledgeBase = z.object({
   identity: z.object({
     // WALKTHROUGH Note 4: artist_name is the PRIMARY identity used in every
     // public-facing drafted output (cover letters, statements, bios). The
-    // legal_name field is administrative metadata only — used in tax/admin
-    // sections of submission templates that explicitly require it.
-    artist_name: z.string().optional(),
-    legal_name: z.string(),
+    // legal_name field is OPTIONAL administrative metadata — used only in
+    // tax/admin sections of submission templates that explicitly require it.
+    // Pre-Note-4 AKBs (artist_name absent, legal_name present) are upgraded
+    // by migrateArtistName() in lib/akb/persistence.ts on every load.
+    artist_name: z.string(),
+    legal_name: z.string().optional(),
     legal_name_matches_artist_name: z.boolean().optional(),
     public_name: z.string().optional(),
     pronouns: z.string().optional(),
@@ -122,10 +124,10 @@ export type PartialArtistKnowledgeBase = PartialAKB;
  * The strict ArtistKnowledgeBase-valid row is only required at /finalize
  * and the /review "Continue to dossier" gate.
  */
-export function emptyAkb(legalName = ''): ArtistKnowledgeBase {
+export function emptyAkb(artistName = ''): ArtistKnowledgeBase {
   return {
     identity: {
-      legal_name: legalName,
+      artist_name: artistName,
       citizenship: [],
       home_base: { city: '', country: '' },
     },

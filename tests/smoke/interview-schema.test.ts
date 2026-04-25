@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { detectGaps } from '@/lib/akb/gaps';
-import { migrateArtistName } from '@/lib/akb/persistence';
-import { emptyAkb } from '@/lib/schemas/akb';
+import { migrateArtistName, migrateArtistNameRaw } from '@/lib/akb/persistence';
+import { emptyAkb, ArtistKnowledgeBase as ArtistKnowledgeBaseSchema } from '@/lib/schemas/akb';
 import type { ArtistKnowledgeBase } from '@/lib/schemas/akb';
 
 /**
@@ -118,6 +118,53 @@ describe('migrateArtistName — back-compat for pre-Note-4 AKBs', () => {
       },
     };
     const migrated = migrateArtistName(akb);
-    expect(migrated.identity.artist_name).toBeUndefined();
+    // After Note 4 schema flip, artist_name is required and emptyAkb seeds
+    // it as ''. Migration is a no-op when there's nothing to copy from
+    // legal_name — artist_name stays at its seeded empty value.
+    expect(migrated.identity.artist_name).toBe('');
+  });
+});
+
+describe('Note 4 schema flip — artist_name is required, legal_name is optional', () => {
+  it('rejects an AKB missing identity.artist_name', () => {
+    const r = ArtistKnowledgeBaseSchema.safeParse({
+      ...emptyAkb(),
+      identity: {
+        legal_name: 'Just Legal',
+        citizenship: [],
+        home_base: { city: '', country: '' },
+      },
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts an AKB with artist_name and no legal_name', () => {
+    const r = ArtistKnowledgeBaseSchema.safeParse({
+      ...emptyAkb('Stage Name'),
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('migrateArtistNameRaw upgrades an old-shape JSON row missing artist_name so strict parse succeeds', () => {
+    // Simulates a row written before the Note 4 schema flip — strict parse
+    // would fail on this directly, but migrateArtistNameRaw fills artist_name
+    // from legal_name first.
+    const oldRow = {
+      ...emptyAkb('placeholder'),
+      identity: {
+        legal_name: 'Pre-Flip Legal',
+        citizenship: [],
+        home_base: { city: '', country: '' },
+      },
+    };
+    // Strip artist_name to mimic pre-flip data exactly
+    delete (oldRow.identity as Record<string, unknown>).artist_name;
+    const migrated = migrateArtistNameRaw(oldRow);
+    const r = ArtistKnowledgeBaseSchema.safeParse(migrated);
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.identity.artist_name).toBe('Pre-Flip Legal');
+      expect(r.data.identity.legal_name_matches_artist_name).toBe(true);
+    }
   });
 });

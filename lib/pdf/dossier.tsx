@@ -38,14 +38,17 @@ export function DossierDocument(props: {
   ranking: string;
   matches: PdfMatch[];
   filteredOut: PdfFiltered[];
-  legalName: string;
+  // WALKTHROUGH Note 4: PDF cover byline uses artist_name (the public-facing
+  // identity), never legal_name. legal_name belongs in tax/contract blocks
+  // only — the dossier cover is the public packet.
+  artistName: string;
 }) {
   return (
     <Document>
       {/* Cover page */}
       <Page size="LETTER" style={styles.page}>
         <Text style={styles.coverTitle}>Career Dossier</Text>
-        <Text style={styles.coverSub}>{props.legalName}</Text>
+        <Text style={styles.coverSub}>{props.artistName}</Text>
         {paragraphs(props.cover).map((p, i) => (
           <Text key={i} style={styles.coverNarrative}>
             {p}
