@@ -18,6 +18,8 @@ type DiscoveredEntry = {
   confidence_0_1: number;
   title: string;
   why_relevant: string;
+  /** Snippet captured from web_search — used as fetch fallback by ingest. */
+  snippet?: string;
 };
 
 type DiscoveryResult = {
@@ -71,9 +73,23 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
   const [usage, setUsage] = useState<DiscoveryUsage | null>(null);
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [ingestSummary, setIngestSummary] = useState<{
-    sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+    sources: Array<{
+      url: string;
+      ok: boolean;
+      changed?: string[];
+      error?: string;
+      used_snippet?: boolean;
+      identity_skipped?: boolean;
+    }>;
     changed_fields: string[];
     saved: { id: number } | null;
+    summary?: {
+      attempted: number;
+      ingested: number;
+      identity_skipped: number;
+      snippet_fallback: number;
+      failed: number;
+    };
   } | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -194,16 +210,52 @@ export default function AutoDiscoverPanel({ onIngested }: { onIngested: () => vo
     setErrorMsg(null);
     setIngestSummary(null);
     try {
-      const urls = result.discovered.filter((e) => checked.has(e.url)).map((e) => e.url);
+      const selected = result.discovered.filter((e) => checked.has(e.url));
+      const urls = selected.map((e) => e.url);
+      // Pass per-URL snippets so the extractor can fall back when fetch fails
+      // (404, 403, JS-SPA returning empty), and the identity anchor so the
+      // model refuses facts about same-name-different-person matches.
+      const snippets_by_url: Record<string, string> = {};
+      for (const e of selected) {
+        if (e.snippet) snippets_by_url[e.url] = e.snippet;
+      }
+      const affiliationList = affiliations
+        .split(/[\n,]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
       const { fetchJson } = await import('@/lib/api/fetch-client');
       const r = await fetchJson<{
-        sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+        sources: Array<{
+          url: string;
+          ok: boolean;
+          changed?: string[];
+          error?: string;
+          used_snippet?: boolean;
+          identity_skipped?: boolean;
+        }>;
         changed_fields: string[];
         saved: { id: number } | null;
+        summary?: {
+          attempted: number;
+          ingested: number;
+          identity_skipped: number;
+          snippet_fallback: number;
+          failed: number;
+        };
       }>('/api/extractor/ingest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ urls, source: 'auto-discover' }),
+        body: JSON.stringify({
+          urls,
+          source: 'auto-discover',
+          snippets_by_url,
+          anchor: {
+            name: name.trim(),
+            location: location.trim(),
+            medium: medium.trim(),
+            affiliations: affiliationList,
+          },
+        }),
         timeoutMs: 300_000,
       });
       if (!r.ok) {
@@ -345,13 +397,26 @@ function IngestSummaryPanel({
   summary,
 }: {
   summary: {
-    sources: Array<{ url: string; ok: boolean; changed?: string[]; error?: string }>;
+    sources: Array<{
+      url: string;
+      ok: boolean;
+      changed?: string[];
+      error?: string;
+      used_snippet?: boolean;
+      identity_skipped?: boolean;
+    }>;
     changed_fields: string[];
     saved: { id: number } | null;
+    summary?: {
+      attempted: number;
+      ingested: number;
+      identity_skipped: number;
+      snippet_fallback: number;
+      failed: number;
+    };
   };
 }) {
-  const okCount = summary.sources.filter((s) => s.ok).length;
-  const failCount = summary.sources.length - okCount;
+  const counts = summary.summary;
   const nothingChanged = summary.changed_fields.length === 0;
 
   return (
@@ -362,23 +427,38 @@ function IngestSummaryPanel({
           : 'border-amber-700 bg-amber-950/20 text-amber-200'
       }`}
     >
-      <div>
+      <div className="space-y-1">
         {summary.saved ? (
-          <>
-            Knowledge Base v
-            <span className="font-mono">{summary.saved.id}</span> saved —{' '}
-            {summary.changed_fields.length} field
+          <div>
+            <span className="font-medium">Knowledge Base v{summary.saved.id} saved</span> —{' '}
+            {summary.changed_fields.length} verified fact
             {summary.changed_fields.length === 1 ? '' : 's'} added.
-          </>
+          </div>
         ) : nothingChanged ? (
-          <>No new facts extracted from the selected pages. Try adding URLs with richer bio / press content.</>
+          <div>
+            No new facts were extracted that pass the identity check. Try seeding URLs with richer
+            bio / press content about you specifically.
+          </div>
         ) : (
-          <>Ingest completed but no Knowledge Base version was saved. Check logs.</>
+          <div>Ingest completed but no Knowledge Base version was saved. Check logs.</div>
         )}
-        {failCount > 0 && (
-          <span className="text-neutral-400 ml-2">
-            ({okCount} ok, {failCount} failed)
-          </span>
+        {counts && (
+          <div className="text-xs text-neutral-400">
+            Read {counts.attempted - counts.failed} of {counts.attempted} sources
+            {counts.snippet_fallback > 0 && (
+              <span> ({counts.snippet_fallback} via search-engine summary fallback)</span>
+            )}
+            {counts.failed > 0 && (
+              <span> · {counts.failed} unreachable (offline, blocked, or JavaScript-only)</span>
+            )}
+            {counts.identity_skipped > 0 && (
+              <span>
+                {' '}
+                · {counts.identity_skipped} skipped — page described a different person with the
+                same name
+              </span>
+            )}
+          </div>
         )}
       </div>
 
@@ -395,10 +475,10 @@ function IngestSummaryPanel({
         </details>
       )}
 
-      {failCount > 0 && (
+      {(counts?.failed ?? 0) > 0 && (
         <details className="text-xs">
           <summary className="cursor-pointer hover:text-neutral-300">
-            Failed sources ({failCount})
+            Unreachable sources ({counts!.failed})
           </summary>
           <ul className="mt-1 text-[11px] pl-4 list-disc space-y-0.5">
             {summary.sources

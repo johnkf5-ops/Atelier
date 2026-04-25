@@ -2,24 +2,32 @@ import { ingestUrl } from '@/lib/agents/knowledge-extractor';
 import { loadLatestAkb, loadAkbById, saveAkb } from '@/lib/akb/persistence';
 import { mergeAkb, type Provenance } from '@/lib/akb/merge';
 import { emptyAkb, type ArtistKnowledgeBase as TAkb } from '@/lib/schemas/akb';
+import type { IdentityAnchor } from '@/lib/schemas/discovery';
 
 export type IngestSource = 'auto-discover' | 'paste' | 'manual';
 
 export interface IngestUrlsOptions {
   source: IngestSource;
   baseAkbVersionId?: number | null; // null/undefined = build from latest existing version (or empty)
+  /** Per-URL search snippets — used as fallback content when page fetch fails. */
+  snippetsByUrl?: Record<string, string>;
+  /** Identity anchor — passed to per-source extraction so wrong-person facts get refused. */
+  anchor?: IdentityAnchor | null;
   onProgress?: (e: IngestProgressEvent) => void;
 }
 
 export type IngestProgressEvent =
   | { type: 'fetching'; url: string }
-  | { type: 'extracted'; url: string; fields_added: string[] }
+  | { type: 'extracted'; url: string; fields_added: string[]; used_snippet?: boolean }
+  | { type: 'identity_skipped'; url: string }
   | { type: 'failed'; url: string; reason: string };
 
 export interface IngestResult {
   akb_version_id: number | null;
   ingested_count: number;
   failed: { url: string; reason: string }[];
+  identity_skipped: string[];
+  snippet_fallback_count: number;
   fields_touched: string[];
 }
 
@@ -39,13 +47,22 @@ export async function ingestUrls(
   }
 
   const failed: { url: string; reason: string }[] = [];
+  const identitySkipped: string[] = [];
   const allChanged = new Set<string>();
   let ingestedCount = 0;
+  let snippetFallbackCount = 0;
 
   // Emit fetching events in order, then kick off all fetches in parallel.
   // Plan §2.5: `Promise.allSettled` so one bad URL doesn't break the batch.
   for (const url of urls) opts.onProgress?.({ type: 'fetching', url });
-  const settled = await Promise.allSettled(urls.map((u) => ingestUrl(u)));
+  const settled = await Promise.allSettled(
+    urls.map((u) =>
+      ingestUrl(u, {
+        anchor: opts.anchor ?? null,
+        snippet: opts.snippetsByUrl?.[u],
+      }),
+    ),
+  );
 
   for (let i = 0; i < settled.length; i++) {
     const url = urls[i];
@@ -57,9 +74,21 @@ export async function ingestUrls(
       continue;
     }
     const r = s.value;
-    if (!r.ok || !r.partial) {
+    if (!r.ok) {
       failed.push({ url, reason: r.error ?? 'unknown' });
       opts.onProgress?.({ type: 'failed', url, reason: r.error ?? 'unknown' });
+      continue;
+    }
+    if (r.identity_skipped) {
+      identitySkipped.push(url);
+      opts.onProgress?.({ type: 'identity_skipped', url });
+      continue;
+    }
+    if (r.used_snippet_fallback) snippetFallbackCount += 1;
+    if (!r.partial || Object.keys(r.partial).length === 0) {
+      // Page returned but produced no facts and the model didn't flag it as
+      // an identity skip — count as benign no-op, not failure.
+      opts.onProgress?.({ type: 'extracted', url, fields_added: [], used_snippet: r.used_snippet_fallback });
       continue;
     }
     const provenance = `ingested:${url}` as Provenance;
@@ -68,7 +97,12 @@ export async function ingestUrls(
       akb = merged;
       ingestedCount++;
       for (const f of changedFields) allChanged.add(f);
-      opts.onProgress?.({ type: 'extracted', url, fields_added: changedFields });
+      opts.onProgress?.({
+        type: 'extracted',
+        url,
+        fields_added: changedFields,
+        used_snippet: r.used_snippet_fallback,
+      });
     } catch (err) {
       failed.push({ url, reason: `merge: ${(err as Error).message}` });
       opts.onProgress?.({ type: 'failed', url, reason: `merge: ${(err as Error).message}` });
@@ -89,6 +123,8 @@ export async function ingestUrls(
     akb_version_id,
     ingested_count: ingestedCount,
     failed,
+    identity_skipped: identitySkipped,
+    snippet_fallback_count: snippetFallbackCount,
     fields_touched: Array.from(allChanged),
   };
 }

@@ -21,10 +21,10 @@ export async function POST(req: Request) {
       try {
         send({ type: 'started' });
 
-        const { rawText, queries, usage } = await discoverArtist(input, send);
+        const { rawText, queries, usage, snippetsByUrl } = await discoverArtist(input, send);
 
         send({ type: 'parsing' });
-        const result = await parseDiscovery(rawText, queries);
+        const result = await parseDiscovery(rawText, queries, snippetsByUrl);
 
         // Cost tracking — log to run_events with run_id=NULL (not tied to a Run yet)
         const db = getDb();

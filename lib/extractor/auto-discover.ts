@@ -80,7 +80,12 @@ const BLOCKED_DOMAINS = [
 export async function discoverArtist(
   input: AutoDiscoverInput,
   onEvent: (e: DiscoveryEvent) => void,
-): Promise<{ rawText: string; queries: string[]; usage: DiscoveryUsage }> {
+): Promise<{
+  rawText: string;
+  queries: string[];
+  usage: DiscoveryUsage;
+  snippetsByUrl: Record<string, string>;
+}> {
   const client = getAnthropic();
   let messages: Anthropic.MessageParam[] = [
     { role: 'user', content: buildAutoDiscoverPrompt(input) },
@@ -88,6 +93,10 @@ export async function discoverArtist(
 
   const queries: string[] = [];
   const usage: DiscoveryUsage = { input_tokens: 0, output_tokens: 0, web_search_requests: 0 };
+  // Captured per-URL snippets from every web_search_tool_result block during
+  // the stream. Keyed on URL so the ingest pass can fall back to the snippet
+  // when the URL's page returns 404/403 or empty (JS-rendered SPA).
+  const snippetsByUrl: Record<string, string> = {};
   let pauseCount = 0;
 
   while (true) {
@@ -147,6 +156,20 @@ export async function discoverArtist(
           const content = block.content;
           const count = Array.isArray(content) ? content.length : 0;
           onEvent({ type: 'results_received', query: '', count });
+          // Capture per-URL snippets so the ingest pass can use them as
+          // fallback content when web_fetch fails (Note 3 fix #2).
+          if (Array.isArray(content)) {
+            for (const item of content) {
+              const r = item as { url?: string; encrypted_content?: string; title?: string };
+              // The web_search tool returns encrypted_content (the snippet).
+              // Some result shapes also expose `title` — concat title +
+              // snippet so the extractor has more grounding text.
+              if (typeof r.url === 'string' && typeof r.encrypted_content === 'string') {
+                const titlePart = r.title ? `${r.title}\n\n` : '';
+                snippetsByUrl[r.url] = titlePart + r.encrypted_content;
+              }
+            }
+          }
         }
       } else if (ev.type === 'content_block_delta') {
         const delta = ev.delta as unknown as { type?: string; partial_json?: string };
@@ -195,9 +218,12 @@ export async function discoverArtist(
       rawText: textBlock?.text ?? '',
       queries,
       usage,
+      snippetsByUrl,
     };
   }
 }
+
+const TOP_K_DISCOVERY = 15;
 
 /**
  * Anthropic's structured-output `output_config.format.schema` rejects
@@ -222,6 +248,7 @@ function stripUnsupportedJsonSchemaKeys(node: unknown): unknown {
 export async function parseDiscovery(
   rawText: string,
   queries: string[],
+  snippetsByUrl: Record<string, string> = {},
 ): Promise<TDiscoveryResult> {
   const client = getAnthropic();
 
@@ -263,8 +290,22 @@ For each URL field, output ONLY the clean URL string. If the source text contain
     for (const entry of parsed.discovered) {
       if (typeof entry?.url === 'string') {
         entry.url = sanitizeUrl(entry.url);
+        // Attach the snippet captured during the search stream. If the
+        // exact URL didn't match (anchors, trailing slash, etc.) leave
+        // undefined — the ingest pass will treat snippet absence as
+        // "no fallback available."
+        if (snippetsByUrl[entry.url]) {
+          entry.snippet = snippetsByUrl[entry.url];
+        }
       }
     }
+    // Top-K cap (Note 3 fix #1). Sort by confidence desc, keep K=15.
+    // Eliminates the 60-link noise wall before any fetch is burned.
+    parsed.discovered.sort(
+      (a: { confidence_0_1: number }, b: { confidence_0_1: number }) =>
+        b.confidence_0_1 - a.confidence_0_1,
+    );
+    parsed.discovered = parsed.discovered.slice(0, TOP_K_DISCOVERY);
   }
   return DiscoveryResult.parse(parsed);
 }
