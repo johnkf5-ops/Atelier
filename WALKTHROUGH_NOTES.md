@@ -562,6 +562,106 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
+## Note 27 — Files API custom `mount_path` is silently ignored — Rubric scoring BLIND because the files mount at the wrong paths (CRITICAL)
+
+**Where:** `lib/agents/rubric-matcher.ts` (`buildSessionResources`, `buildRubricPrompt`) and the Anthropic Managed Agents Files API behavior.
+
+**Symptom:** Run 2 (and the prior run 1 in earlier sessions) — Rubric agent reads `/workspace/portfolio/<id>.jpg` and `/workspace/recipients/opp<n>_<slug>/<n>.jpg` and EVERY read returns:
+
+> `"File not found or empty: /workspace/portfolio/1.jpg"`
+
+start-rubric uploads files to Files API successfully (12/12 portfolio + 83 recipients = 95 file_ids). `sessions.create({ resources: [...] })` is called with each file_id + a custom mount_path. Anthropic accepts the resources spec without error. But when the agent tries to `read` at the declared mount_path, the file is not there.
+
+The agent gives up on Files API and falls back to text-only StyleFingerprint reasoning, scoring conservatively against blind text. Run 2 produced 1 of 18 opportunities included → 1 drafted package → effectively no useful Rubric output.
+
+**Diagnosed via minimal repro (`scripts/probe-mount.mjs`).** Uploaded a 1×1 test JPEG to Files API, created three identical sessions each with the same file as a resource at three different mount_paths, asked the agent to read the file at each path:
+
+| mount_path | Agent reply |
+|---|---|
+| `/workspace/probe-A.jpg` (Atelier's current convention) | **NOT FOUND** |
+| `/mnt/probe-B.jpg` | **NOT FOUND** |
+| (omitted — use SDK default) | **FOUND: 272 bytes** ✓ |
+
+Confirmed with the SDK type definition (`node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.d.ts:149`): the file resource's `mount_path` field is OPTIONAL, defaults to `/mnt/session/uploads/<file_id>`. Reality: custom `mount_path` is SILENTLY IGNORED for file resources. Files only mount at the default path.
+
+**Why Atelier's earlier "Files API working" runs scored opportunities:** the Rubric agent was reading from the WRONG paths the entire time, falling back to text-only AKB + StyleFingerprint reasoning, and producing scores from THAT — not from actually-visible cohort images. The harsh-truth scoring quality we celebrated was the StyleFingerprint vocabulary working well in text reasoning, not vision-based cohort comparison. The mount has been broken since Note 8 shipped — we just didn't catch it because the text-only fallback produced plausible-enough scores.
+
+**Fix (real, not patch):**
+
+### 27-fix.1 — Use the default mount path for file resources
+
+`buildSessionResources` in `lib/agents/rubric-matcher.ts`:
+
+```typescript
+// BEFORE (broken — mount_path silently ignored):
+byPath.set(mount_path, { type: 'file', file_id: p.file_id, mount_path });
+
+// AFTER (correct — let the API mount at default):
+byPath.set(p.file_id, { type: 'file', file_id: p.file_id });
+```
+
+(The `byPath` Map's purpose was deduplication on mount_path; switch to dedup on file_id since mount_path is no longer client-controlled.)
+
+### 27-fix.2 — Update the Rubric prompt to use file_id-based paths
+
+`buildRubricPrompt` currently lists portfolio images as:
+
+```
+ARTIST_PORTFOLIO:
+  id=1: /workspace/portfolio/1.jpg
+  id=6: /workspace/portfolio/6.jpg
+  ...
+```
+
+Change to:
+
+```
+ARTIST_PORTFOLIO (image_id → mount_path):
+  image 1: /mnt/session/uploads/file_011CaQvZrgePq2tTNwxr6K7Q
+  image 6: /mnt/session/uploads/file_011CaQvZxBntw4iytuyhLZEe
+  ...
+```
+
+The model needs the (image_id, mount_path) pair so it can reference images by their semantic ID in `persist_match`'s `supporting_image_ids` while reading at the actual file_id-based path.
+
+Same for recipients. The current opp/<recipient>/<n>.jpg convention becomes a mapping table:
+
+```
+RECIPIENT IMAGES for opportunity 1 (Mark Chen):
+  /mnt/session/uploads/file_011CaQvZrgePq2tTNwxr6K7Q
+  /mnt/session/uploads/file_011CaQvZxBntw4iytuyhLZEe
+```
+
+The agent loses the semantic prefix (`recipients/opp1_mark-chen/`) but file_id paths are stable and Anthropic-validated.
+
+### 27-fix.3 — Update the prompt's "how to read images" instructions
+
+Current:
+> `read /workspace/portfolio/<id>.jpg`
+
+New:
+> `read /mnt/session/uploads/<file_id>` — the file_id is given alongside each image in the ARTIST_PORTFOLIO and RECIPIENT_IMAGES blocks below. Read the exact path printed for each image.
+
+### 27-fix.4 — Verification test that ENFORCES this contract
+
+Add `tests/smoke/rubric-mount-paths.test.ts` that:
+1. Mocks `client.beta.sessions.create` and asserts the resources passed do NOT contain `mount_path` (catches future regression)
+2. Asserts `buildRubricPrompt` output contains `/mnt/session/uploads/` paths (catches prompt-generation regression)
+
+Plus an integration test that runs the actual probe pattern (`probe-mount.mjs` style) against the live Anthropic Files API in CI: upload a tiny JPEG, mount with default path, verify the agent can read it. If Anthropic ever changes the default mount path, this test catches it.
+
+### Acceptance for Note 27
+
+- A fresh run: Rubric agent reads at `/mnt/session/uploads/<file_id>` paths and DOES find the files. Tool_result returns image bytes, not "file not found."
+- Smoke test asserts no `mount_path` field is passed to `sessions.create` for file resources.
+- The Rubric scoring quality jumps because the agent can ACTUALLY SEE the cohort images (vs. the text-only fallback that's been masking this bug since Note 8).
+
+**Files:** `lib/agents/rubric-matcher.ts` (`buildSessionResources` + `buildRubricPrompt`), `tests/smoke/rubric-mount-paths.test.ts` (new). Probe script `scripts/probe-mount.mjs` retained as live reference / future-regression diagnostic.
+
+**Priority:** highest. This is THE blocker behind the entire Rubric quality plateau. Until this fix lands, every run will produce 1-2 conservatively-scored matches with text-only reasoning. After this lands, Rubric should produce the cohort-grounded honest scoring we documented in the Note 8 spec.
+
+---
+
 ## Note 26 — Statement truncation regression: ILPOTY statement cut to 138 words mid-sentence ("I work in the")
 
 **Where:** `lib/agents/package-drafter.ts` — `draftStatementWithVoiceCheck` and `checkStatementVoice`. Surfaced in re-draft of run 1 with the new Notes 19+20+21+22+23+24+25 bundle.
