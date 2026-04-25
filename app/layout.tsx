@@ -38,9 +38,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
             <Link
               href="/"
-              className="font-serif text-2xl tracking-tight text-neutral-100 hover:text-white"
+              className="font-serif text-2xl tracking-tight text-neutral-100 hover:text-white inline-flex items-baseline gap-2"
             >
-              Atelier
+              <span>Atelier</span>
+              <span className="text-neutral-600 font-normal" aria-hidden="true">|</span>
+              <span className="text-base text-neutral-400 font-normal tracking-normal">
+                Your Personal Art Director
+              </span>
             </Link>
             <nav className="flex gap-1 text-sm">
               {NAV.map((n) => (

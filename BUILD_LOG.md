@@ -364,6 +364,14 @@ Replaces the dossier-only polish bandaid with one coherent system applied to eve
 
 Constraints respected: open-source fonts (Google), Tailwind only (no shadcn install — primitives match the aesthetic without the dep), dark theme default with WCAG-AA contrast on body, zero functional regressions. 75/75 smoke tests pass; `tsc` + `build` + `check:copy` all clean. Live-verified all 8 surfaces return 200 after a clean `.next` rebuild.
 
+### Note 31 — header tagline "Atelier | Your Personal Art Director"
+
+Bare "Atelier" wordmark gave a first-time visitor (judge) zero product context. Spec scope is JUST the header (browser tab title + PDF cover explicitly out of scope per the post-ship clarification).
+
+**Header (`app/layout.tsx`):** the `<Link href="/">` wordmark now renders as `Atelier | Your Personal Art Director` — display-serif "Atelier" in `text-2xl tracking-tight text-neutral-100`, a `text-neutral-600 font-normal` pipe separator (cleaner than em-dash for chrome and consistent with the prose zero-em-dash discipline), then "Your Personal Art Director" in `text-base text-neutral-400 font-normal tracking-normal`. The visual hierarchy keeps "Atelier" load-bearing and the tagline supporting; the pipe is `aria-hidden` so screen readers don't read it. `metadata.title` left as `'Atelier'`. PDF cover already used `Career Dossier` + `artistName` (no bare wordmark).
+
+`tsc --noEmit` clean, 171/171 smoke tests pass, `pnpm check:copy` clean.
+
 ### Note 30 (CRITICAL — production-scale unlock) — sequential per-opp dispatch + describe-before-score instruction
 
 Note 29 was architecturally right (image content blocks > resource mounts) but the first-pass implementation batched `[setup, ...allOppMessages]` into a single `events.send` call. At production scale (12 portfolio + 5×18 recipient ≈ 100+ images at Opus 4.7 ~4784 tokens/image high-res ≈ 350K image tokens), the harness builds a `messages.create` payload from the event log on every turn — stuffing everything into turn 1 risks blowing the context window OR triggering `agent.thread_context_compacted` events that replace images with text summaries. That's the exact "reasoning reads as text-only after a few turns" symptom the run-2 audit kept finding.
