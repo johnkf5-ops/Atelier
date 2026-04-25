@@ -538,7 +538,31 @@ The Style Analyst route is well-designed — it chunks the portfolio into parall
 
 ---
 
-## Note 15 — Dossier missing apply links + material explainers + soft opportunity cap
+## Note 15 — Full visual design system pass across every user-facing surface (SHIPPED)
+
+**Where:** every page in the app.
+
+**Why:** Earlier scoping was "polish dossier only," which was a bandaid — the dossier would be the polished exception and the rest of the app would drag on the demo. Real fix: every surface a judge touches gets the same level of design care.
+
+**Scope shipped:** design system foundation (typography scale, color palette, spacing scale, shadcn primitives consistently applied), serif/sans typography pair, per-surface visual pass on landing/upload/Style Analyst result/interview/review/runs/runs/new/runs/[id]/dossier/settings/404, dossier-specific extra polish (cover page, drafted package print-style, artist statement serif body), mobile responsive on dossier, polished loading + empty states, Layer-2 internal vocabulary sweep finished.
+
+**Status:** shipped per coder closeout. No regressions.
+
+---
+
+## Note 16 — Single-tenant abuse prevention: Start Run modal + IP rate limit + demo banner (SHIPPED)
+
+**Where:** `/runs/new`, `POST /api/runs/start`, global layout banner.
+
+**Why:** Prod URL has no friction between a visitor and triggering an Anthropic-billable run. Need light protection without building auth (Path B post-hackathon).
+
+**Scope shipped:** Start Run confirmation modal explaining single-tenant demo + cost expectation, IP-based rate limit (1 successful run per IP per 24 hours via `rate_limits_run_start` table) returning 429 with readable JSON body, dismissable demo banner on global layout linking to GitHub repo. Did NOT build auth, per-user accounts, or BYO API key (Path B work).
+
+**Status:** shipped per coder closeout. Verified rate limit fires + clears via `scripts/clear-rate.mjs`.
+
+---
+
+## Note 17 — Dossier missing apply links + material explainers + soft opportunity cap
 
 Three distinct dossier UX gaps surfaced together:
 
