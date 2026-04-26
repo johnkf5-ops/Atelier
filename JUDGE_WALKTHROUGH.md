@@ -57,4 +57,4 @@ In the spirit of honest scope:
 
 ---
 
-Built by [John Knopf](https://www.johnknopfphotography.com), an Emmy-nominated landscape photographer who has spent fifteen years inside the visual-arts-submission economy and never applied to a single grant because writing about his own work was the wall.
+Built by [John Knopf](https://jknopf.com), an Emmy-nominated landscape photographer who has spent fifteen years inside the visual-arts-submission economy and never applied to a single grant because writing about his own work was the wall.

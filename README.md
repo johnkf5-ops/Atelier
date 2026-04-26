@@ -265,7 +265,7 @@ Open source per the hackathon rule: every component — backend, frontend, schem
 
 ## Credits
 
-Built by [John Knopf](https://www.johnknopfphotography.com) — Emmy-nominated fine-art landscape photographer, two galleries (Las Vegas, Minneapolis), published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google.
+Built by [John Knopf](https://jknopf.com) — Emmy-nominated fine-art landscape photographer, two galleries (Las Vegas, Minneapolis), published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google.
 
 > Fifteen years inside the visual-arts-submission economy; never applied to a single grant because writing was the wall. Atelier is the tool that would have removed the wall.
 
