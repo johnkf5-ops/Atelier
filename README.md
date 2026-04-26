@@ -109,6 +109,20 @@ Detailed architecture, including the run lifecycle, Managed Agent session shape,
 
 ---
 
+## Managed Agents usage
+
+Atelier runs two long agentic workflows on the Managed Agents beta (`managed-agents-2026-04-01`). The point isn't that Managed Agents solved Vercel's 60-second function timeout — the point is what the session model lets you compose on top of it. Three patterns we leaned on:
+
+**1. Sequential per-opportunity dispatch via run-poll.** The Rubric session goes idle between opportunities. On each browser/cron poll, the run-poll terminal-detection path checks the DB for the next unscored opportunity and dispatches a fresh `user.message` for it. The agent works that one, calls a `persist_match` custom tool, idles again, and the loop continues. State lives in the DB, not in the session — every step is auditable, resumable across function invocations, and recoverable from a crashed poll.
+
+**2. Custom-tool round-trip handler.** Every `persist_opportunity` (Scout) and `persist_match` (Rubric) arrives as an `agent.custom_tool_use` event with a corresponding `requires_action` idle. Our run-poll handler picks it up, runs the persistence to Turso, and posts a `user.custom_tool_result` event back so the agent resumes. The session becomes a long-running negotiation between Claude's reasoning and our durable storage, with neither side blocking the other.
+
+**3. Image content blocks at session scale.** Mounting recipient images as session resources fails the `read` tool above ~95 mounted files (text-only output instead of multimodal binary, undocumented anywhere). Every per-opportunity Rubric message instead ships its cohort as `{type: 'image', source: {type: 'file', file_id}}` blocks — Anthropic's documented multimodal pattern, which engages vision regardless of session size. Probe scripts in `scripts/probe-*.{mjs,ts}` validated this at production scale (12 portfolio + 5 recipient images per per-opp turn).
+
+Together these make a multi-hour agentic workflow that's auditable, resumable, and serverless-deployable. The entire app — including the orchestration of two Managed Agents per run — deploys to Vercel with no separate worker tier, no Cloud Run, no long-lived process. See `lib/agents/run-poll.ts`, `lib/agents/rubric-matcher.ts`, and `lib/agents/opportunity-scout.ts`.
+
+---
+
 ## Two novel primitives
 
 These are the contributions that distinguish Atelier from a chat-with-your-portfolio prototype.
