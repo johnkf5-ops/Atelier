@@ -21,7 +21,9 @@ Built by a photographer who has spent fifteen years inside the visual-arts-submi
 
 ## How to use this demo
 
-The live deploy at **[atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)** runs single-tenant on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated so a new visitor can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. You can browse the existing run + dossier (the system's actual output), and you can also start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is post-hackathon scope.
+**[3-minute demo video](https://youtu.be/bNnt5r1GBmM)** · **[Live deploy](https://atelier-hazel.vercel.app)**
+
+The live deploy at [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app) runs single-tenant on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated so a new visitor can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. You can browse the existing run + dossier (the system's actual output), and you can also start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is post-hackathon scope.
 
 **Time-budget guide:**
 
