@@ -8,7 +8,9 @@ If you're judging this submission and want to verify what's been built without w
 
 **[atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)**
 
-The deploy is single-tenant and runs on the builder's portfolio + Knowledge Base. You can't run a fresh pipeline (rate-limited per IP), but every artifact is browseable. Start at the runs list, then open the dossier — that's where the system's actual output lives.
+**Read first — what you can and can't do on this deploy.** This is a single-tenant deployment running on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated with John's profile so judges can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. What you CAN do live: browse the existing run + dossier (the system's actual output), and start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is post-hackathon scope — Atelier is intended as a free product for working photographers and the architecture is pre-wired for the multi-tenant rollout.
+
+Start at the runs list, then open the dossier — that's where the system's actual output lives.
 
 ---
 
