@@ -103,7 +103,13 @@ export default function DossierView({
   runTarget: number | null;
   runSelectedTypes: string[] | null;
 }) {
-  const [expanded, setExpanded] = useState<number | null>(null);
+  // WALKTHROUGH Note 35-fix.4 — default the first opportunity card to
+  // expanded with the statement tab visible. Judge / first-time visitor
+  // landing on /dossier/1 sees the Drafter output (the actual product)
+  // without needing to click into the card. Subsequent cards stay
+  // collapsed by default to keep the page scannable.
+  const firstMatchId = matches[0]?.id ?? null;
+  const [expanded, setExpanded] = useState<number | null>(firstMatchId);
   const [tabByMatch, setTabByMatch] = useState<Record<number, Tab>>({});
   const [whyOpen, setWhyOpen] = useState<Record<number, boolean>>({});
   const [filteredOpen, setFilteredOpen] = useState(false);
