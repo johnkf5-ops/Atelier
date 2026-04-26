@@ -41,12 +41,29 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
   // still render a coherent cover even after the user updates their KB.
   const runRow = (
     await db.execute({
-      sql: `SELECT user_id, akb_version_id, started_at FROM runs WHERE id = ?`,
+      sql: `SELECT user_id, akb_version_id, started_at, config_json FROM runs WHERE id = ?`,
       args: [runIdNum],
     })
   ).rows[0] as unknown as
-    | { user_id: number; akb_version_id: number; started_at: number }
+    | { user_id: number; akb_version_id: number; started_at: number; config_json: string }
     | undefined;
+  // WALKTHROUGH Note 35-fix.3 — pull target + selected types from the
+  // run's config so the dossier UI can show "honest ceiling reached"
+  // framing when the actual count came in well below the requested target.
+  let runTarget: number | null = null;
+  let runSelectedTypes: string[] | null = null;
+  if (runRow?.config_json) {
+    try {
+      const cfg = JSON.parse(runRow.config_json) as {
+        target_opportunity_count?: number;
+        opportunity_types?: string[];
+      };
+      runTarget = cfg.target_opportunity_count ?? null;
+      runSelectedTypes = cfg.opportunity_types ?? null;
+    } catch {
+      /* malformed config — skip */
+    }
+  }
   const coverArtistName = await resolveArtistName(db, runRow?.akb_version_id);
   const coverThumbs = runRow
     ? (
@@ -184,6 +201,8 @@ export default async function DossierPage({ params }: { params: Promise<{ runId:
       artistName={coverArtistName}
       portfolioThumbs={coverThumbs}
       runDate={coverDate}
+      runTarget={runTarget}
+      runSelectedTypes={runSelectedTypes}
     />
   );
 }

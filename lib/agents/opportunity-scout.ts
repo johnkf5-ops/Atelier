@@ -192,11 +192,19 @@ Then \`read /tmp/x.jpg\`.
 
 If web_fetch fails on a source (404, anti-scraping, paywall), skip it and continue.
 
+HONESTY OVER COMPLETENESS — READ THIS BEFORE THE HARD CAPS:
+The target_opportunity_count is a CEILING, not a floor. If the honest universe of opportunities matching the user's selected types + the photographer's lane is smaller than the target, EMIT WHAT YOU HAVE AND STOP. Do NOT invent program names. Do NOT pad with low-fit options (e.g., conceptual-cohort dummy-book awards for a commercial-landscape photographer) just to hit a number. Do NOT include programs you cannot independently confirm are currently open and accepting submissions in the configured window.
+
+If the honest count of legitimate, lane-correct, currently-active opportunities for this photographer + selected types is N and N < target_opportunity_count, your final emission is N opportunities followed by an agent.message reporting:
+"HONEST_CEILING_REACHED: emitted N opportunities — the realistic universe of [selected types] for this photographer's lane is approximately N for the configured window. The user can loosen the filters (selected types or aggressiveness) to see more options."
+
+A dossier with 8 honest, well-targeted opportunities beats a dossier with 40 padded ones every time. The Rubric Matcher will filter your output further; the user will see the dossier's honest count and understand. Padding the slate damages the dossier; honesty does not.
+
 HARD CAPS for this run:
-- ${Math.max(5, config.target_opportunity_count - 5)}–${config.target_opportunity_count + 5} distinct opportunities total (target: ${config.target_opportunity_count})
+- AT MOST ${config.target_opportunity_count + 5} distinct opportunities total (target: ${config.target_opportunity_count}) — the LOWER bound is the honest ceiling, not a number you must reach
 - 100% of opportunities MUST be photography-specific per the LANE DISCIPLINE rules above. Drop anything that fails the inclusion check.
-- At least 3 distinct PHOTOGRAPHY archetypes represented in the final slate (e.g., not 12 landscape competitions and nothing else; mix in at least one photo-grant or photo-residency or photo-book channel where eligibility supports it)
-- Stop adding new sources once you reach ${config.target_opportunity_count + 5} opportunities`;
+- At least 3 distinct PHOTOGRAPHY archetypes represented in the final slate IF the user selected ≥3 opportunity types AND the lane supports it (don't force a third archetype if the user selected only 1 or 2 types, or if no third archetype has a real-fit candidate)
+- Stop adding new sources once you reach ${config.target_opportunity_count + 5} opportunities OR once the honest universe is exhausted, whichever comes first`;
 }
 
 export async function persistOpportunityFromAgent(runId: number, rawInput: unknown): Promise<string> {

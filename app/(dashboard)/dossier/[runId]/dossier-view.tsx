@@ -84,6 +84,8 @@ export default function DossierView({
   artistName,
   portfolioThumbs,
   runDate,
+  runTarget,
+  runSelectedTypes,
 }: {
   runId: number;
   cover: string;
@@ -94,6 +96,12 @@ export default function DossierView({
   artistName: string;
   portfolioThumbs: string[];
   runDate: string | null;
+  // WALKTHROUGH Note 35-fix.3 — used to render the honest-ceiling-reached
+  // banner when actual emitted-and-included opp count came in well below
+  // the user's target. Avoids the dossier looking like the system
+  // underperformed when it actually returned the lane-honest count.
+  runTarget: number | null;
+  runSelectedTypes: string[] | null;
 }) {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [tabByMatch, setTabByMatch] = useState<Record<number, Tab>>({});
@@ -101,6 +109,14 @@ export default function DossierView({
   const [filteredOpen, setFilteredOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('fit');
   const sorted = useMemo(() => sortMatches(matches, sortKey), [matches, sortKey]);
+
+  // WALKTHROUGH Note 35-fix.3 — honest-ceiling threshold. Total emitted
+  // (matches + filteredOut) reflects what Scout produced; if it came in
+  // below 60% of target the user picked, surface the framing so the
+  // dossier doesn't look like Atelier underperformed.
+  const totalEmitted = matches.length + filteredOut.length;
+  const honestCeilingReached =
+    runTarget !== null && totalEmitted > 0 && totalEmitted < runTarget * 0.6;
 
   return (
     <div className="max-w-5xl mx-auto space-y-16 py-4">
@@ -175,6 +191,29 @@ export default function DossierView({
       {/* WALKTHROUGH Note 22-fix.3: master CV — one canonical CV per dossier,
           rendered ONCE here and referenced from every per-opp package. */}
       {masterCv && <MasterCvSection runId={runId} masterCv={masterCv} />}
+
+      {/* WALKTHROUGH Note 35-fix.3 — honest-ceiling-reached banner.
+          Surfaces when actual emitted-and-included count came in well
+          below the user's target. Frames the small dossier as the
+          honest ceiling, not as Atelier underperforming. */}
+      {honestCeilingReached && (
+        <section className="rounded-lg border border-amber-700/60 bg-amber-950/30 p-4 space-y-2">
+          <div className="text-xs uppercase tracking-wide text-amber-400">
+            Honest ceiling reached for this run
+          </div>
+          <p className="text-sm text-amber-100 leading-relaxed">
+            You requested up to {runTarget} opportunities. Atelier returned {totalEmitted}{' '}
+            ({matches.length} included, {filteredOut.length} filtered out with reasoning) — the
+            honest universe of opportunities matching{' '}
+            {runSelectedTypes && runSelectedTypes.length > 0 && runSelectedTypes.length < 7
+              ? `your selected types (${runSelectedTypes.join(', ')})`
+              : 'your filters'}{' '}
+            for this photographer&rsquo;s lane and the configured submission window. Atelier did not
+            pad the slate with low-fit options. To see more opportunities, loosen your filters or
+            select a wider opportunity-type set on the next run.
+          </p>
+        </section>
+      )}
 
       {/* Top-N matches */}
       <section className="space-y-4">

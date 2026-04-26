@@ -167,6 +167,35 @@ export default function NewRunClient() {
           residencies this cycle, or you&rsquo;re not writing a photo book, drop those — Atelier
           will skip them entirely. At least one type must be selected.
         </p>
+        {/* WALKTHROUGH Note 35-fix.2 — honest-ceiling guidance. The realistic
+            universe of opportunities is much smaller for narrow type selections;
+            warn the user before they discover this in the dossier. Numbers
+            below are the per-type honest ceiling for fine-art photographers
+            in any given 12-month window, derived from probe-supply-photobooks
+            (~22 yes / ~15-20 meaningful) and analogous estimates per type. */}
+        {oppTypes.size > 0 && oppTypes.size <= 2 && (
+          <p className="text-xs text-amber-400 leading-snug rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2">
+            <span className="font-medium">Honest ceiling note:</span> the realistic universe of
+            {' '}
+            {[...oppTypes].map((t) => OPPORTUNITY_TYPE_LABELS[t].label.toLowerCase()).join(' + ')}{' '}
+            for working photographers in a 12-month window is approximately{' '}
+            {(() => {
+              const ceilings: Record<OpportunityType, number> = {
+                competitions: 25,
+                grants: 15,
+                residencies: 12,
+                photo_books: 18,
+                portfolio_reviews: 12,
+                museum_acquisition: 8,
+                commissions: 10,
+              };
+              const total = [...oppTypes].reduce((s, t) => s + ceilings[t], 0);
+              return `${Math.round(total * 0.6)}–${total}`;
+            })()}{' '}
+            opportunities. Atelier will return what&rsquo;s actually open and a fit; it will not pad
+            the slate. If you want a wider dossier, select more types.
+          </p>
+        )}
       </div>
 
       <Button

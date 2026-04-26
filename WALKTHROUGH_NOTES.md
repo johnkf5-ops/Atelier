@@ -4,6 +4,70 @@ Running notes from John's incognito prod walk-through. Each item logged as it su
 
 ---
 
+## Note 35 — Scout lane discipline + user-selectable opportunity types + honest-ceiling enforcement (SHIPPED)
+
+**Where:** `lib/agents/opportunity-scout.ts`, `lib/schemas/run.ts`, `app/(dashboard)/runs/new/new-run-client.tsx`, `app/(dashboard)/dossier/[runId]/page.tsx`, `app/(dashboard)/dossier/[runId]/dossier-view.tsx`. Probes: `scripts/probe-scout-archetypes.ts`, `scripts/probe-scout-types.ts`, `scripts/probe-supply-photobooks.ts`, `scripts/probe-scout-overask.ts`.
+
+**Symptom John caught:** Run 3 produced a 0-included dossier. Slate had Banff Mountain Film & Book Festival (not photography), Nat Geo Society Storytelling (conservation reporting), Lucie Photo Book Prize (book-grant — what if I'm not writing one?), generic Nevada Arts grants. The Rubric correctly scored everything below the 0.45 inclusion threshold because none of it was John's lane. Same Scout prompt as run 1 (which produced a perfect slate of 6 photo competitions); the slate quality was luck-of-the-draw.
+
+**Diagnosis:** Three coupled problems.
+
+1. **Scout drift.** The prior Scout prompt told the agent "infer 5–8 archetypes, ≥4 distinct, no archetype >40% of slate" — explicitly rewarding diversification across archetypes. For a focused single-medium photographer, that's the wrong instruction. It rewards drifting OUT of photography into adjacent media (book grants, mixed-medium residencies, conservation grants). Run 1 happened to land on photo competitions; run 3 happened to drift.
+
+2. **No user agency over slate shape.** The system picked the slate composition for the user. A photographer who's not writing a book this cycle still got photo books. A photographer who's not interested in residencies still got residencies. No UI to express "I only want competitions this run."
+
+3. **No honest-ceiling enforcement.** The HARD CAPS section said "${target-5}-${target+5} distinct opportunities total" — implying a FLOOR. At target=40 with photo_books only, the agent could pad the slate with low-fit dummy-book awards or invented publisher names to hit the floor. Verified by `probe-supply-photobooks.ts`: the honest universe of currently-active US-accepting photo-book opportunities is ~22 confidence-yes, ~15-20 meaningful career-movers. For John specifically (saturated commercial-landscape register), the lane-honest ceiling is ~12-15. Asking for 40 photo_books would force padding.
+
+### 35-fix.1 — Scout prompt rewrite for photography lane discipline
+
+Replaced the open-ended "infer 5-8 archetypes" instruction with explicit photography-lane rules. New sections:
+
+- **LANE DISCIPLINE — READ THIS FIRST.** Names the system's actual scope: working fine-art photographers. Diversification happens INSIDE photography, across photo-competition / photo-prize / photo-residency / photo-book / photo-grant axes.
+- **HARD INCLUSION RULE.** An opportunity emits ONLY if (a) name contains a photography keyword (photo / photographic / photographer / POTY / ILPOTY / etc.) OR (b) it's a photo-specific category inside a larger umbrella OR (c) past recipients are ≥70% photographers.
+- **HARD EXCLUSION RULES.** Drop: general book grants that aren't photo-specific, mixed-medium residencies with <30% photographer cohort, multi-discipline grants where photography is a long shot, mountain/film/book festivals (Banff is the canonical example), conservation/journalism reporting grants UNLESS AKB shows editorial-photojournalism positioning, public-art commissions that don't accept photography as primary medium.
+- **STEP 0** rewritten with photography-only archetype examples (e.g., "international landscape-photography prize", "saturated-color-tolerant photography competition", "photo-book grant or publisher open submission") and explicit instruction that each emitted archetype name MUST contain a photography keyword.
+- **HARD CAPS** "≥4 distinct archetypes" reframed as "≥3 PHOTOGRAPHY archetypes IF the user selected ≥3 opportunity types AND the lane supports it" — diversification not forced when the user narrowed scope.
+
+Verified by `probe-scout-archetypes.ts`: 9 of 9 emitted archetypes for John's AKB are now in-lane (photography only). Compare to run 3's drift.
+
+### 35-fix.2 — User-selectable opportunity types
+
+Added `opportunity_types` to `RunConfig` as an enum array of 7 types: `competitions`, `grants`, `residencies`, `photo_books`, `portfolio_reviews`, `museum_acquisition`, `commissions`. Defaults to all-on; `.min(1)` enforces at least one.
+
+`OPPORTUNITY_TYPE_LABELS` exports a per-type `{label, explainer}` so the UI gets one-line definitions for each ("POTY-style photo prizes — IPA, ILPOTY, FAPA, NLPA, Epson Pano, etc.", "Foundation + state arts council grants — Aaron Siskind, En Foco, Pollock-Krasner, state arts fellowships", etc.).
+
+`/runs/new` UI now renders a checkbox group below the Aggressiveness selector, all on by default. Start button disabled when no types selected. POST body includes `opportunity_types` array.
+
+Scout prompt receives the selected types and adds a USER-SELECTED OPPORTUNITY TYPES section with per-type definitions and an explicit rule: "DO NOT EMIT" anything outside the selected set. Verified by `probe-scout-types.ts`: 100% lane-correct across all 7 single-type probes (competitions only → photo competitions only; grants only → photo grants only; etc.) AND 3 combination probes (competitions + photo_books, grants + residencies, competitions + grants + museum_acquisition — each balanced across selected types only).
+
+Backwards-compatible: old `runs.config_json` rows pre-Note-35 lack `opportunity_types`; Zod fills the all-on default on parse → identical to pre-Note-35 behavior.
+
+### 35-fix.3 — Honest-ceiling enforcement (Scout prompt + UI guidance + dossier banner)
+
+Three coupled changes addressing the over-ask failure mode (Probe B).
+
+**Scout prompt — HONESTY OVER COMPLETENESS rule.** Reframed `target_opportunity_count` as a CEILING, not a floor. Explicit instructions: "Do NOT invent program names. Do NOT pad with low-fit options. Do NOT include programs you cannot independently confirm are currently open." If the honest count N falls below target, the agent emits N opportunities and reports `HONEST_CEILING_REACHED: emitted N — the realistic universe of [selected types] for this photographer's lane is approximately N for the configured window.` The HARD CAPS section was retitled with "the LOWER bound is the honest ceiling, not a number you must reach."
+
+**`/runs/new` UI ceiling guidance.** When the user selects ≤2 opportunity types, an amber callout shows "the realistic universe of [selected types] for working photographers in a 12-month window is approximately N–M opportunities. Atelier will return what's actually open and a fit; it will not pad the slate. If you want a wider dossier, select more types." Per-type ceiling estimates are derived from `probe-supply-photobooks` (~22 yes / ~15-20 meaningful for photo_books) and analogous estimates per type (competitions ~25, grants ~15, residencies ~12, photo_books ~18, portfolio_reviews ~12, museum_acquisition ~8, commissions ~10).
+
+**Dossier UI honest-ceiling banner.** When `(matches.length + filteredOut.length) < runTarget × 0.6`, the dossier renders an amber "Honest ceiling reached for this run" section above the Top opportunities heading: "You requested up to N opportunities. Atelier returned M ([included] included, [filtered] filtered out with reasoning) — the honest universe of opportunities matching your selected types for this photographer's lane and the configured submission window. Atelier did not pad the slate with low-fit options. To see more opportunities, loosen your filters." Reads `target_opportunity_count` and `opportunity_types` from `runs.config_json`. Doesn't render when target is null (legacy rows) or when emitted ≥ 60% of target.
+
+### Acceptance for Note 35
+
+- All 191 smoke tests still green (was 191 pre-Note-35; no new test changes required because the Scout prompt is a runtime string, not a schema).
+- `probe-scout-archetypes.ts` returns 9/9 in-lane for John's AKB.
+- `probe-scout-types.ts` returns 100% lane-correct for all 7 single-type probes + 3 combination probes.
+- `probe-supply-photobooks.ts` returns honest universe analysis (22 active / 15-20 meaningful for photo_books).
+- `probe-scout-overask.ts` confirms the agent honestly stops at the ceiling and refuses to invent when given the honesty instruction.
+- Old `runs.config_json` rows pre-Note-35 still parse cleanly (Zod default fills `opportunity_types`).
+- Dossier banner does not render for legacy runs (target_opportunity_count is null) or for runs that hit ≥60% of target.
+
+**Files:** `lib/agents/opportunity-scout.ts` (lane discipline + honesty rule + user-types section), `lib/schemas/run.ts` (OPPORTUNITY_TYPES enum + opportunity_types field), `app/(dashboard)/runs/new/new-run-client.tsx` (checkbox group + ceiling note), `app/(dashboard)/dossier/[runId]/page.tsx` (read config from runs row + thread to view), `app/(dashboard)/dossier/[runId]/dossier-view.tsx` (honest-ceiling-reached banner), `tests/smoke/composite-ranking.test.ts` (fixture updated for new required field). Probes: `scripts/probe-scout-archetypes.ts`, `scripts/probe-scout-types.ts`, `scripts/probe-supply-photobooks.ts`, `scripts/probe-scout-overask.ts` — retained for future regression detection.
+
+**Priority:** highest. Without 35-fix.1, Scout drifts out of the photography lane non-deterministically and produces 0-included dossiers (run 3 was the canonical failure). Without 35-fix.2, the user has no way to scope a run to "competitions only" or "I'm not writing a book this cycle." Without 35-fix.3, the system at high target counts could pad the slate with low-fit options or invented program names — the Probe B agent recommended capping at the honest ceiling and refusing to invent, but only when explicitly told to; the production prompt now codifies that.
+
+---
+
 ## Note 34 — Runs survive closed browser tabs + Rubric skips empty-cohort opps (SHIPPED)
 
 **Where:** `app/api/cron/poll-runs/route.ts` (new), `vercel.json`, `lib/agents/rubric-matcher.ts:sendNextRubricOpp`.
