@@ -15,7 +15,7 @@
 
 ---
 
-Built by a photographer who has spent fifteen years inside the visual-arts-submission economy and never applied to a single grant because writing about his own work was the wall. Atelier is that tool — upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
+Built by a photographer who has spent fifteen years inside the visual-arts-submission economy, never applied to a single grant because writing about his own work was the wall, and never wrote a line of code in his life — Atelier was vibe-coded with Claude Opus 4.7. Upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
 
 ---
 
