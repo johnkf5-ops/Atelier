@@ -147,9 +147,12 @@ Provisioned in `scripts/setup-managed-agents.ts` as a Managed Agent with the `ag
 3. Update `runs.status = 'scout_running'`.
 4. `client.beta.sessions.events.send(session.id, { events: [{ type: 'user.message', content: [{ type: 'text', text: prompt }] }] })` — wrapped in `withAnthropicRetry`.
 
-The Scout prompt (in `buildScoutPrompt`) hard-codes the workflow:
+The Scout prompt (in `buildScoutPrompt`) hard-codes the workflow with explicit photography lane discipline (Note 35):
 
-- **Step 0 — Archetype inference** (before any web_search). Read AKB + StyleFingerprint and emit a 5–8 archetype list as an `agent.message`. No fixed taxonomy — reason from primary medium, aesthetic register, career positioning, home state. The aesthetic-honesty rule is explicit: "if the work is commercial-gallery-register landscape spectacle, a Yaddo fellowship is a distraction."
+- **LANE DISCIPLINE** (the first thing the agent reads). The system finds opportunities for working fine-art photographers; every emitted opportunity must be photography-specific. Diversification happens INSIDE photography, across photo-competition / photo-prize / photo-residency / photo-book / photo-grant axes — NOT across photography vs. painting vs. multidisciplinary grants. HARD INCLUSION RULE: emit an opp only if (a) name contains a photography keyword OR (b) it's a photo-specific category in a larger umbrella OR (c) past recipients are ≥70% photographers. HARD EXCLUSION RULES drop general book grants, mixed-medium residencies with low-photographer cohorts, mountain-film festivals, and conservation/journalism reporting grants unless AKB shows editorial-photojournalism positioning.
+- **USER-SELECTED OPPORTUNITY TYPES** (Note 35-fix.2). The user picks from {competitions, grants, residencies, photo_books, portfolio_reviews, museum_acquisition, commissions} on `/runs/new`. Selected types flow through `config.opportunity_types`; the prompt explicitly forbids emitting opps outside the selected set.
+- **HONESTY OVER COMPLETENESS** (Note 35-fix.3). `target_opportunity_count` is a CEILING, not a floor. Do NOT invent program names. Do NOT pad with low-fit options. If the honest universe is N < target, emit N + report `HONEST_CEILING_REACHED`. The dossier UI surfaces a banner when emitted < 60% of target.
+- **Step 0 — Archetype inference** (before any web_search). Synthesize 5–8 photography-only archetypes that fit this specific photographer. Each archetype name must contain a photography keyword. Aesthetic-honesty rule explicit: if the work reads as commercial-gallery-register landscape spectacle, route to destination-photography prizes (Epson Pano, ILPOTY, Hamdan) and saturated-tolerant competitions (FAPA, IPA, ND Awards), NOT process-forward residencies (Light Work) or museum-acquisition tracks where the cohort is conceptual/wet-plate.
 - **Step 1 — Discovery.** For each archetype, 2–4 `web_search` queries.
 - **Step 2 — Fetch + structure.** For each candidate, `web_fetch` listing + detail page. Extract `name, deadline, award.{type, amount_usd, prestige_tier}, eligibility, entry_fee_usd`.
 - **Step 3 — Eligibility filter.** Drop ineligibles based on AKB.
@@ -157,7 +160,7 @@ The Scout prompt (in `buildScoutPrompt`) hard-codes the workflow:
 - **Step 5 — Emit.** One `persist_opportunity` custom tool call per opportunity.
 - **Step 6 — Complete.** Final `agent.message` with text `<DONE>`.
 
-Hard caps in the prompt: 12–20 opportunities total, ≥4 archetypes, no archetype >40% of slate, stop adding sources at 20.
+Hard caps: at most `target_opportunity_count + 5` opportunities (the lower bound is the honest ceiling, not a number to reach); 100% photography-specific per the lane rules; ≥3 photography archetypes only IF the user selected ≥3 types AND the lane supports it.
 
 The custom tool input schema is `OpportunityWithRecipientUrls` (`lib/schemas/opportunity.ts`) run through `zodToJsonSchema(..., { target: 'openApi3' })` then `sanitizeJsonSchema` — strips `minimum`/`maximum`/`exclusiveMinimum`/`exclusiveMaximum`/`multipleOf`/`minLength`/`maxLength`/`minItems`/`maxItems`/`format`/`pattern`/`additionalProperties` (every key Anthropic's validator rejects; see `lib/schemas/sanitize.ts:17`). Note in `lib/schemas/opportunity.ts:21–25`: `eligibility.age_range` was originally a `z.tuple([z.number(), z.number()])` but `zod-to-json-schema` emits `items: [schema, schema]` for tuples and Anthropic's internal model validator rejected that as an internal 500; the field is now `z.array(z.number()).optional()`.
 
@@ -188,7 +191,7 @@ Two prompt builders compose the conversation:
 }
 ```
 
-Per-opportunity dispatch is **sequential**, driven from the run-poll loop. `startRubricSession(runId, akb, fingerprint, top12, opportunities)` sends only the setup message and returns; the session goes idle. On each poll, `sendNextRubricOpp(client, runId, sessionId)` recomputes the next unscored opportunity from the DB and sends its message. When `sendNextRubricOpp` returns `false` (no opps remain), the run-poll terminal-detection path fires `finalize` instead of advancing further. The agent emits one `persist_match` custom tool call per opportunity; `persistMatchFromAgent(runId, rawInput)` validates against `RubricMatchResult`, computes `included = fit_score >= 0.45 ? 1 : 0`, and upserts into `run_matches` (ON CONFLICT(run_id, opportunity_id) — dedup across agent retries).
+Per-opportunity dispatch is **sequential**, driven from the run-poll loop. `startRubricSession(runId, akb, fingerprint, top12, opportunities)` sends only the setup message and returns; the session goes idle. On each poll, `sendNextRubricOpp(client, runId, sessionId)` recomputes the next unscored opportunity from the DB and sends its message. **Empty-cohort skip (Note 34):** when the next opp has zero recipient `file_ids` (residencies / state grants / festivals that don't publish past awardees with portfolio images), `sendNextRubricOpp` does NOT send to the agent — it inserts a synthetic `run_matches` row with `included=0` and reasoning "No past-recipient cohort available… Atelier filters this opportunity out by default", then loops to find the next real opp. Saves the Rubric from burning model turns scoring blind. When `sendNextRubricOpp` returns `false` (no opps remain), the run-poll terminal-detection path fires `finalize` instead of advancing further. The agent emits one `persist_match` custom tool call per real opportunity; `persistMatchFromAgent(runId, rawInput)` validates against `RubricMatchResult`, computes `included = fit_score >= 0.45 ? 1 : 0`, and upserts into `run_matches` (ON CONFLICT(run_id, opportunity_id) — dedup across agent retries).
 
 The workflow per opportunity in the prompt: read the opportunity's recipient images (visible in the message above) → synthesize aesthetic signature → identify supporting + hurting portfolio images (visible from setup) → score 0–1 with calibration anchors (0.8+ unsurprising, 0.5 plausible outlier, 0.2 wrong room) → emit `persist_match` with `{opportunity_id, fit_score, reasoning, supporting_image_ids, hurting_image_ids, cited_recipients, institution_aesthetic_signature}`.
 
@@ -198,38 +201,45 @@ Why this shape — at session scale (95+ resources mounted), the `read` tool on 
 
 ### 3.5 Package Drafter — `lib/agents/package-drafter.ts`
 
-Direct `messages.create` for each material. For each top-15 included match (`composite_score DESC NULLS LAST, fit_score DESC LIMIT 15`), draft four materials sequentially: artist statement, project proposal, CV, cover letter. `pLimit(5)` at the match level, sequential within a match. Net peak load: 5 concurrent `messages.create` calls.
+Direct `messages.create` for each material. For each top-15 included match (`composite_score DESC NULLS LAST, fit_score DESC LIMIT 15`), draft three materials sequentially: artist statement, project proposal, cover letter. The fourth field `cv_formatted` is a deterministic per-opp trim NOTE (no LLM call) — the master CV is generated once per run by the Orchestrator (see §3.6). `pLimit(5)` at the match level, sequential within a match. Net peak load: 5 concurrent `messages.create` calls.
 
-Two hard constraints in every per-material prompt (except CV, which is purely factual):
+`MAX_TOKENS_BY_TYPE`: `artist_statement: 8000`, `project_proposal: 8000`, `cover_letter: 6000` (Note 33-fix.6 bumped from 4000/4000/3000 after a 0-byte proposal regression — adaptive thinking on Opus 4.7 with dense opp-page contexts can consume the entire budget before emitting prose).
 
-**FINGERPRINT_CONSTRAINT** — visual claims must match the StyleFingerprint. The Drafter is forbidden from inventing institutional-register framings (cool-tonal, Sugimoto-lineage, durational-conceptual) when the fingerprint says otherwise. The constraint is verbatim in `package-drafter.ts:68–77`:
+Three hard constraints in every per-material prompt:
+
+**FINGERPRINT_CONSTRAINT** — visual claims must match the StyleFingerprint. The Drafter is forbidden from inventing institutional-register framings (cool-tonal, Sugimoto-lineage, durational-conceptual) when the fingerprint says otherwise. Cited example in code:
 
 > If the fingerprint says "saturated" palette, do NOT claim "cool-tonal" or "muted." If the fingerprint's formal_lineage names commercial precedents (Peter Lik, Trey Ratcliff, Galen Rowell), do NOT pitch the work as "Sugimoto-lineage" or "New Topographics" or any institutional-register lineage the fingerprint does not name…
 
-**NAME_PRIMACY_CONSTRAINT** — `identity.artist_name` is the public-facing byline (Note 4). `identity.legal_name` is administrative metadata used only when a template explicitly asks for "legal name (for tax/contract)". The constraint is verbatim in `package-drafter.ts:84–87`.
+**NAME_PRIMACY_CONSTRAINT** — `identity.artist_name` is the public-facing byline (Note 4). `identity.legal_name` is administrative metadata used only when a template explicitly asks for "legal name (for tax/contract)".
 
-Skill files loaded once per match via `Promise.all`: `skills/artist-statement-voice.md`, `skills/project-proposal-structure.md`, `skills/cv-format-by-institution.md`. Each has a hand-written DEFAULT fallback (in `package-drafter.ts:13–42`) so the Drafter never silently degrades when a skill file is missing.
+**AKB_FACTS_ONLY_CONSTRAINT** (Note 24) — every biographical claim (exhibitions, publications, awards, dates, partnerships, future commitments) must be verifiable in the AKB JSON. The post-write `checkFactGrounding` linter extracts every year + every captured proper-noun entity from the draft and substring-checks against the AKB string; mismatches force a one-shot revision pass. Hallucinated venues and invented partnerships are rejected at lint time.
 
-`oppRequirementsText`: best-effort fetch of the opportunity URL (10s timeout, cheerio-clean to plain text, truncated to 20K chars). Passed to the project-proposal prompt so the proposal can match the funder's stated structure.
+Skill files loaded once per match via `Promise.all`: `skills/artist-statement-voice.md`, `skills/project-proposal-structure.md`, `skills/cv-format-by-institution.md`, plus `artist-statement-real-examples.md` and `project-proposal-real-examples.md` few-shot files. Each has a hand-written DEFAULT fallback so the Drafter never silently degrades when a skill file is missing.
 
-Each of the four material calls uses `thinking: { type: 'adaptive' }` and `withAnthropicRetry({ label: 'drafter-${type}' })`.
+`oppRequirementsText`: best-effort fetch of the opportunity URL (10s timeout, cheerio-clean to plain text, truncated to 20K chars). Passed to the project-proposal prompt so the proposal can match the funder's stated structure, AND parsed by `parseFormatConstraints(text, opp.name)` to extract hard format requirements (panoramic, square, vertical, max-images) for the work-sample selector.
 
-`selectWorkSamples(supportingIds, portfolio, target=12)` builds the work-sample selection. Priority 1: Rubric-supplied supporting IDs. Priority 2: even-spaced backfill from remainder. Each sample carries a `rationale` field — supporting picks get "cited as supporting the institution's aesthetic signature in the Rubric Matcher's reasoning"; backfills get "representative of the artist's broader range".
+Each material call uses `thinking: { type: 'adaptive' }`, `withAnthropicRetry({ label: 'drafter-${type}' })`, and a post-write voice + fact-grounding linter pair (`checkStatementVoice` / `checkProposalVoice` / `checkCoverLetterVoice` + `checkFactGrounding`). The linters share an empty-output floor (`MIN_DRAFT_CHARS = 20`, Note 33-fix.6) that catches the case where the model returned an empty text block — without it, empty strings shipped as finished materials. Lints fire a one-shot revision turn with the issue list; if the revision is also empty/too-short, the function throws and the run records the failure rather than silently materializing a 0-byte output.
 
-Persistence: ON CONFLICT(run_match_id) DO UPDATE — re-drafting overwrites instead of throwing on duplicate.
+`selectWorkSamples(supportingIds, hurtingIds, portfolio, target=12, formatConstraints)` returns `{samples, format_mismatch_warning}` (Notes 33-fix.7 + 33-fix.8). Priority 1: Rubric-supplied supporting IDs that match format constraints. Priority 2: even-spaced backfill from remainder, EXCLUDING both already-used IDs AND Rubric-flagged hurting IDs AND format-failing images. Format-marginal supporting IDs (aesthetically-supporting but format-failing) get appended at the end with explicit "format-marginal" rationale only when the format-matching pool is too small to fill the target. The `format_mismatch_warning` string surfaces to the dossier UI as an amber banner above the sample grid when fewer than the target count of format-matching images exist in the portfolio.
+
+The drafted prose is grounded in the actual selected samples via a per-image `workSampleSummary` block injected into all three prompt user-messages (Note 33-fix.7) — the Drafter knows which images are being submitted and writes prose consistent with them, instead of describing the artist's whole practice.
+
+Persistence: `work_sample_selection_json` now stores the wrapped object `{samples, format_mismatch_warning}`. ON CONFLICT(run_match_id) DO UPDATE — re-drafting overwrites instead of throwing on duplicate. Dossier reader handles both the legacy bare-array shape and the new wrapper.
 
 ### 3.6 Orchestrator — `lib/agents/orchestrator.ts`
 
-Three direct `messages.create` calls plus a deterministic composite-score computation:
+Four direct `messages.create` calls plus a deterministic composite-score computation:
 
 1. **`compositeScore(fit, opp, config)`** — `fit × prestige × urgency × affordability`. Prestige weights: flagship=1.0, major=0.85, mid=0.7, regional=0.55, open-call=0.4 (`PRESTIGE_WEIGHTS`). Urgency penalises both very-near (<7 days, 0.3) and very-far (>90 days, 0.65) deadlines, with the sweet spot at 7–30 days (1.0). Affordability is `1 - (fee/budget)*0.5` capped at 1.0; over-budget is 0.
-2. **`generateCoverNarrative(akb, fp)`** — 2–3 paragraph cover narrative from AKB + fingerprint. `thinking: { type: 'adaptive' }`, `max_tokens: 1500`.
+2. **`generateCoverNarrative(akb, fp)`** — 2–3 paragraph cover narrative from AKB + fingerprint. `thinking: { type: 'adaptive' }`.
 3. **`generateRankingNarrative(topMatches)`** — 3–4 paragraph "why this ordering" narrative across the top opportunities. Same shape.
-4. **`generateFilteredOutBlurb(opp, reasoning)`** — one-sentence "Why not [opportunity]:…" boil-down per filtered-out opportunity. `thinking: { type: 'disabled' }` here — the call is short and reasoning headroom inflates cost without value.
+4. **`generateMasterCv(akb, fingerprint)`** (Note 22-fix.3) — one canonical CV per dossier, formatted to the section list in `cv-format-by-institution.md`. Replaces the prior per-opp CV pattern that drifted in label/order across 15 matches. Persisted to `dossiers.master_cv`.
+5. **`generateFilteredOutBlurb(opp, reasoning)`** — one-sentence "Why not [opportunity]:…" boil-down per filtered-out opportunity. `thinking: { type: 'disabled' }` here — the call is short and reasoning headroom inflates cost without value.
 
-All three calls use `withAnthropicRetry`. Filtered-out blurbs are batched at `pLimit(5)`. Logos for the top-included opps are fetched in parallel at `pLimit(5)` via `getLogoUrl(opportunity_id, url)` (fails are non-fatal — logos are decoration).
+The cover, ranking, and master-CV calls fire in parallel via `Promise.all`. All calls use `withAnthropicRetry`. Filtered-out blurbs are batched at `pLimit(5)`. Logos for the top-included opps are fetched in parallel at `pLimit(5)` via `getLogoUrl(opportunity_id, url)` (fails are non-fatal — logos are decoration).
 
-The dossier row is upserted with the cover + ranking narratives. The Drafter then runs (`draftPackages`) and flips `runs.status = 'complete'`.
+The dossier row is upserted with the cover + ranking narratives + master CV. The Drafter then runs (`draftPackages`) and flips `runs.status = 'complete'`.
 
 ---
 
@@ -398,7 +408,7 @@ Single source of truth: `lib/db/schema.sql`. One file, applied idempotently on c
 
 **`drafted_packages`** — one row per drafted match. `(run_match_id PK-via-unique-index, artist_statement, project_proposal, cv_formatted, cover_letter, work_sample_selection_json)`. UNIQUE INDEX on `run_match_id` enables Drafter's ON CONFLICT(run_match_id) DO UPDATE re-draft pattern.
 
-**`dossiers`** — one row per run. `(run_id PK UNIQUE, cover_narrative, ranking_narrative, pdf_path)`.
+**`dossiers`** — one row per run. `(run_id PK UNIQUE, cover_narrative, ranking_narrative, master_cv, pdf_path)`. `master_cv` (Note 22-fix.3) is the single canonical CV for the dossier — generated once by the Orchestrator from the AKB rather than once per match.
 
 **`untrusted_sources`** — `(user_id, url, reason, rejected_at)` with composite PK. Note 10. When a user rejects a fact on `/review`, the source URL goes here; future auto-discover runs read this table and skip those URLs. Prevents the "delete this hallucination forever" treadmill.
 
@@ -482,7 +492,7 @@ RUBRIC_AGENT_ID=agt_...
 
 Pasted into `.env.local` and `vercel env add` for production/preview/development.
 
-Per-run: `client.beta.sessions.create({ agent: AGENT_ID, environment_id: ENV_ID, title, [resources] })` once, then `events.send` once (the prompt), then poll-pull-on-read.
+Per-run: `client.beta.sessions.create({ agent: AGENT_ID, environment_id: ENV_ID, title })` once (NO `resources` field — the Rubric session sends images as content blocks inside `user.message` events; see §8), then `events.send` once (the prompt or setup message), then poll-pull-on-read.
 
 ### 7.3 Custom tools — `persist_opportunity` and `persist_match`
 
@@ -575,6 +585,16 @@ The walkthrough notes are John's incognito-prod walkthrough log. Each note that 
 **Note 11 — `withAnthropicRetry` helper, ESLint rule, capacity probe**. `lib/anthropic-retry.ts` is the systemic fix for transient 529/503/429/network errors that surface to users as "Failed to fetch". Every Anthropic call site is wrapped (full inventory in §7.1). `eslint.config.mjs:38–75` bans direct `await client.<method>(...)` calls via `no-restricted-syntax`. `app/api/health/route.ts` probes Anthropic capacity with a tiny `messages.create` call so we can spot upstream weather before running expensive flows.
 
 **Note 13 — Tier labels replace numerical scores in user-facing surfaces**. Internal `composite_score` and `fit_score` REAL columns stay in `run_matches` (used for sorting + Drafter selection). Dossier UI displays qualitative tiers ("Strong fit", "Solid fit", "Worth applying", "Wrong room — see why") mapped from the score ranges; raw numbers do not appear in user-facing surfaces.
+
+**Note 33 — Strip personal-user bias; KEEP photography canon as the moat**. The Drafter previously had hardcoded John-specific lexicons (his travel reel as `CANONICAL_LOCATION_LEXICON`, his gear as `IQ4`-anchored vocabulary, his Mondoir/Vegas/FOTO career markers literal in cover-letter constraints). Replaced with universal photography-canon baselines plus runtime extraction from THIS user's AKB (`extractAkbLocations(akb)` pulls Capitalized place tokens from `bodies_of_work[*].description`, `home_base.city`, `exhibitions[*].location`). The cap rule operates on the union: universal photo destinations + this photographer's actual reel.
+
+**Note 33-fix.6 — Empty-output floor + revise-fallback hardening + max_tokens bump**. The terminal-punctuation lint short-circuited on `text.length > 0`; an empty model response passed every check vacuously and shipped as a finished material. `MIN_DRAFT_CHARS = 20` floor at the top of all three voice checks forces a revision when the model returned nothing. Both first AND revised empty → throw, surfacing as a `run_events` row instead of a silent 0-byte ship. `MAX_TOKENS_BY_TYPE` bumped to 8000/8000/6000 to give adaptive thinking enough room on dense opp-page contexts.
+
+**Note 33-fix.7 + .8 — Drafter prose grounded in actual work samples + Rubric hurting_image_ids excluded + format-aware sample selection**. `selectWorkSamples` now takes `hurtingIds` and `formatConstraints` (parsed from opp page text + opp name via `parseFormatConstraints`); image dimensions threaded through `PortfolioImage` so format-aware filtering honors aspect-ratio requirements (e.g., Epson Pano's 2:1 minimum). `work_sample_selection_json` now stores `{samples, format_mismatch_warning}`; the dossier UI surfaces an amber "Manual review recommended" banner above the sample grid when format constraints can't be fully satisfied. The Drafter prompts receive a per-image `workSampleSummary` block so the prose stays consistent with the actual submitted set.
+
+**Note 34 — Server-side polling cron + Rubric empty-cohort skip**. Browser-only polling silently stalls when the user closes the tab (the agent keeps running on Anthropic's side, our DB ingests no events). `app/api/cron/poll-runs/route.ts` finds in-flight runs and calls `pollRun()` on each; `vercel.json` cron schedule is a post-hackathon plan-tier item. Separately, `sendNextRubricOpp` now skips opps with zero recipient `file_ids` by inserting a synthetic filtered-out match with reasoning "No past-recipient cohort available" — saves the Rubric from burning model turns scoring blind on residencies / state grants / festivals that don't publish past awardees.
+
+**Note 35 — Scout lane discipline + user-selectable opportunity types + honest-ceiling enforcement**. Scout's prior "≥4 archetypes, no archetype >40%" rule rewarded drift OUT of photography. Replaced with explicit photography-only lane rules + user-selectable opportunity types (`opportunity_types` field on `RunConfig`, defaulting to all-on, surfaced as a checkbox group on `/runs/new`). HONESTY OVER COMPLETENESS rule reframes `target_opportunity_count` as a CEILING; the agent emits the honest universe and reports `HONEST_CEILING_REACHED` rather than padding with low-fit options. Dossier UI surfaces an honest-ceiling banner when emitted < 60% of target.
 
 Other notes that landed as structural decisions but were not specifically called out in the prompt: Note 4's `identity.artist_name` primacy (schema field added in `lib/schemas/akb.ts:9`, gap-detection priority bumped above `legal_name`, NAME_PRIMACY_CONSTRAINT in Drafter); Note 5's DEFAULT_EQUALS suppression for `legal_name`/`artist_name` and `citizenship`/`home_base.country` in `lib/akb/gaps.ts:55–104`.
 
