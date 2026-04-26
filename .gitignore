@@ -52,3 +52,7 @@ fixtures/portfolio.manifest.json
 fixtures/akb.json
 fixtures/style-fingerprint.json
 fixtures/extractor-turns.jsonl
+
+# local archive of removed-from-production runs (Note 35-fix.4)
+# never commit, never deploy — keeps the data on John's machine only
+local-runs-archive/
