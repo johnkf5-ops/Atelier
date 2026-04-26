@@ -15,7 +15,7 @@
 
 ---
 
-Upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
+Built by a photographer who has spent fifteen years inside the visual-arts-submission economy and never applied to a single grant because writing about his own work was the wall. Atelier is that tool — upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
 
 ---
 
@@ -128,6 +128,8 @@ For each candidate opportunity, the Matcher fetches the last three years of reci
 ---
 
 ## Setup
+
+If you want to evaluate Atelier without setting up your own keys, the [live demo](https://atelier-hazel.vercel.app) is the better path — local setup requires Anthropic Managed Agents beta access (not on every API key), a Turso database, and a Vercel Blob store. The setup steps below are for forking and running on your own infrastructure.
 
 Atelier requires Node.js 20+, pnpm, an Anthropic API key with Managed Agents beta access, a Turso database, and a Vercel Blob store.
 
