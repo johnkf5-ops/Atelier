@@ -112,7 +112,10 @@ export default function DossierView({
   const [expanded, setExpanded] = useState<number | null>(firstMatchId);
   const [tabByMatch, setTabByMatch] = useState<Record<number, Tab>>({});
   const [whyOpen, setWhyOpen] = useState<Record<number, boolean>>({});
-  const [filteredOpen, setFilteredOpen] = useState(false);
+  // WALKTHROUGH Note 35-fix.5 — filtered-out section default open.
+  // The "saying no with reasons IS the product" framing is undermined
+  // when the reasons are hidden behind a "+" click. Default visible.
+  const [filteredOpen, setFilteredOpen] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>('fit');
   const sorted = useMemo(() => sortMatches(matches, sortKey), [matches, sortKey]);
 
@@ -360,22 +363,81 @@ export default function DossierView({
                           opportunity list — trim it to fit this submission.
                         </p>
                       )}
-                      <Tabs
-                        value={tabByMatch[m.id] ?? 'statement'}
-                        onChange={(t) => setTabByMatch((c) => ({ ...c, [m.id]: t }))}
-                        tabs={[
-                          { key: 'statement', label: 'Statement', disabled: !m.artist_statement },
-                          { key: 'proposal', label: 'Proposal', disabled: !m.project_proposal },
-                          { key: 'cover', label: 'Cover', disabled: !m.cover_letter },
-                          {
-                            key: 'samples',
-                            label: `Samples (${m.work_samples.length})`,
-                            disabled: m.work_samples.length === 0,
-                          },
-                          { key: 'reasoning', label: 'Why this fit' },
-                        ]}
-                      />
-                      <MatchBody match={m} tab={tabByMatch[m.id] ?? 'statement'} runId={runId} />
+                      {/* WALKTHROUGH Note 35-fix.5 — for the first opportunity card,
+                          render statement + proposal + cover letter ALL stacked
+                          inline so a 60-second judge sees the Drafter output without
+                          clicking through tabs. Samples + reasoning still accessible
+                          via tabs below. Other cards keep the tabbed UI for
+                          scannability. */}
+                      {m.id === firstMatchId ? (
+                        <>
+                          {m.artist_statement && (
+                            <FirstCardMaterial
+                              label="Artist statement"
+                              text={m.artist_statement}
+                              explainer="Your practice in your own voice. Most applications ask for 250–500 words — paste into the &ldquo;Statement of Practice&rdquo; or &ldquo;Artist Statement&rdquo; field."
+                            />
+                          )}
+                          {m.project_proposal && (
+                            <FirstCardMaterial
+                              label="Project proposal"
+                              text={m.project_proposal}
+                              explainer="Used when an opportunity asks what would you do with this funding or residency. Paste into the &ldquo;Project Description&rdquo; or &ldquo;Proposal&rdquo; field."
+                            />
+                          )}
+                          {m.cover_letter && (
+                            <FirstCardMaterial
+                              label="Cover letter"
+                              text={m.cover_letter}
+                              explainer="Used as the email body or letter-style intro. Most applications either include a &ldquo;cover letter&rdquo; field or expect this as the body of your submission email."
+                            />
+                          )}
+                          <div className="pt-3 border-t border-neutral-800 no-print">
+                            <Tabs
+                              value={tabByMatch[m.id] ?? 'samples'}
+                              onChange={(t) => setTabByMatch((c) => ({ ...c, [m.id]: t }))}
+                              tabs={[
+                                {
+                                  key: 'samples',
+                                  label: `Samples (${m.work_samples.length})`,
+                                  disabled: m.work_samples.length === 0,
+                                },
+                                { key: 'reasoning', label: 'Why this fit' },
+                              ]}
+                            />
+                            <div className="pt-3">
+                              <MatchBody
+                                match={m}
+                                tab={
+                                  (['samples', 'reasoning'].includes(tabByMatch[m.id] ?? '')
+                                    ? tabByMatch[m.id]
+                                    : 'samples') as Tab
+                                }
+                                runId={runId}
+                              />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <Tabs
+                            value={tabByMatch[m.id] ?? 'statement'}
+                            onChange={(t) => setTabByMatch((c) => ({ ...c, [m.id]: t }))}
+                            tabs={[
+                              { key: 'statement', label: 'Statement', disabled: !m.artist_statement },
+                              { key: 'proposal', label: 'Proposal', disabled: !m.project_proposal },
+                              { key: 'cover', label: 'Cover', disabled: !m.cover_letter },
+                              {
+                                key: 'samples',
+                                label: `Samples (${m.work_samples.length})`,
+                                disabled: m.work_samples.length === 0,
+                              },
+                              { key: 'reasoning', label: 'Why this fit' },
+                            ]}
+                          />
+                          <MatchBody match={m} tab={tabByMatch[m.id] ?? 'statement'} runId={runId} />
+                        </>
+                      )}
                     </div>
                   )}
                 </article>
@@ -519,6 +581,42 @@ function MaterialExplainer({ children }: { children: React.ReactNode }) {
     <p className="text-xs text-neutral-400 leading-relaxed bg-neutral-900/60 border border-neutral-800 rounded px-3 py-2">
       {children}
     </p>
+  );
+}
+
+/**
+ * WALKTHROUGH Note 35-fix.5 — inline material renderer used only for the
+ * first opportunity card in the dossier. Statement / proposal / cover
+ * letter render top-to-bottom (no tabs) so a 60-second judge sees the
+ * Drafter output without clicking. Each material has a label, an
+ * explainer, the prose body, and a copy button.
+ */
+function FirstCardMaterial({
+  label,
+  text,
+  explainer,
+}: {
+  label: string;
+  text: string;
+  explainer: string;
+}) {
+  return (
+    <div className="space-y-2 border border-neutral-800 rounded-lg p-4 bg-neutral-950/40">
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="text-sm font-medium text-neutral-200">{label}</h4>
+        <button
+          onClick={() => navigator.clipboard.writeText(text)}
+          className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:bg-neutral-800 no-print"
+        >
+          Copy
+        </button>
+      </div>
+      <p
+        className="text-[11px] text-neutral-500 leading-relaxed"
+        dangerouslySetInnerHTML={{ __html: explainer }}
+      />
+      <div className="text-sm text-neutral-200 leading-relaxed whitespace-pre-wrap">{text}</div>
+    </div>
   );
 }
 
