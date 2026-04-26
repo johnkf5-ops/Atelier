@@ -16,7 +16,7 @@ Three things make that bleed worse than it should be:
 
 **The packages take six to ten hours each.** Statement, project proposal, CV, cover letter, work-sample selection. Even with templates the institutional-voice tax is real: a grant statement is not a residency statement is not a gallery cover letter, and the applications that win are the ones tuned to the specific program. The same photographer can spend forty hours preparing an application for a program they had a three-percent chance of winning, and the writing tax means they often don't apply at all.
 
-I'm a working landscape photographer. I have been inside this economy for fifteen years. I have never applied to a single grant, residency, or fellowship — because writing about my own work is the wall. I have also never written a line of code in my life. Atelier was vibe-coded with Claude Opus 4.7 over the hackathon week.
+I'm a working landscape photographer. I have been inside this economy for fifteen years. I have never applied to a single grant, residency, or fellowship — because writing about my own work is the wall. I also don't have a CS degree or an engineering background. Atelier was vibe-coded with Claude Opus 4.7 over the hackathon week.
 
 Atelier is the tool that removes the wall — built by someone who couldn't have built it any other way.
 
@@ -132,7 +132,7 @@ The lesson I'd carry forward: at production scale, write probes that mimic produ
 
 ## The user
 
-I'm an Emmy-nominated landscape photographer with two galleries — Las Vegas and Minneapolis — and fifteen years of work published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google. I have never applied to a single grant or residency — writing was the wall. I am also not a programmer; I do not write code. Atelier exists because Claude Opus 4.7 let a photographer with a real problem build the solution to it. That fact is the product.
+I'm an Emmy-nominated landscape photographer with two galleries — Las Vegas and Minneapolis — and fifteen years of work published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google. I have never applied to a single grant or residency — writing was the wall. I don't have a CS degree or an engineering background, and Atelier was vibe-coded with Claude Opus 4.7. The product exists because Claude let a photographer with a real problem build the solution to it.
 
 The first run I did with Atelier on my own portfolio surfaced six included opportunities — a residency in the Sierra, a fellowship I'd never heard of, a national landscape photography prize whose past recipients work in my exact register — and filtered out fifteen others with reasoning I agreed with after reading it. The drafted statements were in my voice. The proposals named the right projects. The CV pulled the right credentials in the right order.
 
