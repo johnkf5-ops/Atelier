@@ -56,3 +56,6 @@ fixtures/extractor-turns.jsonl
 # local archive of removed-from-production runs (Note 35-fix.4)
 # never commit, never deploy — keeps the data on John's machine only
 local-runs-archive/
+
+# Submission-form copy lives on builder's Desktop only
+CV_SUBMISSION_SUMMARY.md
