@@ -47,21 +47,6 @@ If you want to verify depth-of-engineering claims:
 
 ---
 
-## What it took to make Atelier actually look at the images
-
-The Rubric Matcher's defining move is reading the photographer's portfolio AND every opportunity's past-recipient cohort as actual images, side-by-side, and reasoning about aesthetic fit visually — not pattern-matching keywords. Most application-finder tools don't do this. Getting it working in a Managed Agent at production scale (~95 cohort + portfolio images per run) took four architectural pivots, each documented in `WALKTHROUGH_NOTES.md` with the diagnosis chain and the probe scripts that proved each failure mode. The headline:
-
-- **Note 27 — Files API silently ignores custom `mount_path` values.** Every cohort image was uploaded with a clean per-recipient path; Anthropic mounted them all at the default `/mnt/session/uploads/<file_id>` instead. Every Rubric prompt referencing a custom path got "File not found." Diagnosed by writing `scripts/probe-mount.mjs`; fixed by using the default mount path.
-- **Note 28 — Portfolio files uploaded raw from Vercel Blob fail Anthropic vision.** Even at the correct mount path the agent got `"Output could not be decoded as text"` on portfolio reads. Recipient files (already Sharp-normalized in the download pipeline) worked; raw portfolio files didn't. Routed both through a single `uploadVisionReadyImage` helper that Sharp-normalizes everything before Files API upload. The "actual unlock" — vision started returning binary.
-- **Note 29 — The `read` tool on mounted files silently degrades to text-only above some session-resource ceiling.** Probes at 1, 5, 21 mounted files all worked. Production at 95 files (12 portfolio + 83 cohort) returned text-only on every `read`, while every `web_fetch` in the same session returned multimodal binary — the symptom that made it diagnosable. Fix: stop mounting files as session resources entirely; send them as `{type: 'image', source: {type: 'file', file_id}}` content blocks inside `user.message` events — the documented multimodal pattern, which engages vision regardless of session size.
-- **Note 30 — Send per-opp messages sequentially, not batched.** The first Note-29 implementation queued `[setup, ...allOppMessages]` into a single `events.send` call. At 100+ images stuffed into turn 1's context, the agent risked thread-context-compaction events that replace images with text summaries — the exact "vision degraded to text-only after a few turns" symptom recurring in a different form. Fix: dispatch one `user.message` per opportunity sequentially via the run-poll terminal-detection loop, recomputing the next unscored opp from DB state on each idle. Verified by `scripts/probe-prod-scale.mjs` — agent returned `"VISION ENGAGED:"` with specific visible details that aren't in the StyleFingerprint or the AKB ("Yosemite Half Dome with overlaid light-particles", "polar bear isolated against blown-out white"). Vision genuinely engaged at production scale.
-
-A separate engineering pivot worth flagging for the Best-Use-of-Managed-Agents signal: **runs survive a closed browser tab.** The browser-only polling pattern (every 3 sec from the open `/runs/[id]` tab) silently stalls the orchestration when the laptop closes — the Managed Agent keeps running on Anthropic's side and burning tokens, but our DB ingests no events and the next-phase dispatch never fires. Fixed in Note 34 with a server-side polling cron route that ticks independent of browser presence. The cron is shipped and functional; the Vercel scheduler hookup is post-hackathon scope (Hobby plan limits cron schedules).
-
-The probes that diagnosed each pivot are kept in `scripts/probe-*.{mjs,ts}` as a regression-detection corpus — future Scout / Drafter / Rubric changes can be verified in seconds without burning a 30-minute pipeline.
-
----
-
 ## Documents in the repo
 
 - **[`SUMMARY.md`](./SUMMARY.md)** — the hackathon writeup. Problem, what got built, how it works, what was learned, and the v1-photography-then-expand product framing.
