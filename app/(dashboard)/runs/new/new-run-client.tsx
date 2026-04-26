@@ -4,6 +4,11 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchJson } from '@/lib/api/fetch-client';
 import { Button } from '@/app/_components/ui';
+import {
+  OPPORTUNITY_TYPES,
+  OPPORTUNITY_TYPE_LABELS,
+  type OpportunityType,
+} from '@/lib/schemas/run';
 
 type Aggressiveness = 'conservative' | 'standard' | 'wide';
 
@@ -40,6 +45,18 @@ export default function NewRunClient() {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [aggressiveness, setAggressiveness] = useState<Aggressiveness>('standard');
+  // WALKTHROUGH Note 35 — opportunity-type filter. All on by default.
+  const [oppTypes, setOppTypes] = useState<Set<OpportunityType>>(
+    new Set(OPPORTUNITY_TYPES),
+  );
+  function toggleType(t: OpportunityType) {
+    setOppTypes((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t);
+      else next.add(t);
+      return next;
+    });
+  }
 
   async function onStart() {
     setStarting(true);
@@ -49,6 +66,7 @@ export default function NewRunClient() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         target_opportunity_count: AGGRESSIVENESS[aggressiveness].count,
+        opportunity_types: [...oppTypes],
       }),
       timeoutMs: 60_000,
     });
@@ -107,11 +125,55 @@ export default function NewRunClient() {
         </p>
       </div>
 
+      <div className="space-y-2">
+        <div className="text-xs uppercase tracking-wide text-neutral-500">
+          Opportunity types — pick what you want this run
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {OPPORTUNITY_TYPES.map((t) => {
+            const meta = OPPORTUNITY_TYPE_LABELS[t];
+            const checked = oppTypes.has(t);
+            return (
+              <label
+                key={t}
+                className={`flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition ${
+                  checked
+                    ? 'border-neutral-300 bg-neutral-100 text-neutral-900'
+                    : 'border-neutral-800 bg-neutral-950 text-neutral-300 hover:border-neutral-700'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleType(t)}
+                  className="mt-1 accent-neutral-100"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium">{meta.label}</span>
+                  <span
+                    className={`block text-xs leading-snug ${
+                      checked ? 'text-neutral-700' : 'text-neutral-500'
+                    }`}
+                  >
+                    {meta.explainer}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        <p className="text-xs text-neutral-500">
+          Uncheck what doesn&rsquo;t fit your current focus. If you&rsquo;re not interested in
+          residencies this cycle, or you&rsquo;re not writing a photo book, drop those — Atelier
+          will skip them entirely. At least one type must be selected.
+        </p>
+      </div>
+
       <Button
         type="button"
         variant="primary"
         onClick={() => setConfirming(true)}
-        disabled={starting || confirming}
+        disabled={starting || confirming || oppTypes.size === 0}
         size="md"
       >
         Start new run →

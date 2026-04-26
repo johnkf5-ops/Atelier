@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { compositeScore } from '@/lib/agents/orchestrator';
 import type { Opportunity } from '@/lib/schemas/opportunity';
-import type { RunConfig } from '@/lib/schemas/run';
+import { OPPORTUNITY_TYPES, type RunConfig } from '@/lib/schemas/run';
 
 const config: RunConfig = {
   window_start: '2026-04-24',
@@ -9,6 +9,7 @@ const config: RunConfig = {
   budget_usd: 500,
   max_travel_miles: null,
   target_opportunity_count: 25,
+  opportunity_types: [...OPPORTUNITY_TYPES],
 };
 
 function opp(overrides: Partial<Opportunity> = {}): Opportunity {

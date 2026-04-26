@@ -61,12 +61,42 @@ export function buildScoutPrompt(
   fingerprint: StyleFingerprint,
   config: RunConfig,
 ): string {
-  return `Find institutional opportunities for this artist whose deadlines fall in the configured window.
+  // WALKTHROUGH Note 35 — opportunity-type filter. Build a per-type
+  // descriptor block the agent uses to decide what's in scope. If the
+  // user opted some types out, the prompt explicitly forbids emitting
+  // those.
+  const allTypes = [
+    'competitions',
+    'grants',
+    'residencies',
+    'photo_books',
+    'portfolio_reviews',
+    'museum_acquisition',
+    'commissions',
+  ];
+  const selected = config.opportunity_types ?? allTypes;
+  const excluded = allTypes.filter((t) => !selected.includes(t as never));
+  const typeRules = `
+USER-SELECTED OPPORTUNITY TYPES — strictly enforced:
+The user has opted IN to these opportunity types for THIS run: [${selected.join(', ')}].
+${excluded.length > 0 ? `The user has opted OUT of these types — DO NOT EMIT them, even if they fit the photographer's lane otherwise: [${excluded.join(', ')}].` : 'All opportunity types are in scope for this run.'}
+
+Type definitions (what counts as each):
+- competitions: photo prizes / "Photographer of the Year" style awards (IPA, ILPOTY, FAPA, NLPA, ND Awards, Epson Pano, NANPA, etc.) — judged submissions with cash or publication awards
+- grants: foundation + state arts council money for unrestricted practice support (Aaron Siskind Foundation, En Foco, Pollock-Krasner, state arts fellowships in the photographer's home state) — application essay + budget, not a competition
+- residencies: photography residencies offering funded studio time + room & board (Light Work, Penumbra Foundation, Visual Studies Workshop, Center for Photography at Woodstock) — NOT general multi-discipline residencies unless their recent cohorts are predominantly photographers
+- photo_books: photo monograph publisher open submissions and photo-book prizes (Aperture Portfolio Prize book, MACK First Book, Lucie Photo Book Prize, Kehrer / Schilt / Daylight publisher submissions)
+- portfolio_reviews: get-in-front-of-curators face-to-face events (FotoFest Biennial, Photolucida Critical Mass, Filter Photo, Medium Festival) — paid review tickets, not a competition
+- museum_acquisition: competitions feeding into museum collections (Critical Mass final cut, Hariban Award, BJP awards with collection placement) — distinct from competitions in that the prize IS the museum acquisition
+- commissions: public-art RFQs that explicitly accept photography (civic art programs, hospitality install commissions, university public art) — NOT general public-art calls where photography is a long-shot category
+`;
+
+  return `Find institutional PHOTOGRAPHY opportunities for this photographer whose deadlines fall in the configured window.
 
 ARTIST_AKB (career stage, geography, eligibility):
 ${JSON.stringify(akb, null, 2)}
 
-STYLE_FINGERPRINT (what this artist's work actually looks like and where it belongs):
+STYLE_FINGERPRINT (what this photographer's work actually looks like and where it belongs):
 ${JSON.stringify(fingerprint, null, 2)}
 
 RUN_CONFIG:
@@ -74,19 +104,46 @@ RUN_CONFIG:
 - budget_usd: ${config.budget_usd} (0 = no fee cap)
 - max_travel_miles: ${config.max_travel_miles ?? 'unlimited'}
 - target_opportunity_count: ${config.target_opportunity_count} (the slate you're aiming for)
+${typeRules}
+
+LANE DISCIPLINE — READ THIS FIRST:
+This system finds opportunities for a working FINE-ART PHOTOGRAPHER. Every opportunity on the final slate MUST be photography-specific. The "diversify across many media" instinct is wrong here — diversification happens INSIDE photography, across photo-competition / photo-prize / photo-residency / photo-book / photo-grant axes, not across photography vs. painting vs. film vs. multidisciplinary grants.
+
+HARD INCLUSION RULE: only emit an opportunity if at least one of these is true:
+- The opportunity's name explicitly contains "photography" / "photo" / "photographer" / "photographic" or a photography-specific abbreviation (POTY, ILPOTY, NLPA, FAPA, IPA, NDA, NANPA, ND Awards, etc.)
+- The opportunity is a PHOTO-SPECIFIC category inside a larger umbrella (e.g., a state arts fellowship explicitly accepting photography in the current cycle counts ONLY if photography is one of the funded disciplines this cycle)
+- Past recipients in the last 3 cycles are predominantly (>=70%) photographers
+
+HARD EXCLUSION RULES — DROP these from the slate, do not include them even if otherwise interesting:
+- Book grants that are NOT photo-book-specific (general literary book grants, multi-genre book prizes — only include "photo book prize" / "photobook award" / publisher photo-monograph open submissions)
+- Residencies that are not photo-residencies AND whose recent cohorts are dominantly painting / sculpture / writing / film (Yaddo, MacDowell mixed-medium cohorts unless photography is well-represented; Banff Mountain Film & Book Festival is FILM and BOOKS, not photography)
+- Multi-discipline grants where photography is one of 5+ accepted media and the recent cohort shows <30% photographers
+- Public-art commissions that don't accept photography as the primary medium
+- Conservation / journalism / editorial grants that are about reporting first, photography second (Nat Geo Society Storytelling, Pulitzer Center, etc.) UNLESS the photographer's AKB shows editorial-photojournalism positioning specifically (check fingerprint.career_positioning_read)
+- Mountain / outdoor / adventure festival open calls that are film-and-book centric (Banff Centre Mountain Film & Book Festival is the canonical example — drop it)
 
 STEP 0 — ARCHETYPE INFERENCE (do this BEFORE any web_search):
-Read the AKB + StyleFingerprint and synthesize a private list of 5–8 opportunity archetypes that genuinely fit this specific artist. An archetype is a category of funding/selection institution (e.g., "state arts council", "nature photography competition", "museum acquisition prize", "public art commission", "book publisher open submission", "conservation-themed editorial grant"). DO NOT use a fixed taxonomy — reason from the artist's:
+Synthesize 5–8 PHOTOGRAPHY archetypes that fit this specific photographer. Examples of valid photography archetypes (use the patterns, not the labels):
+- "international landscape-photography prize" (e.g., ILPOTY, NLPA, Epson Pano)
+- "saturated-color-tolerant photography competition" (e.g., FAPA, IPA, ND Awards)
+- "nature / outdoor photography competition" (e.g., NANPA, Wildlife POTY, BigPicture)
+- "photo-book grant or publisher open submission" (e.g., Aperture Portfolio Prize book, Lucie Photo Book Prize, MACK First Book)
+- "photography-specific state arts fellowship" (only when the home-state cycle accepts photography)
+- "photography-specific foundation grant" (Aaron Siskind, Pollock-Krasner photography track, Howard, En Foco)
+- "photography-specific residency" (Light Work, Visual Studies Workshop, Center for Photography at Woodstock, Penumbra Foundation)
+- "photography-prize museum acquisition track" (Critical Mass, BJP, Hariban Award)
+- "regional photography festival open call" (FotoFest portfolio review, Photolucida, Filter Photo)
 
-- primary_medium and materials_and_methods
-- aesthetic register (fingerprint.palette, composition_tendencies, formal_lineage, museum_acquisition_signals — pay attention to whether this work reads as fine-art-museum, commercial-gallery, editorial-photojournalism, conservation-advocacy, etc.)
-- career_positioning_read (where does this artist currently sit? where could they credibly apply?)
-- home_base (state and region — there is ALWAYS a home-state arts council and regional arts federation)
-- career_stage and awards_and_honors (don't send an early-career artist to flagship-only; don't send an established one to first-book awards)
+Reason from:
+- primary_medium and materials_and_methods (this is a photographer; opportunities must be photography)
+- aesthetic register (fingerprint.palette, composition_tendencies, formal_lineage, museum_acquisition_signals — saturated-commercial-gallery vs. fine-art-museum vs. editorial-photojournalism vs. conservation-advocacy vs. process-forward; route to opportunities that recognize THIS register)
+- career_positioning_read (where can this photographer credibly apply, given the StyleFingerprint's honest read?)
+- home_base (state and regional photography opportunities, photo-festival cities)
+- career_stage and awards_and_honors (don't send early-career to flagship-only; don't send established to first-book-only)
 
-Honesty matters: include one or two aspirational elite residencies ONLY if the fingerprint's museum_acquisition_signals or formal_lineage credibly support them. If the work is commercial-gallery-register landscape spectacle, a Yaddo fellowship is a distraction — state the archetype is "aspirational ceiling, likely wrong room" and EITHER skip it OR include exactly one so the Rubric can explicitly filter it out.
+Honesty matters: if the fingerprint reads as "saturated commercial-gallery landscape," the candidate set is destination-photography prizes (Epson Pano, ILPOTY, Hamdan, IPOTY) plus saturated-tolerant competitions (FAPA, IPA, ND Awards) plus regional state-arts photo cycles — NOT process-forward residencies (Light Work) and NOT museum-acquisition tracks (Critical Mass) where the cohort is conceptual / wet-plate / lens-based-as-material. Include one "aspirational ceiling, likely wrong room" archetype ONLY if the fingerprint credibly supports it (museum_acquisition_signals are present).
 
-State your inferred archetype list in an agent.message (short, 1-2 sentences per archetype explaining WHY it fits THIS artist) BEFORE doing any web searches. This thinking is valuable to the downstream Rubric.
+State your inferred archetype list in an agent.message (short, 1-2 sentences per archetype explaining WHY it fits THIS photographer) BEFORE doing any web searches. Each archetype name MUST contain a photography keyword (photo / photographic / photography / specific-photo-prize-name).
 
 STEP 1 — DISCOVERY
 For each inferred archetype, use web_search to find 2–4 candidate institutions/programs. Do NOT restrict yourself to the opportunity-sources.md skill file — use it as a prior, but web_search for state/regional/medium-specific sources that aren't in it. Home-state and regional councils are almost never in the seed list; find them via search.
@@ -137,7 +194,8 @@ If web_fetch fails on a source (404, anti-scraping, paywall), skip it and contin
 
 HARD CAPS for this run:
 - ${Math.max(5, config.target_opportunity_count - 5)}–${config.target_opportunity_count + 5} distinct opportunities total (target: ${config.target_opportunity_count})
-- At least 4 distinct archetypes represented in the final slate — no single archetype may exceed 40% of the slate
+- 100% of opportunities MUST be photography-specific per the LANE DISCIPLINE rules above. Drop anything that fails the inclusion check.
+- At least 3 distinct PHOTOGRAPHY archetypes represented in the final slate (e.g., not 12 landscape competitions and nothing else; mix in at least one photo-grant or photo-residency or photo-book channel where eligibility supports it)
 - Stop adding new sources once you reach ${config.target_opportunity_count + 5} opportunities`;
 }
 
