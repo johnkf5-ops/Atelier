@@ -6,7 +6,7 @@
 
 ## The problem
 
-Every working fine-art photographer in the United States spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, photo-book prizes, public-art commissions. Most of those applications go to opportunities they were never going to win.
+Every working fine-art photographer spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, photo-book prizes, public-art commissions. Most of those applications go to opportunities they were never going to win.
 
 Three things make that bleed worse than it should be:
 
