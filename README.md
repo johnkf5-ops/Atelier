@@ -19,6 +19,18 @@ Upload your portfolio, build a Knowledge Base through a short structured intervi
 
 ---
 
+## How to use this demo
+
+The live deploy at **[atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)** runs single-tenant on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated so a new visitor can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. You can browse the existing run + dossier (the system's actual output), and you can also start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is post-hackathon scope.
+
+**Time-budget guide:**
+
+- **60 seconds:** open [`/dossier/1`](https://atelier-hazel.vercel.app/dossier/1), scroll the full page. The Career Dossier IS the system's output.
+- **5 minutes:** also click into one match's **Reasoning** tab (note the named past recipients) and read the **Filtered out** section at the bottom (the harsh-truth filtering — saying no with reasons is the differentiator).
+- **15 minutes:** also skim [`ARCHITECTURE.md`](./ARCHITECTURE.md) and [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md) to see the engineering shape.
+
+---
+
 ## What it is
 
 Every working fine-art photographer spends roughly thirty percent of their working time on applications — grants, residencies, competitions, gallery submissions, public-art commissions, photo-book prizes — and most of those applications go to opportunities they were never going to win. Discovery is scattered across forty-plus aggregators and foundation websites. Fit is opaque: photographers apply blind to programs whose past recipients worked in completely different aesthetic territory. And every package needs a tailored statement, proposal, CV, cover letter, and work-sample selection — six to ten hours per submission, even with templates. The same photographer can spend forty hours preparing an application for a program they had a three-percent chance of winning.
