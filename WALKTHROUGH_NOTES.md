@@ -4,6 +4,52 @@ Running notes from John's incognito prod walk-through. Each item logged as it su
 
 ---
 
+## Note 34 — Runs survive closed browser tabs + Rubric skips empty-cohort opps (SHIPPED)
+
+**Where:** `app/api/cron/poll-runs/route.ts` (new), `vercel.json`, `lib/agents/rubric-matcher.ts:sendNextRubricOpp`.
+
+**Symptom John caught:** Started run 2 at 23:14, closed his laptop and took a shower, came back to find the run "stuck" at the rubric phase 53 minutes in with only 4 of 14 opps scored and 1 included. The cost felt high relative to the visible progress.
+
+**Diagnosis:** Two separate problems compounded.
+
+1. **Browser-only polling.** The browser tab on `/runs/[id]` was the ONLY thing calling `/api/runs/[id]/events` every 3 seconds. When the laptop closed, the tab paused, polling stopped. The Managed Agent on Anthropic's side kept running (and kept consuming tokens), but our run-poll loop never executed: no event ingest, no terminal detection, no per-opp dispatch. The run looked dead while the agent was alive. The "30-minute stall" we initially suspected on the Anthropic side was actually our DB falling 30 minutes behind on event ingest — `processed_at` on event 846 was 4 seconds after event 845; our `created_at` was 30 minutes later because polling resumed only when John reopened the laptop.
+
+2. **Empty-cohort opps wasted Rubric turns.** Of the 14 opps Scout discovered, 9 had ZERO past-recipient images (residencies like Ucross + VCCA, book grants like Lucie + Booooooom, state/city grants like LV Arts, festival open calls like PhMuseum + Banff, plus TPOTY + IPA whose recipient URLs failed HTTP). The Rubric was attempting to score all 14 sequentially even though 9 had nothing to vision-compare against. Each empty-cohort opp burned a model turn for no diagnostic value, dragging total wall time + cost. This was always the behavior; run 1 didn't expose it because run 1's slate was 6 photo competitions, all of which publish past winners.
+
+### 34-fix.1 — Server-side polling cron
+
+New route `app/api/cron/poll-runs/route.ts` finds every run with `status IN ('scout_running', 'rubric_running')` and calls `pollRun(req, runId)` on each. Same code path as the browser polling route — idempotent. Wired into `vercel.json` with schedule `* * * * *` (every minute). `CRON_SECRET` Bearer auth in production. Browser polling still runs for live dashboard updates when the user is watching; the cron guarantees forward progress regardless of browser presence.
+
+The fragility was structural: a "real product" cannot require an open browser tab to make progress through a 30-minute pipeline. The cron is the real fix.
+
+### 34-fix.2 — Empty-cohort skip in `sendNextRubricOpp`
+
+`sendNextRubricOpp` was structured as: pick the next opp without a `run_matches` row → build the per-opp message → send it → return true. The function had no awareness of whether the opp had any recipient images uploaded to the Files API. For the 9 empty-cohort opps in run 2, it built a message with zero image content blocks and sent it to the Rubric agent, which then either scored blind (degrading to StyleFingerprint-only reasoning) or stalled on a bad turn.
+
+Restructured as a `while(true)` loop. For each candidate next opp:
+- Compute `totalRecipientImages` (sum of file_ids across all recipients).
+- If `totalRecipientImages === 0`: insert a synthetic `run_matches` row with `included=0`, `fit_score=0`, and reasoning `"No past-recipient cohort available for [opp]. This program does not publish past awardees with portfolio images, or all known recipient URLs failed to download. Without a cohort to compare your portfolio against, an aesthetic-fit score would be guesswork — Atelier filters this opportunity out by default. You may still apply if you have independent reason to believe the program fits your work."`. Continue the loop to find the next opp (real or also empty).
+- If `totalRecipientImages > 0`: send the per-opp message normally and return true.
+- If no candidates remain: return false (terminal).
+
+The Orchestrator's `generateFilteredOutBlurb` picks these up and surfaces them in the dossier's filtered-out section honestly — "Why not [opp]: this program does not publish past awardees…"
+
+### Acceptance for Note 34
+
+- Cron route returns 200 + `{polled: N, runs: [...]}` for any in-flight runs and `{polled: 0}` when no runs are in flight. Production calls require `Bearer ${CRON_SECRET}`.
+- A run that goes idle for 30+ minutes with the browser closed still progresses to completion via the cron, ending with `runs.status='complete'` not `'rubric_running'`.
+- For a run where every opp has zero recipient file_ids: `sendNextRubricOpp` inserts synthetic rows for every opp, ends by returning false, no `events.send` calls fire to the agent.
+- For a mixed run (real cohorts + empty cohorts): Rubric only spends model turns on opps with cohorts. Empty-cohort opps appear in the dossier's filtered-out section with the standard "Why not" blurb.
+- All 189 smoke tests still green.
+
+**Files:** `app/api/cron/poll-runs/route.ts` (new, 75 lines), `vercel.json` (+ crons block), `lib/agents/rubric-matcher.ts` (sendNextRubricOpp restructured into a while-loop with the empty-cohort branch).
+
+**Priority:** highest. Without 34-fix.1, runs require an open browser tab — incompatible with a real product. Without 34-fix.2, mixed-archetype slates burn ~70% of their Rubric budget scoring opps with no cohort to compare against, dragging wall time from ~10min toward an hour and producing low-signal scores.
+
+**Pre-deploy step:** add `CRON_SECRET` to Vercel env (any high-entropy string) before the next prod deploy or the cron route will return 401.
+
+---
+
 ## Note 33 — Strip John-personal bias from the drafter; KEEP photography canon as the moat (SHIPPED)
 
 **Where:** `lib/agents/package-drafter.ts` (lexicons, voice constraint examples, surname references), `lib/agents/style-analyst.ts:20` (scope claim), `README.md` + `SUMMARY.md` + `ARCHITECTURE.md` taglines.

@@ -265,76 +265,127 @@ export async function sendNextRubricOpp(
 ): Promise<boolean> {
   const db = getDb();
 
-  // Find the first opportunity for this run that has no run_matches row yet.
-  // Order by opportunities.id (matches the start-rubric load order).
-  const nextRow = (
-    await db.execute({
-      sql: `SELECT o.id, o.name, o.url, o.raw_json
-            FROM opportunities o
-            JOIN run_opportunities ro ON ro.opportunity_id = o.id
-            LEFT JOIN run_matches rm ON rm.opportunity_id = o.id AND rm.run_id = ?
-            WHERE ro.run_id = ? AND rm.id IS NULL
-            ORDER BY o.id ASC
-            LIMIT 1`,
-      args: [runId, runId],
-    })
-  ).rows[0] as unknown as
-    | { id: number; name: string; url: string; raw_json: string }
-    | undefined;
+  // Loop: pick the next unscored opp; if it has no recipient images,
+  // insert a synthetic "no cohort available" run_matches row and try
+  // again. Send-to-agent only happens for opps with a real cohort.
+  // Bounded by the number of unscored opps — each iteration either
+  // sends (and returns true) or inserts a synthetic row (which removes
+  // the opp from future iterations of the same loop call).
+  while (true) {
+    // Find the first opportunity for this run that has no run_matches row yet.
+    // Order by opportunities.id (matches the start-rubric load order).
+    const nextRow = (
+      await db.execute({
+        sql: `SELECT o.id, o.name, o.url, o.raw_json
+              FROM opportunities o
+              JOIN run_opportunities ro ON ro.opportunity_id = o.id
+              LEFT JOIN run_matches rm ON rm.opportunity_id = o.id AND rm.run_id = ?
+              WHERE ro.run_id = ? AND rm.id IS NULL
+              ORDER BY o.id ASC
+              LIMIT 1`,
+        args: [runId, runId],
+      })
+    ).rows[0] as unknown as
+      | { id: number; name: string; url: string; raw_json: string }
+      | undefined;
 
-  if (!nextRow) {
-    return false;
+    if (!nextRow) {
+      return false;
+    }
+
+    const raw = JSON.parse(nextRow.raw_json) as { award?: { prestige_tier?: string } };
+    const recRows = (
+      await db.execute({
+        sql: `SELECT name, year, portfolio_urls, file_ids FROM past_recipients
+              WHERE opportunity_id = ? AND portfolio_urls LIKE '%blob.vercel-storage%'
+                AND id IN (
+                  SELECT MAX(id) FROM past_recipients p2
+                  WHERE p2.opportunity_id = ?
+                    AND p2.portfolio_urls LIKE '%blob.vercel-storage%'
+                  GROUP BY p2.name
+                )`,
+        args: [nextRow.id, nextRow.id],
+      })
+    ).rows as unknown as Array<{
+      name: string;
+      year: number | null;
+      portfolio_urls: string;
+      file_ids: string | null;
+    }>;
+
+    const opp: OpportunityForRubric = {
+      id: nextRow.id,
+      name: nextRow.name,
+      url: nextRow.url,
+      prestige_tier: raw.award?.prestige_tier ?? 'open-call',
+      past_recipients: recRows.map((rr) => ({
+        name: rr.name,
+        year: rr.year,
+        image_urls: JSON.parse(rr.portfolio_urls) as string[],
+        file_ids: rr.file_ids ? (JSON.parse(rr.file_ids) as string[]) : [],
+      })),
+    };
+
+    // WALKTHROUGH Note 34 — empty-cohort skip. If this opportunity has
+    // zero recipient images uploaded to the Files API, the Rubric has
+    // nothing to vision-compare against and would either score blind
+    // (degrading to StyleFingerprint-only reasoning) or stall on a
+    // bad turn. Both burn time + tokens for no diagnostic value.
+    // Real fix: insert a synthetic run_matches row with included=0
+    // and a clear reasoning string explaining why, then loop to find
+    // the next real opp. The Orchestrator's filtered-out blurb
+    // generator picks this up and surfaces it honestly in the dossier
+    // ("Why not [opp]: this program does not publish past awardees
+    // with portfolio images").
+    const totalRecipientImages = opp.past_recipients.reduce(
+      (sum, r) => sum + (r.file_ids?.filter(Boolean).length ?? 0),
+      0,
+    );
+    if (totalRecipientImages === 0) {
+      console.log(
+        `[run-poll] Note 34 skipping opp ${opp.id} "${opp.name}" — no recipient cohort available; inserting synthetic filtered-out match`,
+      );
+      await db.execute({
+        sql: `INSERT INTO run_matches
+              (run_id, opportunity_id, fit_score, reasoning, supporting_image_ids, hurting_image_ids, included)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(run_id, opportunity_id) DO UPDATE SET
+                fit_score = excluded.fit_score,
+                reasoning = excluded.reasoning,
+                supporting_image_ids = excluded.supporting_image_ids,
+                hurting_image_ids = excluded.hurting_image_ids,
+                included = excluded.included`,
+        args: [
+          runId,
+          opp.id,
+          0,
+          `No past-recipient cohort available for "${opp.name}". This program does not publish past awardees with portfolio images, or all known recipient URLs failed to download. Without a cohort to compare your portfolio against, an aesthetic-fit score would be guesswork — Atelier filters this opportunity out by default. You may still apply if you have independent reason to believe the program fits your work.`,
+          JSON.stringify([]),
+          JSON.stringify([]),
+          0,
+        ],
+      });
+      // Continue the loop to find the next opp (real or also empty).
+      continue;
+    }
+
+    const oppMsg = buildRubricOppMessage(opp);
+    const recipientImageCount = oppMsg.content.filter((c) => c.type === 'image').length;
+    console.log(
+      `[run-poll] Note 30 sending opp ${opp.id} "${opp.name}" with ${recipientImageCount} recipient images`,
+    );
+
+    await withAnthropicRetry(
+      () =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (client.beta as any).sessions.events.send(sessionId, {
+          events: [oppMsg],
+        }),
+      { label: `rubric.events.send.opp(run=${runId},opp=${opp.id})` },
+    );
+
+    return true;
   }
-
-  const raw = JSON.parse(nextRow.raw_json) as { award?: { prestige_tier?: string } };
-  const recRows = (
-    await db.execute({
-      sql: `SELECT name, year, portfolio_urls, file_ids FROM past_recipients
-            WHERE opportunity_id = ? AND portfolio_urls LIKE '%blob.vercel-storage%'
-              AND id IN (
-                SELECT MAX(id) FROM past_recipients p2
-                WHERE p2.opportunity_id = ?
-                  AND p2.portfolio_urls LIKE '%blob.vercel-storage%'
-                GROUP BY p2.name
-              )`,
-      args: [nextRow.id, nextRow.id],
-    })
-  ).rows as unknown as Array<{
-    name: string;
-    year: number | null;
-    portfolio_urls: string;
-    file_ids: string | null;
-  }>;
-
-  const opp: OpportunityForRubric = {
-    id: nextRow.id,
-    name: nextRow.name,
-    url: nextRow.url,
-    prestige_tier: raw.award?.prestige_tier ?? 'open-call',
-    past_recipients: recRows.map((rr) => ({
-      name: rr.name,
-      year: rr.year,
-      image_urls: JSON.parse(rr.portfolio_urls) as string[],
-      file_ids: rr.file_ids ? (JSON.parse(rr.file_ids) as string[]) : [],
-    })),
-  };
-
-  const oppMsg = buildRubricOppMessage(opp);
-  const recipientImageCount = oppMsg.content.filter((c) => c.type === 'image').length;
-  console.log(
-    `[run-poll] Note 30 sending opp ${opp.id} "${opp.name}" with ${recipientImageCount} recipient images`,
-  );
-
-  await withAnthropicRetry(
-    () =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (client.beta as any).sessions.events.send(sessionId, {
-        events: [oppMsg],
-      }),
-    { label: `rubric.events.send.opp(run=${runId},opp=${opp.id})` },
-  );
-
-  return true;
 }
 
 export async function persistMatchFromAgent(runId: number, rawInput: unknown): Promise<string> {

@@ -274,3 +274,116 @@ describe('sendNextRubricOpp — Note 30 sequential dispatch', () => {
     expect(body.events.length).toBe(1);
   });
 });
+
+describe('sendNextRubricOpp — Note 34 empty-cohort skip', () => {
+  it('inserts a synthetic filtered-out match and skips the agent send when an opp has no recipient file_ids', async () => {
+    // Setup: opp1 has zero recipient images (cohort never uploaded). The
+    // function should INSERT a synthetic run_matches row, NOT fire
+    // events.send for the agent, and continue the loop. With no further
+    // opps available, it then returns false (terminal).
+    const calls: Array<{ sql: string; args: unknown }> = [];
+    let nextOppCallCount = 0;
+    dbExecute.mockImplementation((args: { sql: string; args: unknown }) => {
+      calls.push(args);
+      const sql = args.sql;
+      // Pick-next-opp query (LEFT JOIN with run_matches) — return opp1 the
+      // first time, then nothing on the second iteration of the loop.
+      if (sql.includes('LEFT JOIN run_matches') && sql.includes('rm.id IS NULL')) {
+        nextOppCallCount++;
+        return Promise.resolve({
+          rows: nextOppCallCount === 1 ? [opp1Raw] : [],
+          rowsAffected: 0,
+        });
+      }
+      // past_recipients query — opp1 has recipients but their file_ids are empty.
+      if (sql.includes('past_recipients')) {
+        return Promise.resolve({
+          rows: [
+            {
+              name: 'Empty Recipient',
+              year: 2024,
+              portfolio_urls: JSON.stringify(['https://blob.vercel-storage.example/x.jpg']),
+              file_ids: JSON.stringify([]),
+            },
+          ],
+          rowsAffected: 0,
+        });
+      }
+      // The synthetic INSERT.
+      if (sql.includes('INSERT INTO run_matches')) {
+        return Promise.resolve({ rows: [], rowsAffected: 1 });
+      }
+      return Promise.resolve({ rows: [], rowsAffected: 0 });
+    });
+
+    const { sendNextRubricOpp } = await import('@/lib/agents/rubric-matcher');
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const client = new Anthropic({ apiKey: 'sk-ant-mock' });
+    const sent = await sendNextRubricOpp(client, 7, 'session_mock');
+
+    expect(sent).toBe(false);
+    expect(eventsSend).not.toHaveBeenCalled();
+
+    const insertCall = calls.find((c) => c.sql.includes('INSERT INTO run_matches'));
+    expect(insertCall).toBeDefined();
+    const insertArgs = insertCall!.args as Array<unknown>;
+    expect(insertArgs[0]).toBe(7); // run_id
+    expect(insertArgs[1]).toBe(opp1Raw.id); // opportunity_id
+    expect(insertArgs[2]).toBe(0); // fit_score
+    expect(String(insertArgs[3])).toMatch(/No past-recipient cohort available/);
+    expect(insertArgs[6]).toBe(0); // included
+  });
+
+  it('falls through to a real opp dispatch when an empty-cohort opp comes first', async () => {
+    // Setup: opp1 has zero recipient images, opp2 has a real cohort.
+    // The function should insert a synthetic row for opp1, then proceed
+    // to dispatch opp2 normally (one events.send call, returns true).
+    const calls: Array<{ sql: string; args: unknown }> = [];
+    let nextOppCallCount = 0;
+    dbExecute.mockImplementation((args: { sql: string; args: unknown }) => {
+      calls.push(args);
+      const sql = args.sql;
+      if (sql.includes('LEFT JOIN run_matches') && sql.includes('rm.id IS NULL')) {
+        nextOppCallCount++;
+        return Promise.resolve({
+          rows: nextOppCallCount === 1 ? [opp1Raw] : nextOppCallCount === 2 ? [opp2Raw] : [],
+          rowsAffected: 0,
+        });
+      }
+      if (sql.includes('past_recipients')) {
+        const oppId = (args.args as Array<number>)[0];
+        if (oppId === opp1Raw.id) {
+          return Promise.resolve({
+            rows: [
+              {
+                name: 'Empty Recipient',
+                year: 2024,
+                portfolio_urls: JSON.stringify(['https://blob.vercel-storage.example/x.jpg']),
+                file_ids: JSON.stringify([]),
+              },
+            ],
+            rowsAffected: 0,
+          });
+        }
+        return Promise.resolve({ rows: recipientRows(opp2Raw.id), rowsAffected: 0 });
+      }
+      if (sql.includes('INSERT INTO run_matches')) {
+        return Promise.resolve({ rows: [], rowsAffected: 1 });
+      }
+      return Promise.resolve({ rows: [], rowsAffected: 0 });
+    });
+
+    const { sendNextRubricOpp } = await import('@/lib/agents/rubric-matcher');
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const client = new Anthropic({ apiKey: 'sk-ant-mock' });
+    const sent = await sendNextRubricOpp(client, 7, 'session_mock');
+
+    expect(sent).toBe(true);
+    // Exactly ONE events.send call — for opp2, not opp1.
+    expect(eventsSend).toHaveBeenCalledTimes(1);
+    // Synthetic INSERT happened for opp1 first.
+    const insertCall = calls.find((c) => c.sql.includes('INSERT INTO run_matches'));
+    expect(insertCall).toBeDefined();
+    expect((insertCall!.args as Array<unknown>)[1]).toBe(opp1Raw.id);
+  });
+});
