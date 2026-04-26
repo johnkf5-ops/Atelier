@@ -39,7 +39,7 @@ Atelier is the tool that removes the writing wall. It reads your portfolio with 
 
 It is built for mid-career fine-art photographers with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user — the moat is photography-domain depth, not breadth across every medium.
 
-This is **version one of a real product** that will live past the hackathon. Atelier will be free for working photographers because they deserve a tool like this, and starting in the medium the builder knows best lets the system get the depth right before it gets the breadth wide. The path forward is to ship to photographers, listen to what they recommend, and expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time.
+This is **version one of a real product** that will live past the hackathon. Atelier will be free for working photographers because they deserve a tool like this, and starting in the medium the builder knows best lets the system get the depth right before it gets the breadth wide. The path forward is: deploy a hosted multi-tenant version with email/password accounts (no bring-your-own database or API key — users just sign up and use it), ship to photographers, listen to what they recommend, fine-tune Auto-Discover against the public footprints working photographers actually have, and expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time. The auth + persistence seams are pre-wired today (see [`ARCHITECTURE.md`](./ARCHITECTURE.md) §11); shipping the hosted version is roughly a day-and-a-half of work after the hackathon.
 
 ---
 
