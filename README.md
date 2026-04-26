@@ -2,12 +2,16 @@
 
 *An AI art director for working photographers.*
 
-[![Built with Claude Opus 4.7](https://img.shields.io/badge/Built_with-Claude_Opus_4.7-C15F3C?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
-[![Cerebral Valley × Anthropic Hackathon](https://img.shields.io/badge/Cerebral_Valley_%C3%97_Anthropic-Built_with_Opus_4.7-1f2937?style=flat-square)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
-[![Live demo](https://img.shields.io/badge/Live_demo-atelier--hazel.vercel.app-000000?style=flat-square&logo=vercel&logoColor=white)](https://atelier-hazel.vercel.app)
-[![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
-[![License: MIT](https://img.shields.io/badge/License-MIT-1f2937?style=flat-square)](#license)
+[![Live demo →](https://img.shields.io/badge/▶_Live_demo-atelier--hazel.vercel.app-22C55E?style=for-the-badge&labelColor=000000)](https://atelier-hazel.vercel.app)
+
+[![Claude Opus 4.7](https://img.shields.io/badge/Claude_Opus_4.7-C15F3C?style=flat-square&logo=anthropic&logoColor=white)](https://platform.claude.com/docs/en/about-claude/models/overview)
+[![Built with Opus 4.7 hackathon](https://img.shields.io/badge/Cerebral_Valley_%C3%97_Anthropic-7C3AED?style=flat-square)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
+[![Managed Agents](https://img.shields.io/badge/Managed_Agents-beta-EAB308?style=flat-square)](https://platform.claude.com/docs/en/managed-agents/overview)
+[![Next.js 15](https://img.shields.io/badge/Next.js_15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
+[![TypeScript 5](https://img.shields.io/badge/TypeScript_5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
+[![Turso](https://img.shields.io/badge/Turso-LibSQL-4FF8D2?style=flat-square&logoColor=black)](https://turso.tech)
+[![Tailwind v4](https://img.shields.io/badge/Tailwind_v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
+[![MIT License](https://img.shields.io/badge/License-MIT-6B7280?style=flat-square)](#license)
 
 ---
 
