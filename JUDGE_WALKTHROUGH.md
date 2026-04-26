@@ -4,6 +4,14 @@ If you're judging this submission and want to verify what's been built without w
 
 ---
 
+## Time-budget guide
+
+- **60 seconds:** open [`/dossier/1`](https://atelier-hazel.vercel.app/dossier/1), scroll the full page. The Career Dossier IS the system's output.
+- **5 minutes:** also click into one match's **Reasoning** tab (note the named past recipients) and read the **Filtered out** section at the bottom (the harsh-truth filtering — saying no with reasons is the differentiator).
+- **15 minutes:** also skim the three source files listed below + open `WALKTHROUGH_NOTES.md` to see the engineering wrestled with undocumented platform behaviors.
+
+---
+
 ## Live demo
 
 **[atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)**
@@ -36,6 +44,18 @@ If you want to verify depth-of-engineering claims:
 - **`lib/agents/rubric-matcher.ts`** — the aesthetic-judgment-as-matching primitive. Note the per-opportunity sequential dispatch via image content blocks in `user.message` events (Notes 27–30 in `WALKTHROUGH_NOTES.md` document why this shape was the only one that worked at production scale).
 - **`lib/agents/package-drafter.ts`** — the institutional-voice writing primitive with hard linters (zero em-dashes, banned-phrase list, AKB-fact-grounding check, work-sample-grounded prose).
 - **`skills/aesthetic-vocabulary.md`** + **`skills/juror-reading.md`** — the two highest-leverage skill files. Both are loaded into the Style Analyst and Rubric Matcher system prompts. Worth skimming to see what photography-domain depth looks like as code.
+
+---
+
+## What made this not a one-weekend hack
+
+Three Anthropic-platform behaviors weren't in the docs and forced architectural pivots, each documented in `WALKTHROUGH_NOTES.md` with the diagnosis chain and the probe scripts that proved the failure modes. Naming them here for the Depth & Execution signal:
+
+- **The Files API silently ignores custom `mount_path` values** above the default. Every prompt referencing a custom path got "File not found." Diagnosed by writing a probe (`scripts/probe-mount.mjs`); fixed by switching to the default mount path.
+- **The `read` tool on mounted files returns text-only output above some session-resource ceiling.** Twenty mounted files works; ninety-five doesn't. Caught by a per-tool audit on a failed production run that noticed every `web_fetch` returned multimodal binary while every `read` returned text-only. Fixed by bypassing the resource-mount pattern entirely and sending images as content blocks inside `user.message` events — the documented multimodal pattern, which engages vision regardless of session size.
+- **Polling fragility when the browser tab closes.** The agent loop runs on Anthropic's infrastructure but the orchestration relies on our Vercel routes ingesting events. When the user closed their laptop mid-run, polling stopped, the Managed Agent kept running but our DB went silent for 30 minutes until the laptop reopened. Fixed with a server-side polling cron route that ticks independent of browser presence.
+
+The probes that diagnosed each pivot are kept in `scripts/probe-*.{mjs,ts}` as a regression-detection corpus — future Scout / Drafter / Rubric changes can be verified in seconds without burning a 30-minute pipeline.
 
 ---
 
