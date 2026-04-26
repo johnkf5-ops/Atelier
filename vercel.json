@@ -7,8 +7,5 @@
     "app/api/portfolio/scrape/route.ts": { "maxDuration": 300 },
     "app/api/extractor/ingest/route.ts": { "maxDuration": 300 },
     "app/api/extractor/auto-discover/route.ts": { "maxDuration": 90 }
-  },
-  "crons": [
-    { "path": "/api/cron/poll-runs", "schedule": "* * * * *" }
-  ]
+  }
 }
