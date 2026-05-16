@@ -279,7 +279,7 @@ foto/
 
 ## License
 
-Copyright © 2026 John Knopf. All rights reserved. See [`LICENSE`](./LICENSE).
+Copyright © 2026 Crash Override LLC. All rights reserved. See [`LICENSE`](./LICENSE).
 
 This source is published for reference only. No license is granted to use, copy, modify, or distribute any part of this software without prior written permission from the copyright holder.
 
