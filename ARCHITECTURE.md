@@ -9,7 +9,7 @@
 
 ---
 
-This document describes how Atelier is built. Atelier is a single-user-per-deploy Next.js app that turns a fine-art photographer's portfolio into a Career Dossier — ranked grant / residency / competition opportunities and submission-ready application materials. The submission for the Cerebral Valley × Anthropic *Built with Opus 4.7* hackathon. The implementation runs six specialist agents on Anthropic's API: four direct `messages.create` agents and two Managed Agents on the `agent_toolset_20260401` toolset. Long-running runs survive Vercel's 60-second function timeout via a poll-pull-on-read pattern: state lives in Turso (LibSQL), the browser polls a thin Next.js route, and that route reads new events from Anthropic and persists them on every poll.
+This document describes how Atelier is built. Atelier is a single-user-per-deploy Next.js app that turns a fine-art photographer's portfolio into a Career Dossier — ranked grant / residency / competition opportunities and submission-ready application materials. The implementation runs six specialist agents on Anthropic's API: four direct `messages.create` agents and two Managed Agents on the `agent_toolset_20260401` toolset. Long-running runs survive Vercel's 60-second function timeout via a poll-pull-on-read pattern: state lives in Turso (LibSQL), the browser polls a thin Next.js route, and that route reads new events from Anthropic and persists them on every poll.
 
 The rest of this document is in the order a reader new to the codebase would want it: system shape, stack rationale, the agents, the data flow per run phase, the long-running pattern, the database, the Anthropic-integration patterns, the image-content-block multimodal pattern that makes Rubric work, the skill files, the structural decisions documented in [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md), and finally the Path B (multi-tenant) hooks.
 
@@ -592,7 +592,7 @@ The walkthrough notes are John's incognito-prod walkthrough log. Each note that 
 
 **Note 33-fix.7 + .8 — Drafter prose grounded in actual work samples + Rubric hurting_image_ids excluded + format-aware sample selection**. `selectWorkSamples` now takes `hurtingIds` and `formatConstraints` (parsed from opp page text + opp name via `parseFormatConstraints`); image dimensions threaded through `PortfolioImage` so format-aware filtering honors aspect-ratio requirements (e.g., Epson Pano's 2:1 minimum). `work_sample_selection_json` now stores `{samples, format_mismatch_warning}`; the dossier UI surfaces an amber "Manual review recommended" banner above the sample grid when format constraints can't be fully satisfied. The Drafter prompts receive a per-image `workSampleSummary` block so the prose stays consistent with the actual submitted set.
 
-**Note 34 — Server-side polling cron + Rubric empty-cohort skip**. Browser-only polling silently stalls when the user closes the tab (the agent keeps running on Anthropic's side, our DB ingests no events). `app/api/cron/poll-runs/route.ts` finds in-flight runs and calls `pollRun()` on each; `vercel.json` cron schedule is a post-hackathon plan-tier item. Separately, `sendNextRubricOpp` now skips opps with zero recipient `file_ids` by inserting a synthetic filtered-out match with reasoning "No past-recipient cohort available" — saves the Rubric from burning model turns scoring blind on residencies / state grants / festivals that don't publish past awardees.
+**Note 34 — Server-side polling cron + Rubric empty-cohort skip**. Browser-only polling silently stalls when the user closes the tab (the agent keeps running on Anthropic's side, our DB ingests no events). `app/api/cron/poll-runs/route.ts` finds in-flight runs and calls `pollRun()` on each; `vercel.json` cron schedule is a plan-tier item on the roadmap. Separately, `sendNextRubricOpp` now skips opps with zero recipient `file_ids` by inserting a synthetic filtered-out match with reasoning "No past-recipient cohort available" — saves the Rubric from burning model turns scoring blind on residencies / state grants / festivals that don't publish past awardees.
 
 **Note 35 — Scout lane discipline + user-selectable opportunity types + honest-ceiling enforcement**. Scout's prior "≥4 archetypes, no archetype >40%" rule rewarded drift OUT of photography. Replaced with explicit photography-only lane rules + user-selectable opportunity types (`opportunity_types` field on `RunConfig`, defaulting to all-on, surfaced as a checkbox group on `/runs/new`). HONESTY OVER COMPLETENESS rule reframes `target_opportunity_count` as a CEILING; the agent emits the honest universe and reports `HONEST_CEILING_REACHED` rather than padding with low-fit options. Dossier UI surfaces an honest-ceiling banner when emitted < 60% of target.
 
@@ -600,7 +600,7 @@ Other notes that landed as structural decisions but were not specifically called
 
 ---
 
-## 11. Path B (post-hackathon multi-tenant) hooks
+## 11. Path B (multi-tenant) hooks
 
 Path A ships single-tenant; Path B is the multi-tenant deploy. The architecture is pre-wired so Path B is a small surface change.
 

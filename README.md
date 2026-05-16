@@ -5,13 +5,12 @@
 [![Live demo →](https://img.shields.io/badge/▶_Live_demo-atelier--hazel.vercel.app-22C55E?style=for-the-badge&labelColor=000000)](https://atelier-hazel.vercel.app)
 
 [![Claude Opus 4.7](https://img.shields.io/badge/Claude_Opus_4.7-C15F3C?style=flat-square&logo=anthropic&logoColor=white)](https://platform.claude.com/docs/en/about-claude/models/overview)
-[![Built with Opus 4.7 hackathon](https://img.shields.io/badge/Cerebral_Valley_%C3%97_Anthropic-7C3AED?style=flat-square)](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon)
 [![Managed Agents](https://img.shields.io/badge/Managed_Agents-beta-EAB308?style=flat-square)](https://platform.claude.com/docs/en/managed-agents/overview)
 [![Next.js 15](https://img.shields.io/badge/Next.js_15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![TypeScript 5](https://img.shields.io/badge/TypeScript_5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
 [![Turso](https://img.shields.io/badge/Turso-LibSQL-4FF8D2?style=flat-square&logoColor=black)](https://turso.tech)
 [![Tailwind v4](https://img.shields.io/badge/Tailwind_v4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white)](https://tailwindcss.com)
-[![MIT License](https://img.shields.io/badge/License-MIT-6B7280?style=flat-square)](#license)
+[![All Rights Reserved](https://img.shields.io/badge/License-All_Rights_Reserved-6B7280?style=flat-square)](#license)
 
 ---
 
@@ -23,7 +22,7 @@ Built by a photographer who has spent fifteen years inside the visual-arts-submi
 
 **[3-minute demo video](https://youtu.be/bNnt5r1GBmM)** · **[Live deploy](https://atelier-hazel.vercel.app)**
 
-The live deploy at [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app) runs single-tenant on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated so a new visitor can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. You can browse the existing run + dossier (the system's actual output), and you can also start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is post-hackathon scope.
+The live deploy at [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app) runs single-tenant on the builder's actual portfolio (60+ landscape photographs), Style Fingerprint, and Artist Knowledge Base. The onboarding flow (portfolio upload + Style Analyst + interview) is **not resettable** — it's permanently populated so a new visitor can see what a fully-populated dossier looks like without burning fifteen minutes on cold-start onboarding. You can browse the existing run + dossier (the system's actual output), and you can also start a fresh pipeline run if you want to see Scout + Rubric + Drafter execute end-to-end against the populated profile (~20 minutes, runs on the builder's API key, rate-limited per IP). Multi-tenant deploy with per-user accounts and BYO API key is on the roadmap.
 
 **Time-budget guide:**
 
@@ -41,19 +40,13 @@ Atelier is the tool that removes the writing wall. It reads your portfolio with 
 
 It is built for mid-career fine-art photographers with an established body of work and intent to pursue institutional opportunities. The builder is the prototypical user — the moat is photography-domain depth, not breadth across every medium.
 
-This is **version one of a real product** that will live past the hackathon. Atelier will be free for working photographers because they deserve a tool like this, and starting in the medium the builder knows best lets the system get the depth right before it gets the breadth wide. The path forward is: deploy a hosted multi-tenant version with email/password accounts (no bring-your-own database or API key — users just sign up and use it), ship to photographers, listen to what they recommend, fine-tune Auto-Discover against the public footprints working photographers actually have, and expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time. The auth + persistence seams are pre-wired today (see [`ARCHITECTURE.md`](./ARCHITECTURE.md) §11); shipping the hosted version is roughly a day-and-a-half of work after the hackathon.
+This is **version one of a real product**. Atelier will be free for working photographers because they deserve a tool like this, and starting in the medium the builder knows best lets the system get the depth right before it gets the breadth wide. The path forward is: deploy a hosted multi-tenant version with email/password accounts (no bring-your-own database or API key — users just sign up and use it), ship to photographers, listen to what they recommend, fine-tune Auto-Discover against the public footprints working photographers actually have, and expand carefully into painting, sculpture, video, installation, and international markets one informed step at a time. The auth + persistence seams are pre-wired today (see [`ARCHITECTURE.md`](./ARCHITECTURE.md) §11).
 
 ---
 
 ## Demo
 
 Live deploy → [atelier-hazel.vercel.app](https://atelier-hazel.vercel.app)
-
----
-
-## Built for
-
-[Cerebral Valley × Anthropic — Built with Opus 4.7](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon). Submission deadline 2026-04-26 8:00 PM EST. Targets Problem Statement #1, *"Build From What You Know"* — the builder is a working photographer building for working photographers.
 
 ---
 
@@ -278,7 +271,6 @@ foto/
 ## Documentation
 
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — detailed architecture: run lifecycle, Managed Agent session shape, AKB merge semantics, retry posture
-- [`SUMMARY.md`](./SUMMARY.md) — hackathon writeup
 - [`BUILD_LOG.md`](./BUILD_LOG.md) — narrative log of shipped work, commit-by-commit
 - [`skills/README.md`](./skills/README.md) — skill catalog: what each of the 21 skill files codifies
 - [`WALKTHROUGH_NOTES.md`](./WALKTHROUGH_NOTES.md) — running notes from production walkthroughs
@@ -287,9 +279,9 @@ foto/
 
 ## License
 
-MIT. See [`LICENSE`](./LICENSE).
+Copyright © 2026 John Knopf. All rights reserved. See [`LICENSE`](./LICENSE).
 
-Open source per the hackathon rule: every component — backend, frontend, schemas, skill files — is published. Managed services used (Turso/LibSQL, Vercel Blob, Anthropic API) are accessed through public APIs and could be swapped for self-hosted equivalents (a local LibSQL file, S3-compatible blob storage, any Anthropic API endpoint) without architectural change.
+This source is published for reference only. No license is granted to use, copy, modify, or distribute any part of this software without prior written permission from the copyright holder.
 
 ---
 
@@ -299,4 +291,4 @@ Built by [John Knopf](https://jknopf.com) — Emmy-nominated fine-art landscape 
 
 > Fifteen years inside the visual-arts-submission economy; never applied to a single grant because writing was the wall. Atelier is the tool that would have removed the wall.
 
-Built with Claude Opus 4.7 for the [Cerebral Valley × Anthropic "Built with Opus 4.7" hackathon](https://cerebralvalley.ai/events/~/e/built-with-4-7-hackathon).
+Built with Claude Opus 4.7.

@@ -39,7 +39,7 @@ export default function DemoBanner() {
         <p className="leading-relaxed">
           <span className="font-medium text-amber-200">Demo</span>
           <span className="mx-2 text-amber-700">•</span>
-          Built with Opus 4.7 hackathon — running on the builder&rsquo;s portfolio + API key.
+          Running on the builder&rsquo;s portfolio + API key.
           Each run costs ~$10–60 in Anthropic API calls depending on Aggressiveness; please
           don&rsquo;t trigger more than one unless you&rsquo;re testing something specific.{' '}
           <a

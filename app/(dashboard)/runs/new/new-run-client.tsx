@@ -226,8 +226,7 @@ export default function NewRunClient() {
             <h2 className="font-serif text-2xl text-neutral-100">Before you start</h2>
             <div className="space-y-3 text-sm text-neutral-300 leading-relaxed">
               <p>
-                This is a single-tenant demo running on the builder&rsquo;s API key for the{' '}
-                <span className="text-neutral-100">Built with Opus 4.7</span> hackathon.
+                This is a single-tenant demo running on the builder&rsquo;s API key.
                 Each run costs roughly{' '}
                 <span className="text-neutral-100 font-medium">
                   $10–60 in Anthropic API calls
@@ -237,7 +236,7 @@ export default function NewRunClient() {
               <p>
                 Please don&rsquo;t start more than one run unless you&rsquo;re testing
                 something specific. Multi-tenant deploy with per-user accounts and BYO API
-                key is post-hackathon scope.
+                key is on the roadmap.
               </p>
             </div>
             <div className="flex gap-2 justify-end pt-2">
