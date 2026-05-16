@@ -2,7 +2,6 @@
 
 *An AI art director for working photographers.*
 
-[![Built with Claude Opus 4.7](https://img.shields.io/badge/Built_with-Claude_Opus_4.7-C15F3C?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
 [![Managed Agents](https://img.shields.io/badge/Managed_Agents-managed--agents--2026--04--01-1f2937?style=flat-square)](https://platform.claude.com/docs/en/about-claude/models/overview)
 [![Next.js 15](https://img.shields.io/badge/Next.js-15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![Turso (LibSQL)](https://img.shields.io/badge/Turso-LibSQL-4FF8D2?style=flat-square)](https://turso.tech)
@@ -203,7 +202,7 @@ Why this shape — at session scale (95+ resources mounted), the `read` tool on 
 
 Direct `messages.create` for each material. For each top-15 included match (`composite_score DESC NULLS LAST, fit_score DESC LIMIT 15`), draft three materials sequentially: artist statement, project proposal, cover letter. The fourth field `cv_formatted` is a deterministic per-opp trim NOTE (no LLM call) — the master CV is generated once per run by the Orchestrator (see §3.6). `pLimit(5)` at the match level, sequential within a match. Net peak load: 5 concurrent `messages.create` calls.
 
-`MAX_TOKENS_BY_TYPE`: `artist_statement: 8000`, `project_proposal: 8000`, `cover_letter: 6000` (Note 33-fix.6 bumped from 4000/4000/3000 after a 0-byte proposal regression — adaptive thinking on Opus 4.7 with dense opp-page contexts can consume the entire budget before emitting prose).
+`MAX_TOKENS_BY_TYPE`: `artist_statement: 8000`, `project_proposal: 8000`, `cover_letter: 6000` (Note 33-fix.6 bumped from 4000/4000/3000 after a 0-byte proposal regression — adaptive thinking with dense opp-page contexts can consume the entire budget before emitting prose).
 
 Three hard constraints in every per-material prompt:
 

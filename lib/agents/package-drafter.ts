@@ -564,7 +564,7 @@ Write the cover letter now. First-person throughout. Open with "Dear [name]," or
 // at 200-350 words and has not regressed. 4000 across the prose materials
 // keeps the budget consistent.
 // WALKTHROUGH Note 33-fix.6 — bumped from 4000/4000/3000 to 8000/8000/6000.
-// Empirical: at 4000 max_tokens with adaptive thinking on Opus 4.7, dense
+// Empirical: at 4000 max_tokens with adaptive thinking, dense
 // opportunity-page contexts (Epson Pano's 20K-char page text + full AKB
 // JSON + StyleFingerprint JSON) can consume the entire budget in the
 // thinking phase and emit zero prose. Note 26 bumped statement 3000→4000

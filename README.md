@@ -4,7 +4,6 @@
 
 [![Live demo →](https://img.shields.io/badge/▶_Live_demo-atelier--hazel.vercel.app-22C55E?style=for-the-badge&labelColor=000000)](https://atelier-hazel.vercel.app)
 
-[![Claude Opus 4.7](https://img.shields.io/badge/Claude_Opus_4.7-C15F3C?style=flat-square&logo=anthropic&logoColor=white)](https://platform.claude.com/docs/en/about-claude/models/overview)
 [![Managed Agents](https://img.shields.io/badge/Managed_Agents-beta-EAB308?style=flat-square)](https://platform.claude.com/docs/en/managed-agents/overview)
 [![Next.js 15](https://img.shields.io/badge/Next.js_15-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![TypeScript 5](https://img.shields.io/badge/TypeScript_5-3178C6?style=flat-square&logo=typescript&logoColor=white)](https://www.typescriptlang.org)
@@ -14,7 +13,7 @@
 
 ---
 
-Built by a photographer who has spent fifteen years inside the visual-arts-submission economy and never applied to a single grant because writing about his own work was the wall. No CS degree, no engineering background — Atelier was vibe-coded with Claude Opus 4.7. Upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
+Atelier is an AI art director for working photographers. Upload your portfolio, build a Knowledge Base through a short structured interview, and get a Career Dossier with ranked grant / residency / competition / gallery opportunities and submission-ready application materials.
 
 ---
 
@@ -62,7 +61,7 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
         │                                            │
         ▼                                            ▼
    Style Analyst         ──┐                  Rubric Matcher    ── Managed Agent
-   (Opus vision)           │                         │
+   (vision model)          │                         │
         │                  │                         ▼
         ▼                  │                  Package Drafter
    Knowledge Extractor   ──┤                         │
@@ -75,7 +74,7 @@ A single user run is a long synchronous pipeline. Six specialist agents move in 
    Base (AKB)
 ```
 
-- **Style Analyst** — Opus 4.7 vision over the full portfolio. Produces a structured aesthetic fingerprint: composition, palette, subject, light, formal lineage, career-positioning read. Direct SDK call.
+- **Style Analyst** — vision model over the full portfolio. Produces a structured aesthetic fingerprint: composition, palette, subject, light, formal lineage, career-positioning read. Direct SDK call.
 - **Knowledge Extractor** — Builds the Artist Knowledge Base via a gap-driven structured text interview. The interview walks a priority-tiered field list (identity, practice, bodies of work, exhibitions, etc.) and only asks for what's missing. A separate Auto-Discover path (search → rank → top-K → fetch → identity-anchored extraction from the photographer's public web presence) is implemented and reachable in the code; it's not in the default onboarding flow because most working fine-art photographers don't have a public web footprint deep enough for it to be load-bearing yet. Auto-Discover is the fine-tune target as the user corpus grows. Direct SDK call. Versioned and durable across runs.
 - **Opportunity Scout** *(Managed Agent)* — Searches twenty-plus curated source archetypes for current open calls in the artist's window. Runs long; uses `agent_toolset_20260401` (web_search, web_fetch, bash, read).
 - **Rubric Matcher** *(Managed Agent)* — For each candidate opportunity, fetches past recipients, normalizes their portfolio images through Sharp, uploads them to the Anthropic Files API, then sends them as image content blocks inside per-opportunity `user.message` events so the agent reads both the artist's portfolio and the recipient cohort directly with vision. Produces a fit score, reasoning, and supporting / weakening images per match.
@@ -287,8 +286,4 @@ This source is published for reference only. No license is granted to use, copy,
 
 ## Credits
 
-Built by [John Knopf](https://jknopf.com) — Emmy-nominated fine-art landscape photographer, two galleries (Las Vegas, Minneapolis), published by National Geographic, TIME, Red Bull, USA Today, Billboard, and Google.
-
-> Fifteen years inside the visual-arts-submission economy; never applied to a single grant because writing was the wall. Atelier is the tool that would have removed the wall.
-
-Built with Claude Opus 4.7.
+Built by Crash Override LLC.
